@@ -91,7 +91,7 @@ class Store:
         )
         embed.add_field(
             name=f"Teams → Roles ({len(self.team_to_role)})",
-            value=teams or "*none — `/map team`*",
+            value=teams or "*none yet — run `/sync roles`*",
             inline=False,
         )
 

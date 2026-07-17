@@ -6,6 +6,7 @@ from discord.ext import commands
 from githubkit import GitHub
 
 from bridge import store
+from bridge.cogs.github_sync import GithubSync
 from bridge.config import Config, Secrets
 from bridge.github_app import installation_client
 from bridge.webhook import WebhookServer
@@ -48,14 +49,21 @@ class BridgeBot(commands.Bot):
         self._ready_once = True
 
         guild = self.guilds[0]  # the bot lives in exactly one server
+        if not guild.chunked:
+            await guild.chunk()  # populate the member cache for role reconciliation
         channel = await store.find_or_create_config_channel(guild)
         self.store = store.Store(channel)
         await self.store.load()
-        await self.store.refresh_panel()  # keep the live config panel up to date
 
         # Sync slash commands to our guild (instant, unlike global sync).
         self.tree.copy_global_to(guild=guild)
         await self.tree.sync(guild=guild)
+
+        # Mirror GitHub into Discord on startup: roles, membership, channel access.
+        cog = self.get_cog("GithubSync")
+        if isinstance(cog, GithubSync):
+            await cog.run_sync(guild)
+        await self.store.refresh_panel()  # panel reflects the freshly synced state
 
     @property
     def guild(self) -> discord.Guild:
