@@ -4,11 +4,15 @@ version = "0.1.0"
 description = "ranqialabs dev workspace template"
 readme = "README.md"
 requires-python = ">=3.14"
-dependencies = []
+dependencies = [
+    "discord-py>=2.7.1",
+    "githubkit>=0.16.0",
+]
 
 [dependency-groups]
 dev = [
     "prek>=0.4.10",
     "ruff>=0.15.22",
     "ty>=0.0.60",
+    "zensical>=0.0.51",
 ]
