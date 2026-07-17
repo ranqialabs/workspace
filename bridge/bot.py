@@ -5,7 +5,7 @@ from aiohttp import web
 from discord.ext import commands
 from githubkit import GitHub
 
-from bridge import db
+from bridge import store
 from bridge.config import Config, Secrets
 from bridge.github_app import installation_client
 from bridge.webhook import WebhookServer
@@ -22,16 +22,18 @@ class BridgeBot(commands.Bot):
         self.secrets = secrets
         self.webhook = WebhookServer(secrets.webhook_secret)
         self.github: GitHub | None = None  # set in setup_hook
+        self.store: store.Store | None = None  # set in on_ready (needs the guild)
         self._runner: web.AppRunner | None = None
+        self._ready_once = False
 
     async def setup_hook(self) -> None:
-        db.init()
+        # Runs before we connect to the gateway, so the guild isn't known yet.
+        # Only wire up things that don't need it here.
         self.github = await installation_client(self.secrets, self.config)
 
         for cog in INITIAL_COGS:
             await self.load_extension(cog)
 
-        # Serve webhooks on the same loop.
         self._runner = web.AppRunner(self.webhook.app)
         await self._runner.setup()
         site = web.TCPSite(
@@ -39,10 +41,24 @@ class BridgeBot(commands.Bot):
         )
         await site.start()
 
+    async def on_ready(self) -> None:
+        # Guild-dependent setup. on_ready can fire more than once; guard it.
+        if self._ready_once:
+            return
+        self._ready_once = True
+
+        guild = self.guilds[0]  # the bot lives in exactly one server
+        channel = await store.find_or_create_config_channel(guild)
+        self.store = store.Store(channel)
+        await self.store.load()
+
         # Sync slash commands to our guild (instant, unlike global sync).
-        guild = discord.Object(id=self.config.guild_id)
         self.tree.copy_global_to(guild=guild)
         await self.tree.sync(guild=guild)
+
+    @property
+    def guild(self) -> discord.Guild:
+        return self.guilds[0]
 
     async def close(self) -> None:
         if self._runner is not None:

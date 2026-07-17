@@ -1,15 +1,17 @@
 """
 Configuration from environment variables.
 
-Scalars are plain env vars; the two routing maps are JSON env vars. Non-secret
-routing (guild/role/channel ids) lives in fly.toml's [env]; secrets go through
-`fly secrets`. Nothing is read from disk.
+Almost everything is discovered at runtime: the guild is the only one the bot is
+in, admins are whoever has "Manage Server", and all mappings live in a Discord
+channel (see store.py). The only real config is the org and the secrets.
 """
 
-import json
 import os
 from dataclasses import dataclass
 from pathlib import Path
+
+# The bot finds (or creates) this channel by name; it stores all mappings.
+CONFIG_CHANNEL_NAME = "bot-config"
 
 
 @dataclass(frozen=True)
@@ -24,27 +26,11 @@ class Secrets:
 
 @dataclass(frozen=True)
 class Config:
-    guild_id: int
-    admin_role_id: int
     org: str
-    team_to_role: dict[str, int]  # github team slug -> discord role id
-    repo_to_channel: dict[str, int]  # "owner/repo" -> discord channel id
-
-
-def _int_map(env_var: str) -> dict[str, int]:
-    """Parse a JSON object env var into a str->int map (empty if unset)."""
-    raw = os.environ.get(env_var, "{}")
-    return {k: int(v) for k, v in json.loads(raw).items()}
 
 
 def load() -> Config:
-    return Config(
-        guild_id=int(os.environ["GUILD_ID"]),
-        admin_role_id=int(os.environ["ADMIN_ROLE_ID"]),
-        org=os.environ["GITHUB_ORG"],
-        team_to_role=_int_map("TEAM_TO_ROLE"),
-        repo_to_channel=_int_map("REPO_TO_CHANNEL"),
-    )
+    return Config(org=os.environ["GITHUB_ORG"])
 
 
 def load_secrets() -> Secrets:

@@ -5,8 +5,6 @@ from typing import TYPE_CHECKING
 import discord
 from discord.ext import commands
 
-from bridge import db
-
 if TYPE_CHECKING:
     from bridge.bot import BridgeBot
 
@@ -18,13 +16,15 @@ class Notifications(commands.Cog):
         bot.webhook.register("issues", self.on_issues)
 
     def _mention(self, github_login: str | None) -> str:
-        if not github_login:
-            return "someone"
-        discord_id = db.discord_id_for(github_login)
+        if not github_login or self.bot.store is None:
+            return "someone" if not github_login else f"`{github_login}`"
+        discord_id = self.bot.store.discord_id_for(github_login)
         return f"<@{discord_id}>" if discord_id else f"`{github_login}`"
 
     async def _post(self, repo_full_name: str, message: str) -> None:
-        channel_id = self.bot.config.repo_to_channel.get(repo_full_name)
+        if self.bot.store is None:
+            return
+        channel_id = self.bot.store.repo_to_channel.get(repo_full_name)
         if channel_id is None:
             return
         channel = self.bot.get_channel(channel_id)
