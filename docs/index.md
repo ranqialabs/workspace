@@ -16,7 +16,7 @@ turns GitHub activity into Discord notifications — mentioning the right people
 
   ***
 
-  An admin runs `/sync-roles` and members get the Discord role that matches
+  An admin runs `/sync roles` and members get the Discord role that matches
   their GitHub team.
 
   [:octicons-arrow-right-24: Commands](commands.md#sync-roles)
@@ -53,15 +53,32 @@ turns GitHub activity into Discord notifications — mentioning the right people
 ## How it hangs together
 
 ```mermaid
-graph LR
-  GH[GitHub org] -- webhook --> W[Webhook listener]
-  W --> N[notifications cog]
-  N -- post + mention --> DC[Discord channel]
-  A[Admin] -- "/map-*, /link, /sync-roles" --> S[github_sync cog]
-  S -- read teams --> GH
-  S -- assign roles --> DC
-  S <--> CFG[(#bot-config channel)]
-  N <--> CFG
+flowchart LR
+  subgraph gh [GitHub]
+    GH["🐙 org · repos · teams"]
+  end
+
+  subgraph bot [bridge · one process]
+    direction TB
+    W["webhook listener"]
+    N["notifications cog"]
+    S["github_sync cog"]
+    CFG[("#bot-config")]
+    W --> N
+    N -.-> CFG
+    S -.-> CFG
+  end
+
+  subgraph dc [Discord]
+    DC["📣 channels · roles"]
+    A(["👤 admin"])
+  end
+
+  GH -- "webhook: PR / issue" --> W
+  N -- "post + @mention" --> DC
+  A -- "/map · /sync roles" --> S
+  S -- "read teams" --> GH
+  S -- "assign roles" --> DC
 ```
 
 The webhook listener and the Discord bot run in **one process, one event loop** —

@@ -6,21 +6,24 @@ icon: lucide/terminal
 
 ## Slash commands
 
-Every command here requires the caller to have Discord's **Manage Server**
-permission — that's the entire access model, so there's no admin role to create
-or maintain. Anyone without it gets a polite, ephemeral refusal.
+The commands are grouped into two families — **`/map`** for wiring things
+together and **`/sync`** for acting on that wiring — so everything the bot does
+lives under a name that says what it's for.
 
-The commands are built so you never touch an ID. Team and repo names come from
-**autocomplete backed by the GitHub API** — start typing and the bot offers your
-org's real teams or repos. Roles, channels, and members are ordinary Discord
-**mentions**, so you pick them the way you pick anything else.
+Every command requires the caller to have Discord's **Manage Server**
+permission; that's the entire access model, so there's no admin role to create.
+Discord greys the commands out for anyone without it.
 
-### `/map-team` { #map-team }
+And you never touch an ID. Team, repo, and user names come from **autocomplete
+backed by the GitHub API** — start typing and the bot offers your org's real
+teams, repos, or members. Roles and channels are ordinary Discord **mentions**.
+
+### `/map team` { #map-team }
 
 Tie a GitHub team to a Discord role.
 
 ```text
-/map-team team:‹slug› role:@Role
+/map team team:‹slug› role:@Role
 ```
 
 | Parameter | Description |
@@ -28,55 +31,56 @@ Tie a GitHub team to a Discord role.
 | `team` | Autocompletes from the org's GitHub teams — pick one |
 | `role` | The Discord role members of that team should get |
 
-This is what [`/sync-roles`](#sync-roles) acts on. Mapping a team again just
+This is what [`/sync roles`](#sync-roles) acts on. Mapping a team again just
 updates it.
 
-### `/map-repo` { #map-repo }
+### `/map repo` { #map-repo }
 
 Tie a GitHub repo to a Discord channel.
 
 ```text
-/map-repo repo:‹owner/name› channel:#channel
+/map repo repo:‹owner/name› channel:#channel
 ```
 
 | Parameter | Description |
 | :-------- | :---------- |
-| `repo` | Autocompletes from the org's repos — pick one |
+| `repo` | Autocompletes from the org's repos, private ones included — pick one |
 | `channel` | Where that repo's PR and issue notifications should land |
 
 A repo with no mapping is simply skipped — its events arrive and are ignored, no
 error.
 
-### `/link` { #link }
+### `/map user` { #map-user }
 
-Tie a GitHub login to a Discord member.
+Tie a GitHub user to a Discord member.
 
 ```text
-/link github_login:‹login› member:@member
+/map user github_login:‹login› member:@member
 ```
 
 | Parameter | Description |
 | :-------- | :---------- |
-| `github_login` | The GitHub username, e.g. `itsmeale` |
+| `github_login` | Autocompletes from the org's members — pick one |
 | `member` | The Discord member behind that account |
 
 This is the join that makes mentions and role sync work: it's how the bridge
-knows that a PR by `itsmeale` should ping a particular person. Re-linking a login
-overwrites the old mapping.
+knows a PR by `itsmeale` should ping a particular person. The bot confirms with a
+small embed showing the GitHub avatar and profile, so you can see at a glance you
+picked the right account. Re-mapping a login overwrites the old link.
 
-### `/sync-roles` { #sync-roles }
+### `/sync roles` { #sync-roles }
 
 Bring Discord roles in line with GitHub team membership, right now.
 
 ```text
-/sync-roles
+/sync roles
 ```
 
 For each mapped team, the bridge lists its GitHub members, looks each one up
-among the linked identities, and adds the mapped role to the matching Discord
-member if they don't already have it. It replies with a summary — how many roles
-it granted, and which GitHub logins it couldn't place because nobody has run
-[`/link`](#link) for them yet.
+among the linked users, and adds the mapped role to the matching Discord member
+if they don't have it yet. It replies with a summary — how many roles it granted,
+and which GitHub logins it couldn't place because nobody has run
+[`/map user`](#map-user) for them yet.
 
 !!! note "Phase 1 only adds roles"
 
@@ -87,9 +91,9 @@ it granted, and which GitHub logins it couldn't place because nobody has run
 ## Events { #events }
 
 The bridge listens for these GitHub webhook events and posts to the channel the
-repo is [mapped](#map-repo) to. When the person involved is [linked](#link) they
-get an `@mention`; otherwise their GitHub login shows up as plain text, so the
-message still makes sense.
+repo is [mapped](#map-repo) to. When the person involved is [linked](#map-user)
+they get an `@mention`; otherwise their GitHub login shows up as plain text, so
+the message still makes sense.
 
 | Event | Trigger | Message |
 | :---- | :------ | :------ |

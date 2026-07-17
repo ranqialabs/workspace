@@ -43,7 +43,7 @@ and is what lets the bridge prove a webhook really came from GitHub.
 | Repository | **Issues** → Read | to hear about opened issues |
 | Repository | **Pull requests** → Read | to hear about PRs and review requests |
 | Repository | **Metadata** → Read | mandatory; GitHub adds it for you |
-| Organization | **Members** → Read | `/sync-roles` reads who's in each team |
+| Organization | **Members** → Read | `/sync roles` reads who's in each team |
 
 **Events.** Subscribe to **Pull request** and **Issues**. You do *not* need a
 separate "Pull request review" subscription — a requested review arrives as an
@@ -79,7 +79,7 @@ dies.
 
 **Turn on the one intent that matters.** Still on the Bot page, under *Privileged
 Gateway Intents*, enable **Server Members Intent**. Without it the bot literally
-cannot see or change members' roles, and `/sync-roles` fails. Leave **Presence**
+cannot see or change members' roles, and `/sync roles` fails. Leave **Presence**
 and **Message Content** off — the bridge uses slash commands, so it never needs
 to read message text.
 
@@ -93,7 +93,7 @@ open it, and add the bot to your server.
 
     Discord only lets a bot assign roles that sit **below its own** in the role
     list — a safety rule, not a bug. After inviting, drag the bot's role above the
-    team roles it will manage (engineering, design, …), or `/sync-roles` will fail
+    team roles it will manage (engineering, design, …), or `/sync roles` will fail
     with *Missing Permissions* even though the permission is granted.
 
 ## 3. Deploy
@@ -165,12 +165,12 @@ normal Discord mentions.
 
 | Command | What it does |
 | :------ | :----------- |
-| `/map-team team:‹slug› role:@Role` | `team` autocompletes from your org's real GitHub teams; you pick the role |
-| `/map-repo repo:‹owner/name› channel:#channel` | `repo` autocompletes from your org's repos; you pick the channel |
-| `/link github_login:‹login› member:@member` | ties a GitHub user to a Discord member, so mentions and sync work |
-| `/sync-roles` | applies team→role membership to everyone right now |
+| `/map team team:‹slug› role:@Role` | `team` autocompletes from your org's real GitHub teams; you pick the role |
+| `/map repo repo:‹owner/name› channel:#channel` | `repo` autocompletes from your org's repos; you pick the channel |
+| `/map user github_login:‹login› member:@member` | ties a GitHub user to a Discord member, so mentions and sync work |
+| `/sync roles` | applies team→role membership to everyone right now |
 
-Once a team is mapped and people are linked, `/sync-roles` hands out roles; once a
+Once a team is mapped and people are linked, `/sync roles` hands out roles; once a
 repo is mapped, its pull requests and issues start landing in that channel. That's
 the whole setup.
 
@@ -185,7 +185,7 @@ repo ranqialabs/workspace 789
 identity itsmeale 123
 ```
 
-`/map-team` posts the first kind of line, `/map-repo` the second, `/link` the
+`/map team` posts the first kind of line, `/map repo` the second, `/map user` the
 third. On every boot the bot reads that channel's history back and rebuilds its
 mappings in memory. Nothing to back up, nothing to pay for, and it survives every
 redeploy and restart for free — Discord is already keeping the messages.

@@ -42,8 +42,8 @@ what already works.
 ## Known limitations (Phase 1)
 
 - **Review requests only mention individuals**, not teams.
-- **Identity mapping is manual** via `/link` — there's no GitHub/Discord OAuth to
-  match accounts automatically.
+- **Identity mapping is manual** via `/map user` — there's no GitHub/Discord OAuth
+  to match accounts automatically.
 - **Mappings are replayed from a channel on boot** — great up to low hundreds of
   entries, but a much larger server would want a real store.
 

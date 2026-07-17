@@ -114,5 +114,5 @@ async def load(self) -> None:
     is built for.
 
 When a login isn't linked, the system degrades gracefully rather than breaking:
-`/sync-roles` lists it as unmapped, and a notification falls back to showing the
+`/sync roles` lists it as unmapped, and a notification falls back to showing the
 plain GitHub login instead of a mention.
