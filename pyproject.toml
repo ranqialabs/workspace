@@ -6,7 +6,7 @@ readme = "README.md"
 requires-python = ">=3.14"
 dependencies = [
     "discord-py>=2.7.1",
-    "githubkit>=0.16.0",
+    "githubkit[auth-app]>=0.16.0",
 ]
 
 [dependency-groups]
