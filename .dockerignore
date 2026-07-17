@@ -1,0 +1,11 @@
+.venv/
+.git/
+.github/
+docs/
+site/
+.cache/
+.ruff_cache/
+__pycache__/
+*.db
+.env
+plans/

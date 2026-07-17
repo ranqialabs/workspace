@@ -1,15 +1,15 @@
 """
-Static config (config.toml) + secrets (env vars).
+Configuration from environment variables.
 
-Config is versioned, non-secret routing. Secrets never live in the TOML.
+Scalars are plain env vars; the two routing maps are JSON env vars. Non-secret
+routing (guild/role/channel ids) lives in fly.toml's [env]; secrets go through
+`fly secrets`. Nothing is read from disk.
 """
 
+import json
 import os
-import tomllib
 from dataclasses import dataclass
 from pathlib import Path
-
-CONFIG_PATH = Path(os.environ.get("BRIDGE_CONFIG", "config.toml"))
 
 
 @dataclass(frozen=True)
@@ -31,15 +31,19 @@ class Config:
     repo_to_channel: dict[str, int]  # "owner/repo" -> discord channel id
 
 
-def load(path: Path = CONFIG_PATH) -> Config:
-    with path.open("rb") as f:
-        raw = tomllib.load(f)
+def _int_map(env_var: str) -> dict[str, int]:
+    """Parse a JSON object env var into a str->int map (empty if unset)."""
+    raw = os.environ.get(env_var, "{}")
+    return {k: int(v) for k, v in json.loads(raw).items()}
+
+
+def load() -> Config:
     return Config(
-        guild_id=int(raw["guild_id"]),
-        admin_role_id=int(raw["admin_role_id"]),
-        org=str(raw["org"]),
-        team_to_role={k: int(v) for k, v in raw.get("team_to_role", {}).items()},
-        repo_to_channel={k: int(v) for k, v in raw.get("repo_to_channel", {}).items()},
+        guild_id=int(os.environ["GUILD_ID"]),
+        admin_role_id=int(os.environ["ADMIN_ROLE_ID"]),
+        org=os.environ["GITHUB_ORG"],
+        team_to_role=_int_map("TEAM_TO_ROLE"),
+        repo_to_channel=_int_map("REPO_TO_CHANNEL"),
     )
 
 

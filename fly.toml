@@ -1,0 +1,41 @@
+# fly.toml app configuration file generated for ranqia-workspace on 2026-07-17T16:20:46-03:00
+#
+# See https://fly.io/docs/reference/configuration/ for information about how to use this file.
+#
+
+app = 'ranqia-workspace'
+primary_region = 'gru'
+
+[build]
+
+# Non-secret routing. Fill in the real ids, or override per-value with
+# `fly secrets set`. Secrets (tokens, keys) go through `fly secrets`, never here.
+[env]
+  GITHUB_ORG = 'ranqialabs'
+  GUILD_ID = '000000000000000000'
+  ADMIN_ROLE_ID = '000000000000000000'
+  TEAM_TO_ROLE = '{"engineering":000000000000000000}'
+  REPO_TO_CHANNEL = '{"ranqialabs/workspace":000000000000000000}'
+  WEBHOOK_PORT = '8080'
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  # The bot holds a live Discord gateway connection — it must never scale to
+  # zero, so we keep one machine always running and never auto-stop it.
+  auto_stop_machines = 'off'
+  auto_start_machines = false
+  min_machines_running = 1
+  processes = ['app']
+
+  # TCP check: confirms the webhook server is listening. /webhook only accepts
+  # signed POSTs, so there's no cheap HTTP endpoint to probe.
+  [[http_service.tcp_checks]]
+    interval = '15s'
+    timeout = '2s'
+    grace_period = '10s'
+
+[[vm]]
+  memory = '1gb'
+  cpus = 1
+  memory_mb = 1024
