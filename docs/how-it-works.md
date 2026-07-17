@@ -98,6 +98,13 @@ messages), it survives every restart and redeploy without a volume to mount or
 back up, and it's transparent: the configuration is right there to read, and you
 can fix an entry by hand just by posting the line yourself.
 
+Alongside those data lines the bot keeps one **live panel** — an embed listing
+every mapping with real mentions. It's identified by a marker in its footer, so on
+boot and after each change the bot finds that message and edits it in place
+instead of posting a new one. The raw lines are the source of truth; the panel is
+the human-readable view of them, and [`/config`](commands.md#config) forces a
+redraw.
+
 ```python title="bridge/store.py"
 async def load(self) -> None:
     async for message in self._channel.history(limit=None, oldest_first=True):

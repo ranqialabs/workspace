@@ -88,6 +88,21 @@ and which GitHub logins it couldn't place because nobody has run
     [on the roadmap](roadmap.md), gated behind a flag, so an accidental team
     change can't silently strip access.
 
+### `/config` { #config }
+
+Refresh the live configuration panel.
+
+```text
+/config
+```
+
+The bridge keeps a single **live panel** pinned in `#bot-config` — one embed
+listing every team→role, repo→channel, and linked user, rendered with real
+Discord mentions. It updates itself whenever you run a `/map` command and on every
+boot, so it never floods the channel: the bot finds its own panel message and
+**edits it in place** rather than posting a new one. `/config` just forces that
+refresh on demand.
+
 ## Events { #events }
 
 The bridge listens for these GitHub webhook events and posts to the channel the
