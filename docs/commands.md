@@ -79,9 +79,13 @@ For each team in the org, the bridge:
    of teams with access. A role sees a channel if its team can access *any* repo
    mapped there.
 
-It replies with what changed — roles created, members added and removed, and any
-GitHub logins it couldn't place because nobody has run [`/map user`](#map-user)
-for them yet.
+Then it **prunes what GitHub dropped**: a team deleted on GitHub has its managed
+role deleted; a repo that no longer exists has its channel mapping forgotten (the
+channel itself is left untouched).
+
+It replies with what changed — roles created and deleted, members added and
+removed, and any GitHub logins it couldn't place because nobody has run
+[`/map user`](#map-user) for them yet.
 
 !!! warning "The bot only touches what it manages"
 

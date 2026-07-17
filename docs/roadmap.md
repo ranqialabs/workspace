@@ -5,8 +5,8 @@ icon: lucide/map
 # Roadmap
 
 Phase 1 is the GitHub ↔ Discord bridge described in these docs. What follows is
-what's planned. Each new capability is a **cog** — it plugs in without touching
-what already works.
+what's planned — each new capability is added without disturbing the ones already
+running.
 
 ## Coming next
 

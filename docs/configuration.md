@@ -179,27 +179,12 @@ role per GitHub team, adds and removes members to match, and sets each mapped
 channel's permissions so only the roles of teams with repo access can see it.
 `/sync roles` also runs automatically on every boot.
 
-## How your mappings are stored
+## Where it keeps state
 
-Here's the part that keeps this simple: **there is no database and no disk.** The
-`#bot-config` channel *is* the store. Each mapping is one ordinary message:
-
-```text
-team engineering 456
-repo ranqialabs/workspace 789
-identity itsmeale 123
-```
-
-`/sync roles` writes the `team` lines (one per role it creates), `/map repo` the
-`repo` lines, `/map user` the `identity` lines. On every boot the bot reads that
-channel's history back and rebuilds its mappings in memory. Nothing to back up,
-nothing to pay for, and it survives every redeploy and restart for free — Discord
-is already keeping the messages.
-
-A nice side effect: your configuration is **auditable and hand-editable**. Want to
-see every mapping? Scroll the channel. Need to fix one without a command? Post the
-line yourself. The mechanics are described in
-[How it works](how-it-works.md#persistence-the-channel-is-the-store).
+There's no database and no disk to set up: the `#bot-config` channel the bot
+creates *is* its storage, and the live panel there shows your whole configuration
+at a glance. You never have to manage it. If you're curious why it works this way,
+[Concepts](concepts.md#your-configuration-lives-in-discord) explains it.
 
 [Discord Developer Portal]: https://discord.com/developers/applications
 [GitHub App]: https://docs.github.com/en/apps/creating-github-apps

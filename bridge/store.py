@@ -29,16 +29,20 @@ class Store:
         self.identity: dict[str, int] = {}  # github login (casefold) -> discord id
         self.team_to_role: dict[str, int] = {}  # github team slug -> discord role id
         self.repo_to_channel: dict[str, int] = {}  # "owner/repo" -> discord channel
+        # (kind, key) -> the message that persists it, so we can delete it
+        self._messages: dict[tuple[str, str], discord.Message] = {}
         self._panel: discord.Message | None = None  # the live config panel
 
     async def load(self) -> None:
         """Rebuild the maps by replaying channel history (oldest first)."""
         for d in (self.identity, self.team_to_role, self.repo_to_channel):
             d.clear()
+        self._messages.clear()
         async for message in self._channel.history(limit=None, oldest_first=True):
             m = _LINE.match(message.content.strip())
             if m:
                 self._apply(m["kind"], m["key"], int(m["value"]))
+                self._messages[m["kind"], m["key"]] = message
             elif self._is_panel(message):
                 self._panel = message
 
@@ -57,9 +61,29 @@ class Store:
         elif kind == "repo":
             self.repo_to_channel[key] = value
 
+    def _forget(self, kind: str, key: str) -> None:
+        if kind == "identity":
+            self.identity.pop(key.casefold(), None)
+        elif kind == "team":
+            self.team_to_role.pop(key, None)
+        elif kind == "repo":
+            self.repo_to_channel.pop(key, None)
+
     async def _persist(self, kind: str, key: str, value: int) -> None:
-        await self._channel.send(f"{kind} {key} {value}")
+        # Drop the old line first so a re-map leaves one live message, not two.
+        old = self._messages.pop((kind, key), None)
+        if old is not None:
+            await old.delete()
+        self._messages[kind, key] = await self._channel.send(f"{kind} {key} {value}")
         self._apply(kind, key, value)
+        await self.refresh_panel()
+
+    async def _unpersist(self, kind: str, key: str) -> None:
+        """Forget a mapping: delete its message and drop it from memory."""
+        message = self._messages.pop((kind, key), None)
+        if message is not None:
+            await message.delete()
+        self._forget(kind, key)
         await self.refresh_panel()
 
     async def link_identity(self, github_login: str, discord_id: int) -> None:
@@ -70,6 +94,12 @@ class Store:
 
     async def map_repo(self, repo_full_name: str, channel_id: int) -> None:
         await self._persist("repo", repo_full_name, channel_id)
+
+    async def forget_team(self, team_slug: str) -> None:
+        await self._unpersist("team", team_slug)
+
+    async def forget_repo(self, repo_full_name: str) -> None:
+        await self._unpersist("repo", repo_full_name)
 
     def discord_id_for(self, github_login: str) -> int | None:
         return self.identity.get(github_login.casefold())

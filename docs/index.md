@@ -39,14 +39,14 @@ turns GitHub activity into Discord notifications — mentioning the right people
 
   [:octicons-arrow-right-24: Events](commands.md#events)
 
-- :lucide-blocks:{ .lg .middle } **Built to grow**
+- :lucide-mouse-pointer-click:{ .lg .middle } **No IDs, ever**
 
   ***
 
-  Each domain is a cog. New domains — voice, summarization, Google Workspace —
-  plug in without touching the existing ones.
+  Map repos and users with mentions and GitHub-backed autocomplete. You never
+  copy a snowflake ID, so you can't misconfigure it.
 
-  [:octicons-arrow-right-24: Roadmap](roadmap.md)
+  [:octicons-arrow-right-24: Concepts](concepts.md#you-should-never-touch-an-id)
 
 </div>
 
@@ -61,8 +61,8 @@ flowchart LR
   subgraph bot [bridge · one process]
     direction TB
     W["webhook listener"]
-    N["notifications cog"]
-    S["github_sync cog"]
+    N["notifications"]
+    S["team &amp; access sync"]
     CFG[("#bot-config")]
     W --> N
     N -.-> CFG
@@ -87,6 +87,6 @@ channel, so there's **no database and no disk** to manage either.
 
 ## Next steps
 
-- New here? Read [How it works](how-it-works.md).
+- New here? Read the [Concepts](concepts.md).
 - Setting it up? Go to [Configuration](configuration.md).
 - Want to know what's coming? See the [Roadmap](roadmap.md).

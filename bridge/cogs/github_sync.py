@@ -20,6 +20,7 @@ if TYPE_CHECKING:
 class SyncResult:
     def __init__(self) -> None:
         self.created_roles: list[str] = []  # roles created this run
+        self.deleted_roles: list[str] = []  # roles deleted (team gone from GitHub)
         self.added: list[str] = []  # "member -> role"
         self.removed: list[str] = []  # "member -> role"
         self.unmapped: set[str] = set()  # github logins with no discord link
@@ -146,6 +147,10 @@ class GithubSync(commands.Cog):
         lines: list[str] = []
         if result.created_roles:
             lines.append(f"Created roles: {', '.join(result.created_roles)}")
+        if result.deleted_roles:
+            lines.append(
+                f"Deleted roles (team gone): {', '.join(result.deleted_roles)}"
+            )
         lines.append(
             f"Added {len(result.added)}, removed {len(result.removed)} role(s)."
         )
@@ -170,6 +175,9 @@ class GithubSync(commands.Cog):
         assert self.bot.store is not None
         role_id = self.bot.store.team_to_role.get(team_slug)
         role = guild.get_role(role_id) if role_id else None
+        # ponytail: if the registered role was deleted by hand, get_role returns
+        # None and we just recreate it — self-healing, at the cost of losing that
+        # role's manual tweaks. The next reconcile re-adds its members.
         if role is not None:
             return role, False
         role = await guild.create_role(name=team_slug, reason="github team sync")
@@ -186,8 +194,10 @@ class GithubSync(commands.Cog):
 
         # repo full_name -> set of team roles that can see it (built as we go)
         repo_roles: dict[str, set[discord.Role]] = {}
+        seen_teams: set[str] = set()
 
         async for team in gh.rest.paginate(gh.rest.teams.async_list, org=org):
+            seen_teams.add(team.slug)
             role, created = await self._team_role(guild, team.slug)
             if created:
                 result.created_roles.append(team.slug)
@@ -222,8 +232,45 @@ class GithubSync(commands.Cog):
             ):
                 repo_roles.setdefault(repo.full_name, set()).add(role)
 
+        # The org's actual repos, to detect deleted ones (repo_roles only has
+        # repos some team can access, which isn't the same thing).
+        org_repos: set[str] = set()
+        async for repo in gh.rest.paginate(
+            gh.rest.repos.async_list_for_org, org=org, type="all"
+        ):
+            org_repos.add(repo.full_name)
+
+        await self._prune_orphans(guild, seen_teams, org_repos, result)
         await self._gate_channels(guild, repo_roles)
         return result
+
+    async def _prune_orphans(
+        self,
+        guild: discord.Guild,
+        seen_teams: set[str],
+        seen_repos: set[str],
+        result: SyncResult,
+    ) -> None:
+        """Delete roles for teams that no longer exist, and drop dead repo maps.
+
+        GitHub is the source of truth: a team gone from GitHub means its managed
+        role is deleted; a repo gone means its channel mapping is forgotten (the
+        channel itself is left alone).
+        """
+        assert self.bot.store is not None
+        for team_slug in list(self.bot.store.team_to_role):
+            if team_slug in seen_teams:
+                continue
+            # Role may already be gone (deleted by hand) — either way, forget it.
+            role = guild.get_role(self.bot.store.team_to_role[team_slug])
+            if role is not None:
+                await role.delete(reason=f"team {team_slug} removed on github")
+                result.deleted_roles.append(team_slug)
+            await self.bot.store.forget_team(team_slug)
+
+        for repo in list(self.bot.store.repo_to_channel):
+            if repo not in seen_repos:
+                await self.bot.store.forget_repo(repo)
 
     async def _gate_channels(
         self, guild: discord.Guild, repo_roles: dict[str, set[discord.Role]]
