@@ -51,6 +51,7 @@ class BridgeBot(commands.Bot):
         channel = await store.find_or_create_config_channel(guild)
         self.store = store.Store(channel)
         await self.store.load()
+        await self.store.refresh_panel()  # keep the live config panel up to date
 
         # Sync slash commands to our guild (instant, unlike global sync).
         self.tree.copy_global_to(guild=guild)

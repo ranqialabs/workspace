@@ -142,6 +142,19 @@ class GithubSync(commands.Cog):
             embed.description = f"`{github_login}` → {member.mention}"
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
+    # --- /config ---
+
+    @app_commands.command(
+        name="config", description="Refresh the live config panel in #bot-config."
+    )
+    @app_commands.default_permissions(manage_guild=True)
+    async def config(self, interaction: discord.Interaction) -> None:
+        assert self.bot.store is not None
+        await self.bot.store.refresh_panel()
+        await interaction.response.send_message(
+            "Config panel refreshed in #bot-config.", ephemeral=True
+        )
+
     # --- /sync ---
 
     @sync.command(name="roles", description="Sync GitHub team membership to roles.")

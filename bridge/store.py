@@ -18,12 +18,18 @@ from bridge.config import CONFIG_CHANNEL_NAME
 _LINE = re.compile(r"^(?P<kind>identity|team|repo)\s+(?P<key>\S+)\s+(?P<value>\d+)$")
 
 
+# Marks the bot's own live status panel so we can find and edit it instead of
+# posting a new one each time (no flooding).
+_PANEL_MARKER = "​"  # zero-width space in the embed footer
+
+
 class Store:
-    def __init__(self, channel: discord.abc.Messageable) -> None:
+    def __init__(self, channel: discord.TextChannel) -> None:
         self._channel = channel
         self.identity: dict[str, int] = {}  # github login (casefold) -> discord id
         self.team_to_role: dict[str, int] = {}  # github team slug -> discord role id
         self.repo_to_channel: dict[str, int] = {}  # "owner/repo" -> discord channel
+        self._panel: discord.Message | None = None  # the live config panel
 
     async def load(self) -> None:
         """Rebuild the maps by replaying channel history (oldest first)."""
@@ -33,6 +39,15 @@ class Store:
             m = _LINE.match(message.content.strip())
             if m:
                 self._apply(m["kind"], m["key"], int(m["value"]))
+            elif self._is_panel(message):
+                self._panel = message
+
+    def _is_panel(self, message: discord.Message) -> bool:
+        return (
+            message.author == self._channel.guild.me
+            and bool(message.embeds)
+            and message.embeds[0].footer.text == _PANEL_MARKER
+        )
 
     def _apply(self, kind: str, key: str, value: int) -> None:
         if kind == "identity":
@@ -45,6 +60,7 @@ class Store:
     async def _persist(self, kind: str, key: str, value: int) -> None:
         await self._channel.send(f"{kind} {key} {value}")
         self._apply(kind, key, value)
+        await self.refresh_panel()
 
     async def link_identity(self, github_login: str, discord_id: int) -> None:
         await self._persist("identity", github_login, discord_id)
@@ -57,6 +73,59 @@ class Store:
 
     def discord_id_for(self, github_login: str) -> int | None:
         return self.identity.get(github_login.casefold())
+
+    # --- live config panel ---
+
+    def render_panel(self) -> discord.Embed:
+        """A single embed reflecting the current mappings, mentions and all."""
+        embed = discord.Embed(
+            title="⚙️ Bridge configuration",
+            description="Live view of every GitHub → Discord mapping.",
+            color=0x5865F2,
+        )
+        embed.set_footer(text=_PANEL_MARKER)
+
+        teams = "\n".join(
+            f"`{slug}` → <@&{role_id}>"
+            for slug, role_id in sorted(self.team_to_role.items())
+        )
+        embed.add_field(
+            name=f"Teams → Roles ({len(self.team_to_role)})",
+            value=teams or "*none — `/map team`*",
+            inline=False,
+        )
+
+        repos = "\n".join(
+            f"`{repo}` → <#{channel_id}>"
+            for repo, channel_id in sorted(self.repo_to_channel.items())
+        )
+        embed.add_field(
+            name=f"Repos → Channels ({len(self.repo_to_channel)})",
+            value=repos or "*none — `/map repo`*",
+            inline=False,
+        )
+
+        users = "\n".join(
+            f"`{login}` → <@{discord_id}>"
+            for login, discord_id in sorted(self.identity.items())
+        )
+        embed.add_field(
+            name=f"Linked users ({len(self.identity)})",
+            value=users or "*none — `/map user`*",
+            inline=False,
+        )
+        return embed
+
+    async def refresh_panel(self) -> None:
+        """Edit the existing panel in place, or post it once if missing."""
+        embed = self.render_panel()
+        if self._panel is not None:
+            try:
+                await self._panel.edit(embed=embed)
+                return
+            except discord.NotFound:
+                self._panel = None  # someone deleted it; fall through and repost
+        self._panel = await self._channel.send(embed=embed)
 
 
 async def find_or_create_config_channel(guild: discord.Guild) -> discord.TextChannel:
