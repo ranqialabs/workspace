@@ -1,0 +1,19 @@
+[[repos]]
+repo = "https://github.com/astral-sh/ruff-pre-commit"
+rev = "v0.15.22"
+hooks = [
+  { id = "ruff-check", args = ["--fix"] },
+  { id = "ruff-format" },
+]
+
+[[repos]]
+repo = "https://github.com/astral-sh/ty-pre-commit"
+rev = "v0.0.60"
+hooks = [ { id = "ty", args = [ "--isolated" ], always_run = false } ]
+
+
+[[repos]]
+repo = "local"
+hooks = [
+    { id = "check-blanket-ty-ignore", name = "check-blanket-ty-ignore", entry = '#\s*ty:\s*ignore\s*($|[^\[])', language = "pygrep", types = [ "python" ] },
+]
