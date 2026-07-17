@@ -12,23 +12,23 @@ turns GitHub activity into Discord notifications — mentioning the right people
 
 <div class="grid cards" markdown>
 
-- :lucide-users:{ .lg .middle } **Sync teams → roles**
+- :lucide-users:{ .lg .middle } **GitHub teams, mirrored**
 
   ***
 
-  An admin runs `/sync roles` and members get the Discord role that matches
-  their GitHub team.
+  The bot creates a Discord role per GitHub team and keeps its members in step —
+  adding and removing to match. GitHub is the source of truth.
 
   [:octicons-arrow-right-24: Commands](commands.md#sync-roles)
 
-- :lucide-mouse-pointer-click:{ .lg .middle } **No IDs, ever**
+- :lucide-lock:{ .lg .middle } **Access follows the repos**
 
   ***
 
-  Map teams and repos with commands that autocomplete from GitHub and take
-  Discord mentions. You never copy a snowflake ID.
+  Each mapped channel is visible only to the teams that can access its repos on
+  GitHub — derived automatically, no manual permissions.
 
-  [:octicons-arrow-right-24: Commands](commands.md)
+  [:octicons-arrow-right-24: Commands](commands.md#sync-roles)
 
 - :lucide-bell:{ .lg .middle } **Live notifications**
 
@@ -77,8 +77,8 @@ flowchart LR
   GH -- "webhook: PR / issue" --> W
   N -- "post + @mention" --> DC
   A -- "/map · /sync roles" --> S
-  S -- "read teams" --> GH
-  S -- "assign roles" --> DC
+  S -- "read teams · repos" --> GH
+  S -- "create roles · sync members · gate channels" --> DC
 ```
 
 The webhook listener and the Discord bot run in **one process, one event loop** —

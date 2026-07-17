@@ -153,26 +153,31 @@ Actions**.
 
 ## 4. Wire it up
 
-The first time the bot connects, it does two things on its own: it **finds or
-creates a `#bot-config` channel** (hidden from `@everyone`) to keep its state in,
-and it registers its slash commands with your server. Give it a few seconds, then
-open Discord and start mapping.
+The first time the bot connects it does three things on its own: it **finds or
+creates a `#bot-config` channel** (hidden from `@everyone`), registers its slash
+commands, and runs a first **sync** to mirror your GitHub teams into Discord.
 
-Every command below requires the **Manage Server** permission — that's the whole
-access model, no special admin role to create. And none of them ask for an ID:
-team and repo names come from GitHub-backed autocomplete, roles and channels from
+The guiding idea: **GitHub is the source of truth, Discord reflects it.** You
+don't create team roles or juggle channel permissions by hand — the bot derives
+those from GitHub. You only tell it the two things GitHub can't know: how you want
+repos grouped into channels, and who each GitHub user is on Discord.
+
+Every command requires the **Manage Server** permission, and none ask for an ID —
+repos and users come from GitHub-backed autocomplete, channels and members from
 normal Discord mentions.
 
 | Command | What it does |
 | :------ | :----------- |
-| `/map team team:‹slug› role:@Role` | `team` autocompletes from your org's real GitHub teams; you pick the role |
-| `/map repo repo:‹owner/name› channel:#channel` | `repo` autocompletes from your org's repos; you pick the channel |
-| `/map user github_login:‹login› member:@member` | ties a GitHub user to a Discord member, so mentions and sync work |
-| `/sync roles` | applies team→role membership to everyone right now |
+| `/map user github_login:‹login› member:@member` | ties a GitHub user to a Discord member (mentions + role sync) |
+| `/map repo repo:‹owner/name› channel:#channel` | routes a repo's notifications to a channel; group several repos into one channel |
+| `/sync roles` | mirrors teams now: creates roles, syncs membership, gates channels |
 
-Once a team is mapped and people are linked, `/sync roles` hands out roles; once a
-repo is mapped, its pull requests and issues start landing in that channel. That's
-the whole setup.
+So the flow is: [link people](commands.md#map-user) with `/map user`,
+[group repos](commands.md#map-repo) into channels with `/map repo`, and let
+`/sync roles` do the rest — it creates a
+role per GitHub team, adds and removes members to match, and sets each mapped
+channel's permissions so only the roles of teams with repo access can see it.
+`/sync roles` also runs automatically on every boot.
 
 ## How your mappings are stored
 
@@ -185,10 +190,11 @@ repo ranqialabs/workspace 789
 identity itsmeale 123
 ```
 
-`/map team` posts the first kind of line, `/map repo` the second, `/map user` the
-third. On every boot the bot reads that channel's history back and rebuilds its
-mappings in memory. Nothing to back up, nothing to pay for, and it survives every
-redeploy and restart for free — Discord is already keeping the messages.
+`/sync roles` writes the `team` lines (one per role it creates), `/map repo` the
+`repo` lines, `/map user` the `identity` lines. On every boot the bot reads that
+channel's history back and rebuilds its mappings in memory. Nothing to back up,
+nothing to pay for, and it survives every redeploy and restart for free — Discord
+is already keeping the messages.
 
 A nice side effect: your configuration is **auditable and hand-editable**. Want to
 see every mapping? Scroll the channel. Need to fix one without a command? Post the

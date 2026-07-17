@@ -18,21 +18,12 @@ And you never touch an ID. Team, repo, and user names come from **autocomplete
 backed by the GitHub API** — start typing and the bot offers your org's real
 teams, repos, or members. Roles and channels are ordinary Discord **mentions**.
 
-### `/map team` { #map-team }
+!!! info "Teams are not mapped — they're mirrored"
 
-Tie a GitHub team to a Discord role.
-
-```text
-/map team team:‹slug› role:@Role
-```
-
-| Parameter | Description |
-| :-------- | :---------- |
-| `team` | Autocompletes from the org's GitHub teams — pick one |
-| `role` | The Discord role members of that team should get |
-
-This is what [`/sync roles`](#sync-roles) acts on. Mapping a team again just
-updates it.
+    There is no `/map team`. GitHub is the source of truth for team membership,
+    so [`/sync roles`](#sync-roles) *creates* a Discord role per team and keeps it
+    in step on its own. You only map the things GitHub can't infer: which repos
+    group into which channel, and who each GitHub user is on Discord.
 
 ### `/map repo` { #map-repo }
 
@@ -70,23 +61,33 @@ picked the right account. Re-mapping a login overwrites the old link.
 
 ### `/sync roles` { #sync-roles }
 
-Bring Discord roles in line with GitHub team membership, right now.
+Mirror the org's GitHub teams into Discord, right now. This also runs
+automatically on every boot.
 
 ```text
 /sync roles
 ```
 
-For each mapped team, the bridge lists its GitHub members, looks each one up
-among the linked users, and adds the mapped role to the matching Discord member
-if they don't have it yet. It replies with a summary — how many roles it granted,
-and which GitHub logins it couldn't place because nobody has run
-[`/map user`](#map-user) for them yet.
+For each team in the org, the bridge:
 
-!!! note "Phase 1 only adds roles"
+1. **Ensures a role** named after the team exists, creating it if missing.
+2. **Reconciles membership** against the [linked users](#map-user): it *adds* the
+   role to members who belong to the team and *removes* it from those who no
+   longer do — so the role always reflects GitHub.
+3. **Gates the mapped channels**: it reads which teams can access each repo on
+   GitHub and sets channel permissions so a channel is visible only to the roles
+   of teams with access. A role sees a channel if its team can access *any* repo
+   mapped there.
 
-    It never removes them. Taking a role away when someone leaves a team is
-    [on the roadmap](roadmap.md), gated behind a flag, so an accidental team
-    change can't silently strip access.
+It replies with what changed — roles created, members added and removed, and any
+GitHub logins it couldn't place because nobody has run [`/map user`](#map-user)
+for them yet.
+
+!!! warning "The bot only touches what it manages"
+
+    Removals and channel-permission changes are scoped to the roles the bot
+    itself created for teams and to the channels you've mapped. Roles you made by
+    hand and channels the bot doesn't know about are never modified.
 
 ### `/config` { #config }
 
@@ -96,12 +97,11 @@ Refresh the live configuration panel.
 /config
 ```
 
-The bridge keeps a single **live panel** pinned in `#bot-config` — one embed
-listing every team→role, repo→channel, and linked user, rendered with real
-Discord mentions. It updates itself whenever you run a `/map` command and on every
-boot, so it never floods the channel: the bot finds its own panel message and
-**edits it in place** rather than posting a new one. `/config` just forces that
-refresh on demand.
+The bridge keeps a single **live panel** in `#bot-config` — one embed listing
+every team→role, repo→channel, and linked user, rendered with real Discord
+mentions. It updates itself after each `/map` and each `/sync`, so it never
+floods the channel: the bot finds its own panel message and **edits it in place**
+rather than posting a new one. `/config` just forces that refresh on demand.
 
 ## Events { #events }
 

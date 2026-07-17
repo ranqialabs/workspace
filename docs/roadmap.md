@@ -18,12 +18,12 @@ what already works.
 
   `/create-issue` and `/request-review` — act on GitHub straight from Discord.
 
-- :lucide-user-minus:{ .lg .middle } **Role removal**
+- :lucide-webhook:{ .lg .middle } **Sync on GitHub events**
 
   ***
 
-  Optionally remove a Discord role when someone leaves a GitHub team. Behind a
-  flag, off by default.
+  Re-sync automatically when a team's membership or repo access changes on
+  GitHub, instead of only on boot and `/sync roles`.
 
 - :simple-google:{ .lg .middle } **Google Workspace**
 

@@ -24,7 +24,7 @@ authenticates to GitHub as a [GitHub App] installed on the org.
 | `bridge/github_app.py` | GitHub App client, authenticated as the org installation |
 | `bridge/bot.py` | The bot: discovers the server, loads cogs, starts the webhook |
 | `bridge/webhook.py` | Verifies webhook signatures, dispatches events |
-| `bridge/cogs/github_sync.py` | The mapping commands and role sync |
+| `bridge/cogs/github_sync.py` | Team→role mirroring, channel gating, `/map` and `/sync` |
 | `bridge/cogs/notifications.py` | Turns GitHub events into Discord messages |
 
 ## Nothing to configure
@@ -38,10 +38,25 @@ bots make you type:
   No bespoke admin role, no ID to store.
 - **Where does state live?** It looks for a `#bot-config` channel and creates one
   (hidden from `@everyone`) if it's missing.
+- **Which role belongs to which team?** GitHub already knows. On sync the bot
+  creates a role per team and mirrors membership — you never make those roles.
 
-What's left — which team maps to which role, which repo posts to which channel,
-which GitHub user is which Discord member — can't be guessed, so those are set
-with commands. But even there you never handle an ID: see [Commands](commands.md).
+What genuinely can't be guessed is only two things: how you want repos grouped
+into channels, and who each GitHub user is on Discord. Those are set with commands
+— and even there you never handle an ID: see [Commands](commands.md).
+
+## GitHub is the source of truth
+
+The core principle: **the bot mirrors GitHub into Discord, never the reverse.**
+`/sync roles` (run on every boot and on demand) walks the org's teams and, for
+each one, creates the matching Discord role if absent, reconciles its members
+against the identity links — *adding and removing* to match — and then sets each
+mapped channel's permissions so it's visible only to the roles of teams that can
+access its repos. A role sees a channel if its team can reach any repo mapped
+there.
+
+To make removals safe, the bot only ever touches roles it created for teams and
+channels you've mapped; anything you set up by hand is left alone.
 
 ## Cogs: one domain, one file
 
