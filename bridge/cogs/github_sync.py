@@ -1,8 +1,9 @@
-"""Cog: interactive mapping commands + GitHub-team -> Discord-role sync.
+"""Cog: interactive mapping sub-commands + GitHub-team -> Discord-role sync.
 
-You never type an ID. Roles/channels come from native Discord mentions; team
-slugs and repo names come from GitHub-API-backed autocomplete. All mappings are
-persisted to #bot-config via the store.
+Commands are grouped: `/map team`, `/map repo`, `/map user`, and `/sync roles`.
+You never type an ID — roles/channels are Discord mentions, and team/repo/user
+names come from GitHub-API-backed autocomplete. Everything persists to
+#bot-config via the store.
 """
 
 from typing import TYPE_CHECKING
@@ -14,9 +15,6 @@ from discord.ext import commands
 if TYPE_CHECKING:
     from bridge.bot import BridgeBot
 
-# Only members with "Manage Server" can run these — no admin role id needed.
-_admin = app_commands.checks.has_permissions(manage_guild=True)
-
 
 class SyncResult:
     def __init__(self) -> None:
@@ -27,6 +25,17 @@ class SyncResult:
 class GithubSync(commands.Cog):
     def __init__(self, bot: "BridgeBot") -> None:
         self.bot = bot
+
+    map = app_commands.Group(
+        name="map",
+        description="Wire GitHub teams, repos, and users to Discord.",
+        default_permissions=discord.Permissions(manage_guild=True),
+    )
+    sync = app_commands.Group(
+        name="sync",
+        description="Apply GitHub state to Discord now.",
+        default_permissions=discord.Permissions(manage_guild=True),
+    )
 
     # --- autocomplete helpers (backed by the GitHub API) ---
 
@@ -41,6 +50,20 @@ class GithubSync(commands.Cog):
             if current.lower() in team.slug.lower():
                 choices.append(app_commands.Choice(name=team.slug, value=team.slug))
             if len(choices) >= 25:  # Discord's autocomplete cap
+                break
+        return choices
+
+    async def _member_choices(
+        self, _: discord.Interaction, current: str
+    ) -> list[app_commands.Choice[str]]:
+        assert self.bot.github is not None
+        choices: list[app_commands.Choice[str]] = []
+        async for user in self.bot.github.rest.paginate(
+            self.bot.github.rest.orgs.async_list_members, org=self.bot.config.org
+        ):
+            if current.lower() in user.login.lower():
+                choices.append(app_commands.Choice(name=user.login, value=user.login))
+            if len(choices) >= 25:
                 break
         return choices
 
@@ -63,24 +86,9 @@ class GithubSync(commands.Cog):
                 break
         return choices
 
-    # --- commands ---
+    # --- /map ---
 
-    @app_commands.command(description="Link a GitHub login to a Discord member.")
-    @_admin
-    async def link(
-        self,
-        interaction: discord.Interaction,
-        github_login: str,
-        member: discord.Member,
-    ) -> None:
-        assert self.bot.store is not None
-        await self.bot.store.link_identity(github_login, member.id)
-        await interaction.response.send_message(
-            f"Linked `{github_login}` → {member.mention}.", ephemeral=True
-        )
-
-    @app_commands.command(description="Map a GitHub team to a Discord role.")
-    @_admin
+    @map.command(name="team", description="Map a GitHub team to a Discord role.")
     @app_commands.autocomplete(team=_team_choices)
     async def map_team(
         self, interaction: discord.Interaction, team: str, role: discord.Role
@@ -91,8 +99,7 @@ class GithubSync(commands.Cog):
             f"Mapped team `{team}` → {role.mention}.", ephemeral=True
         )
 
-    @app_commands.command(description="Map a GitHub repo to a Discord channel.")
-    @_admin
+    @map.command(name="repo", description="Map a GitHub repo to a Discord channel.")
     @app_commands.autocomplete(repo=_repo_choices)
     async def map_repo(
         self,
@@ -106,8 +113,38 @@ class GithubSync(commands.Cog):
             f"Mapped repo `{repo}` → {channel.mention}.", ephemeral=True
         )
 
-    @app_commands.command(description="Sync GitHub team membership to Discord roles.")
-    @_admin
+    @map.command(name="user", description="Link a GitHub user to a Discord member.")
+    @app_commands.autocomplete(github_login=_member_choices)
+    async def map_user(
+        self,
+        interaction: discord.Interaction,
+        github_login: str,
+        member: discord.Member,
+    ) -> None:
+        assert self.bot.store is not None
+        assert self.bot.github is not None
+        await self.bot.store.link_identity(github_login, member.id)
+
+        # Enrich the confirmation with the GitHub profile (name + avatar). One
+        # request, only for the chosen login — cheap, and this is where an image
+        # can actually render (Discord autocomplete choices are text-only).
+        embed = discord.Embed(title="Identity linked", color=0x2DA44E)
+        try:
+            resp = await self.bot.github.rest.users.async_get_by_username(github_login)
+            user = resp.parsed_data
+            embed.set_thumbnail(url=user.avatar_url)
+            display = (
+                f"{user.name} (`{github_login}`)" if user.name else f"`{github_login}`"
+            )
+            embed.description = f"[{display}]({user.html_url}) → {member.mention}"
+        except Exception:  # noqa: BLE001
+            # Unknown login or API hiccup: the link is saved, just show it plainly.
+            embed.description = f"`{github_login}` → {member.mention}"
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
+    # --- /sync ---
+
+    @sync.command(name="roles", description="Sync GitHub team membership to roles.")
     async def sync_roles(self, interaction: discord.Interaction) -> None:
         await interaction.response.defer(ephemeral=True)
         result = await self._run_sync(interaction.guild)
@@ -116,7 +153,7 @@ class GithubSync(commands.Cog):
             lines += [f"  • {a}" for a in result.added]
         if result.unmapped:
             lines.append(
-                "Unmapped GitHub logins (run /link): "
+                "Unmapped GitHub logins (run /map user): "
                 + ", ".join(sorted(result.unmapped))
             )
         await interaction.followup.send("\n".join(lines), ephemeral=True)
