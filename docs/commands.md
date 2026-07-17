@@ -7,7 +7,7 @@ icon: lucide/terminal
 ## Slash commands
 
 Both commands require the caller to have the **admin role** configured as
-[`admin_role_id`](configuration.md#3-configtoml). Anyone else gets a polite
+[`ADMIN_ROLE_ID`](configuration.md#3-environment-variables). Anyone else gets a polite
 refusal.
 
 ### `/link` { #link }
@@ -34,7 +34,7 @@ Read GitHub team membership and assign matching Discord roles.
 /sync-roles
 ```
 
-For each `team → role` pair in [`team_to_role`](configuration.md#3-configtoml),
+For each `team → role` pair in [`TEAM_TO_ROLE`](configuration.md#3-environment-variables),
 the bridge lists the team's members, looks each one up in the identity map, and
 adds the role to the linked Discord member if they don't have it yet. It replies
 with a summary: how many roles were added, and which GitHub logins have no
@@ -48,7 +48,7 @@ with a summary: how many roles were added, and which GitHub logins have no
 ## Events { #events }
 
 The bridge listens for these GitHub webhook events and posts to the repo's
-channel (from [`repo_to_channel`](configuration.md#3-configtoml)). If the actor
+channel (from [`REPO_TO_CHANNEL`](configuration.md#3-environment-variables)). If the actor
 is linked, they're @mentioned; otherwise their GitHub login is shown as text.
 
 | Event                               | Trigger                 | Message                          |

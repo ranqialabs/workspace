@@ -4,8 +4,9 @@ icon: lucide/settings
 
 # Configuration
 
-The bridge reads two things: a **`config.toml`** for non-secret routing, and
-**environment variables** for secrets. Secrets never go in the TOML.
+The bridge is configured entirely through **environment variables** — nothing is
+read from disk. Non-secret routing lives in `fly.toml`'s `[env]`; secrets go
+through `fly secrets`. For local runs, put everything in a `.env` file.
 
 ## 1. Create the GitHub App
 
@@ -28,45 +29,40 @@ with the `bot` and `applications.commands` scopes.
 
 [Discord Developer Portal]: https://discord.com/developers/applications
 
-## 3. `config.toml`
+## 3. Environment variables
 
-Copy `config.example.toml` to `config.toml` and fill in the IDs. In Discord,
-enable Developer Mode to right-click and _Copy ID_.
+In Discord, enable Developer Mode to right-click and _Copy ID_.
 
-```toml
-guild_id = 000000000000000000       # discord server id
-admin_role_id = 000000000000000000  # role allowed to run /link and /sync-roles
-org = "ranqialabs"                   # github org slug
+| Variable | Secret? | Description |
+| :------- | :------ | :---------- |
+| `GITHUB_ORG` | no | GitHub org slug, e.g. `ranqialabs` |
+| `GUILD_ID` | no | Discord server id |
+| `ADMIN_ROLE_ID` | no | Role allowed to run `/link` and `/sync-roles` |
+| `TEAM_TO_ROLE` | no | JSON: github team slug → discord role id |
+| `REPO_TO_CHANNEL` | no | JSON: `"owner/repo"` → discord channel id |
+| `DISCORD_TOKEN` | **yes** | Bot token from the Discord portal |
+| `GITHUB_APP_ID` | **yes** | Numeric app id |
+| `GITHUB_APP_PRIVATE_KEY` | **yes** | PEM contents, or a path to the `.pem` |
+| `GITHUB_WEBHOOK_SECRET` | **yes** | Same secret set on the App webhook |
+| `WEBHOOK_HOST` / `WEBHOOK_PORT` | no | Defaults `0.0.0.0` / `8080` |
 
-[team_to_role]        # github team slug -> discord role id
-"engineering" = 000000000000000000
-"design" = 000000000000000000
+The two maps are JSON objects:
 
-[repo_to_channel]     # "owner/repo" -> discord channel id
-"ranqialabs/workspace" = 000000000000000000
+```bash
+TEAM_TO_ROLE='{"engineering":111,"design":222}'
+REPO_TO_CHANNEL='{"ranqialabs/workspace":333}'
 ```
 
 !!! tip "What maps to what"
 
-    - `team_to_role` drives `/sync-roles`: members of the GitHub team get the
+    - `TEAM_TO_ROLE` drives `/sync-roles`: members of the GitHub team get the
       Discord role.
-    - `repo_to_channel` decides which channel a repo's notifications land in.
+    - `REPO_TO_CHANNEL` decides which channel a repo's notifications land in.
       A repo with no entry is silently skipped.
 
-## 4. Secrets (`.env`)
+## 4. Run it locally
 
-Copy `.env.example` to `.env`. Never commit it.
-
-```bash
-DISCORD_TOKEN=            # bot token from the Discord portal
-GITHUB_APP_ID=            # numeric app id
-GITHUB_APP_PRIVATE_KEY=   # PEM contents, or a path to the .pem file
-GITHUB_WEBHOOK_SECRET=    # same secret you set on the GitHub App webhook
-WEBHOOK_HOST=0.0.0.0
-WEBHOOK_PORT=8080
-```
-
-## 5. Run it
+Copy `.env.example` to `.env`, fill it in (never commit it), then:
 
 ```bash
 uv sync
@@ -79,9 +75,36 @@ Discord within seconds.
 
 !!! warning "The webhook needs a public URL"
 
-    GitHub must be able to reach `WEBHOOK_PORT`. For local testing, expose it
+    GitHub must be able to reach the webhook port. For local testing, expose it
     with a tunnel such as [cloudflared] or [ngrok] and point the App's webhook
     URL at the tunnel.
 
+## 5. Deploy to Fly.io
+
+The bot runs as a single always-on machine on [Fly.io]. It can't scale to zero —
+it holds a live Discord gateway connection — so `fly.toml` keeps one machine
+running.
+
+**One-time setup:**
+
+```bash
+fly launch --no-deploy          # if you haven't already; picks app name + region
+fly secrets set \
+  DISCORD_TOKEN=... \
+  GITHUB_APP_ID=... \
+  GITHUB_APP_PRIVATE_KEY="$(cat app.private-key.pem)" \
+  GITHUB_WEBHOOK_SECRET=...
+```
+
+Put the non-secret ids in `fly.toml`'s `[env]` block (already stubbed with
+placeholders). Point the GitHub App's webhook URL at
+`https://<your-app>.fly.dev/webhook`.
+
+**Continuous deploy:** pushing to `main` triggers
+`.github/workflows/fly-deploy.yml`, which runs `flyctl deploy`. It needs one repo
+secret — create a deploy token with `fly tokens create deploy` and add it as
+`FLY_API_TOKEN` under **Settings → Secrets and variables → Actions**.
+
+[Fly.io]: https://fly.io/
 [cloudflared]: https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/
 [ngrok]: https://ngrok.com/
