@@ -9,12 +9,12 @@ primary_region = 'ams'
 [build]
 
 [env]
-  ADMIN_ROLE_ID = '000000000000000000'
-  GITHUB_ORG = 'ranqialabs'
-  GUILD_ID = '000000000000000000'
-  REPO_TO_CHANNEL = '{"ranqialabs/workspace":000000000000000000}'
-  TEAM_TO_ROLE = '{"engineering":000000000000000000}'
-  WEBHOOK_PORT = '8080'
+  # ADMIN_ROLE_ID = '000000000000000000'
+  # GITHUB_ORG = 'ranqialabs'
+  # GUILD_ID = '000000000000000000'
+  # REPO_TO_CHANNEL = '{"ranqialabs/workspace":000000000000000000}'
+  # TEAM_TO_ROLE = '{"engineering":000000000000000000}'
+  # WEBHOOK_PORT = '8080'
 
 [http_service]
   internal_port = 8080
