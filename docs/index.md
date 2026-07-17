@@ -21,14 +21,14 @@ turns GitHub activity into Discord notifications — mentioning the right people
 
   [:octicons-arrow-right-24: Commands](commands.md#sync-roles)
 
-- :lucide-link:{ .lg .middle } **Link identities**
+- :lucide-mouse-pointer-click:{ .lg .middle } **No IDs, ever**
 
   ***
 
-  `/link github_login @member` maps a GitHub account to a Discord user, so
-  mentions and sync work.
+  Map teams and repos with commands that autocomplete from GitHub and take
+  Discord mentions. You never copy a snowflake ID.
 
-  [:octicons-arrow-right-24: Commands](commands.md#link)
+  [:octicons-arrow-right-24: Commands](commands.md)
 
 - :lucide-bell:{ .lg .middle } **Live notifications**
 
@@ -57,15 +57,16 @@ graph LR
   GH[GitHub org] -- webhook --> W[Webhook listener]
   W --> N[notifications cog]
   N -- post + mention --> DC[Discord channel]
-  A[Admin] -- /sync-roles, /link --> S[github_sync cog]
+  A[Admin] -- "/map-*, /link, /sync-roles" --> S[github_sync cog]
   S -- read teams --> GH
   S -- assign roles --> DC
-  S <--> DB[(SQLite identity map)]
-  N <--> DB
+  S <--> CFG[(#bot-config channel)]
+  N <--> CFG
 ```
 
-The webhook listener and the Discord bot run in **one process, one event loop**.
-No cron, no separate web service, no polling.
+The webhook listener and the Discord bot run in **one process, one event loop** —
+no cron, no separate web service, no polling. And the mappings live in a Discord
+channel, so there's **no database and no disk** to manage either.
 
 ## Next steps
 

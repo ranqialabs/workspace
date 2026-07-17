@@ -2,109 +2,201 @@
 icon: lucide/settings
 ---
 
-# Configuration
+# Setup
 
-The bridge is configured entirely through **environment variables** — nothing is
-read from disk. Non-secret routing lives in `fly.toml`'s `[env]`; secrets go
-through `fly secrets`. For local runs, put everything in a `.env` file.
+Most bots make you hunt for IDs — copy the server ID, copy each role ID, paste a
+channel ID into a config file, keep them in sync forever. This one doesn't. The
+**only** thing you configure by hand is the GitHub org name. The server, who's
+allowed to run admin commands, and every mapping between GitHub and Discord are
+either discovered at runtime or set later with slash commands, using
+autocomplete and mentions. You will not paste a single snowflake ID.
 
-## 1. Create the GitHub App
+There are four stages, and you do them in order: register the
+[GitHub App](#1-the-github-app), create the [Discord bot](#2-the-discord-bot),
+[deploy](#3-deploy), then [wire everything up from inside Discord](#4-wire-it-up).
+Budget twenty minutes the first time.
 
-Create a [GitHub App] on the org and install it. It needs:
+## 1. The GitHub App
 
-- **Repository permissions:** Issues (read), Pull requests (read)
-- **Organization permissions:** Members (read)
-- **Webhook events:** `pull_request`, `issues`
-- A **webhook URL** pointing at where the bridge runs (`https://.../webhook`)
-- A **webhook secret** (any random string — you'll reuse it below)
-- A generated **private key** (`.pem`)
+The bridge talks to GitHub as a **GitHub App** installed on your org — not as a
+personal token. That matters: an App gets its own identity, its own fine-grained
+permissions, and its own webhook deliveries, and it keeps working when the person
+who set it up leaves. Create one under **Org Settings → Developer settings →
+GitHub Apps → New GitHub App**.
 
-[GitHub App]: https://docs.github.com/en/apps/creating-github-apps
+**Identity.** Give it a name (`ranqia-workspace` is fine) and any homepage URL.
+Everything under *Identifying and authorizing users* — Callback URL, Setup URL,
+the OAuth and Device Flow checkboxes — stays **empty and unchecked**. Those are
+for logging users in, and the bridge never does that; it acts as the installation
+itself.
 
-## 2. Create the Discord bot
+**Webhook.** Tick **Active**. The **Webhook URL** is
+`https://<your-fly-app>.fly.dev/webhook` — you won't know the exact host until
+[stage 3](#3-deploy), so it's fine to come back and fill it in. Set a **Secret**
+to a long random string and keep it somewhere; it becomes `GITHUB_WEBHOOK_SECRET`
+and is what lets the bridge prove a webhook really came from GitHub.
 
-Create an application in the [Discord Developer Portal], add a bot, and enable
-the **Server Members Intent** (needed to assign roles). Invite it to the server
-with the `bot` and `applications.commands` scopes.
+**Permissions.** All read-only — the bridge observes, it never writes to GitHub:
 
-[Discord Developer Portal]: https://discord.com/developers/applications
+| Scope | Permission | Why it's needed |
+| :---- | :--------- | :-------------- |
+| Repository | **Issues** → Read | to hear about opened issues |
+| Repository | **Pull requests** → Read | to hear about PRs and review requests |
+| Repository | **Metadata** → Read | mandatory; GitHub adds it for you |
+| Organization | **Members** → Read | `/sync-roles` reads who's in each team |
 
-## 3. Environment variables
+**Events.** Subscribe to **Pull request** and **Issues**. You do *not* need a
+separate "Pull request review" subscription — a requested review arrives as an
+action inside the pull_request event.
 
-In Discord, enable Developer Mode to right-click and _Copy ID_.
+**Install it.** Under **Where can this app be installed**, choose *Only on this
+account*, save, then open **Install App** and install it on the org.
 
-| Variable | Secret? | Description |
-| :------- | :------ | :---------- |
-| `GITHUB_ORG` | no | GitHub org slug, e.g. `ranqialabs` |
-| `GUILD_ID` | no | Discord server id |
-| `ADMIN_ROLE_ID` | no | Role allowed to run `/link` and `/sync-roles` |
-| `TEAM_TO_ROLE` | no | JSON: github team slug → discord role id |
-| `REPO_TO_CHANNEL` | no | JSON: `"owner/repo"` → discord channel id |
-| `DISCORD_TOKEN` | **yes** | Bot token from the Discord portal |
-| `GITHUB_APP_ID` | **yes** | Numeric app id |
-| `GITHUB_APP_PRIVATE_KEY` | **yes** | PEM contents, or a path to the `.pem` |
-| `GITHUB_WEBHOOK_SECRET` | **yes** | Same secret set on the App webhook |
-| `WEBHOOK_HOST` / `WEBHOOK_PORT` | no | Defaults `0.0.0.0` / `8080` |
+Now collect three things the deploy will need:
 
-The two maps are JSON objects:
+1. The **App ID** (a number, shown at the top) → `GITHUB_APP_ID`.
+2. A **private key**: scroll to *Private keys* → **Generate a private key**. A
+   `.pem` file downloads. Its entire contents are `GITHUB_APP_PRIVATE_KEY`.
+3. That **webhook secret** from earlier → `GITHUB_WEBHOOK_SECRET`.
 
-```bash
-TEAM_TO_ROLE='{"engineering":111,"design":222}'
-REPO_TO_CHANNEL='{"ranqialabs/workspace":333}'
+!!! danger "The private key is the `.pem`, not the client secret"
+
+    A GitHub App page shows both a *Client secret* and a *private key*, and it is
+    easy to grab the wrong one. The bridge signs a JWT with the **private key** —
+    the downloaded file that begins with `-----BEGIN ... PRIVATE KEY-----`. The
+    client id and client secret are for OAuth user login and are never used here.
+    If you see `Could not parse the provided public key` in the logs, you almost
+    certainly stored the client secret (or a mangled key) instead.
+
+## 2. The Discord bot
+
+Head to the [Discord Developer Portal] and create an application.
+
+**Get the token.** Open **Bot**, click **Reset Token**, and copy it — Discord
+shows it exactly once. This is `DISCORD_TOKEN`, the credential the bot logs in
+with. Treat it like a password; if it leaks, Reset Token again and the old one
+dies.
+
+**Turn on the one intent that matters.** Still on the Bot page, under *Privileged
+Gateway Intents*, enable **Server Members Intent**. Without it the bot literally
+cannot see or change members' roles, and `/sync-roles` fails. Leave **Presence**
+and **Message Content** off — the bridge uses slash commands, so it never needs
+to read message text.
+
+**Invite it.** Go to **OAuth2 → URL Generator**, tick the scopes **`bot`** and
+**`applications.commands`**, then under bot permissions tick **Manage Roles**,
+**View Channels**, **Send Messages**, **Manage Channels** (so it can create its
+own config channel), and **Embed Links**. Copy the URL it builds at the bottom,
+open it, and add the bot to your server.
+
+!!! tip "Put the bot's role near the top"
+
+    Discord only lets a bot assign roles that sit **below its own** in the role
+    list — a safety rule, not a bug. After inviting, drag the bot's role above the
+    team roles it will manage (engineering, design, …), or `/sync-roles` will fail
+    with *Missing Permissions* even though the permission is granted.
+
+## 3. Deploy
+
+The bridge is one always-on process on [Fly.io]. It can't scale to zero the way a
+web app can, because it holds a live WebSocket to Discord the whole time it's
+running — drop that connection and the bot goes offline. So `fly.toml` pins one
+machine permanently running.
+
+The single non-secret setting lives right in `fly.toml`, in plain sight:
+
+```toml
+[env]
+  GITHUB_ORG = 'ranqialabs'
+  WEBHOOK_PORT = '8080'
 ```
 
-!!! tip "What maps to what"
-
-    - `TEAM_TO_ROLE` drives `/sync-roles`: members of the GitHub team get the
-      Discord role.
-    - `REPO_TO_CHANNEL` decides which channel a repo's notifications land in.
-      A repo with no entry is silently skipped.
-
-## 4. Run it locally
-
-Copy `.env.example` to `.env`, fill it in (never commit it), then:
+The four secrets never touch that file — they go through `fly secrets`, which
+stores them encrypted:
 
 ```bash
-uv sync
-uv run python -m bridge
-```
-
-On startup the bridge creates the SQLite database, loads the cogs, starts the
-webhook server, and syncs slash commands to your guild. The commands appear in
-Discord within seconds.
-
-!!! warning "The webhook needs a public URL"
-
-    GitHub must be able to reach the webhook port. For local testing, expose it
-    with a tunnel such as [cloudflared] or [ngrok] and point the App's webhook
-    URL at the tunnel.
-
-## 5. Deploy to Fly.io
-
-The bot runs as a single always-on machine on [Fly.io]. It can't scale to zero —
-it holds a live Discord gateway connection — so `fly.toml` keeps one machine
-running.
-
-**One-time setup:**
-
-```bash
-fly launch --no-deploy          # if you haven't already; picks app name + region
+fly launch --no-deploy   # first time only: names the app, picks a region
 fly secrets set \
   DISCORD_TOKEN=... \
   GITHUB_APP_ID=... \
-  GITHUB_APP_PRIVATE_KEY="$(cat app.private-key.pem)" \
-  GITHUB_WEBHOOK_SECRET=...
+  GITHUB_WEBHOOK_SECRET=... \
+  GITHUB_APP_PRIVATE_KEY="$(cat ranqia-workspace.*.private-key.pem)"
 ```
 
-Put the non-secret ids in `fly.toml`'s `[env]` block (already stubbed with
-placeholders). Point the GitHub App's webhook URL at
-`https://<your-app>.fly.dev/webhook`.
+!!! danger "Set the key from the file, with the quotes"
 
-**Continuous deploy:** pushing to `main` triggers
-`.github/workflows/fly-deploy.yml`, which runs `flyctl deploy`. It needs one repo
-secret — create a deploy token with `fly tokens create deploy` and add it as
-`FLY_API_TOKEN` under **Settings → Secrets and variables → Actions**.
+    A PEM is multi-line, and pasting it into a shell (or the Fly dashboard)
+    usually collapses the newlines, which makes JWT signing blow up. Reading it
+    with `"$(cat ...pem)"` keeps the line breaks intact. This one detail is the
+    most common reason a first deploy crash-loops.
 
+With the app deployed you'll have its hostname — go back to the GitHub App and
+set the **Webhook URL** to `https://<your-fly-app>.fly.dev/webhook`.
+
+**Deploys happen on their own from here.** Every push to `main` that touches the
+bot triggers `.github/workflows/fly-deploy.yml`, which runs `flyctl deploy`. It
+needs exactly one repository secret: create a token with `fly tokens create
+deploy` and add it as `FLY_API_TOKEN` under **Settings → Secrets and variables →
+Actions**.
+
+??? note "Running it locally instead"
+
+    ```bash
+    cp .env.example .env    # fill it in — and never commit it
+    uv sync
+    uv run python -m bridge
+    ```
+
+    GitHub still needs a public URL to deliver webhooks to, so expose the port
+    with a tunnel like [cloudflared] or [ngrok] and point the App's webhook there
+    while you test.
+
+## 4. Wire it up
+
+The first time the bot connects, it does two things on its own: it **finds or
+creates a `#bot-config` channel** (hidden from `@everyone`) to keep its state in,
+and it registers its slash commands with your server. Give it a few seconds, then
+open Discord and start mapping.
+
+Every command below requires the **Manage Server** permission — that's the whole
+access model, no special admin role to create. And none of them ask for an ID:
+team and repo names come from GitHub-backed autocomplete, roles and channels from
+normal Discord mentions.
+
+| Command | What it does |
+| :------ | :----------- |
+| `/map-team team:‹slug› role:@Role` | `team` autocompletes from your org's real GitHub teams; you pick the role |
+| `/map-repo repo:‹owner/name› channel:#channel` | `repo` autocompletes from your org's repos; you pick the channel |
+| `/link github_login:‹login› member:@member` | ties a GitHub user to a Discord member, so mentions and sync work |
+| `/sync-roles` | applies team→role membership to everyone right now |
+
+Once a team is mapped and people are linked, `/sync-roles` hands out roles; once a
+repo is mapped, its pull requests and issues start landing in that channel. That's
+the whole setup.
+
+## How your mappings are stored
+
+Here's the part that keeps this simple: **there is no database and no disk.** The
+`#bot-config` channel *is* the store. Each mapping is one ordinary message:
+
+```text
+team engineering 456
+repo ranqialabs/workspace 789
+identity itsmeale 123
+```
+
+`/map-team` posts the first kind of line, `/map-repo` the second, `/link` the
+third. On every boot the bot reads that channel's history back and rebuilds its
+mappings in memory. Nothing to back up, nothing to pay for, and it survives every
+redeploy and restart for free — Discord is already keeping the messages.
+
+A nice side effect: your configuration is **auditable and hand-editable**. Want to
+see every mapping? Scroll the channel. Need to fix one without a command? Post the
+line yourself. The mechanics are described in
+[How it works](how-it-works.md#persistence-the-channel-is-the-store).
+
+[Discord Developer Portal]: https://discord.com/developers/applications
+[GitHub App]: https://docs.github.com/en/apps/creating-github-apps
 [Fly.io]: https://fly.io/
 [cloudflared]: https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/
 [ngrok]: https://ngrok.com/

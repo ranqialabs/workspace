@@ -42,9 +42,10 @@ what already works.
 ## Known limitations (Phase 1)
 
 - **Review requests only mention individuals**, not teams.
-- **The webhook needs a public URL** — no hosting is set up yet; the process
-  must run somewhere reachable by GitHub.
-- **Identity mapping is manual** via `/link`. No GitHub/Discord OAuth.
+- **Identity mapping is manual** via `/link` — there's no GitHub/Discord OAuth to
+  match accounts automatically.
+- **Mappings are replayed from a channel on boot** — great up to low hundreds of
+  entries, but a much larger server would want a real store.
 
 ## Design principle
 

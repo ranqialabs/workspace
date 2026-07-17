@@ -6,59 +6,99 @@ icon: lucide/terminal
 
 ## Slash commands
 
-Both commands require the caller to have the **admin role** configured as
-[`ADMIN_ROLE_ID`](configuration.md#3-environment-variables). Anyone else gets a polite
-refusal.
+Every command here requires the caller to have Discord's **Manage Server**
+permission — that's the entire access model, so there's no admin role to create
+or maintain. Anyone without it gets a polite, ephemeral refusal.
+
+The commands are built so you never touch an ID. Team and repo names come from
+**autocomplete backed by the GitHub API** — start typing and the bot offers your
+org's real teams or repos. Roles, channels, and members are ordinary Discord
+**mentions**, so you pick them the way you pick anything else.
+
+### `/map-team` { #map-team }
+
+Tie a GitHub team to a Discord role.
+
+```text
+/map-team team:‹slug› role:@Role
+```
+
+| Parameter | Description |
+| :-------- | :---------- |
+| `team` | Autocompletes from the org's GitHub teams — pick one |
+| `role` | The Discord role members of that team should get |
+
+This is what [`/sync-roles`](#sync-roles) acts on. Mapping a team again just
+updates it.
+
+### `/map-repo` { #map-repo }
+
+Tie a GitHub repo to a Discord channel.
+
+```text
+/map-repo repo:‹owner/name› channel:#channel
+```
+
+| Parameter | Description |
+| :-------- | :---------- |
+| `repo` | Autocompletes from the org's repos — pick one |
+| `channel` | Where that repo's PR and issue notifications should land |
+
+A repo with no mapping is simply skipped — its events arrive and are ignored, no
+error.
 
 ### `/link` { #link }
 
-Map a GitHub login to a Discord member.
+Tie a GitHub login to a Discord member.
 
-```
-/link github_login:<login> member:@someone
+```text
+/link github_login:‹login› member:@member
 ```
 
-| Parameter      | Description                          |
-| :------------- | :----------------------------------- |
+| Parameter | Description |
+| :-------- | :---------- |
 | `github_login` | The GitHub username, e.g. `itsmeale` |
-| `member`       | The Discord member to map it to      |
+| `member` | The Discord member behind that account |
 
-Stored in the SQLite identity map. Re-linking the same login overwrites the old
-mapping. This is what makes `/sync-roles` and @mentions work.
+This is the join that makes mentions and role sync work: it's how the bridge
+knows that a PR by `itsmeale` should ping a particular person. Re-linking a login
+overwrites the old mapping.
 
 ### `/sync-roles` { #sync-roles }
 
-Read GitHub team membership and assign matching Discord roles.
+Bring Discord roles in line with GitHub team membership, right now.
 
-```
+```text
 /sync-roles
 ```
 
-For each `team → role` pair in [`TEAM_TO_ROLE`](configuration.md#3-environment-variables),
-the bridge lists the team's members, looks each one up in the identity map, and
-adds the role to the linked Discord member if they don't have it yet. It replies
-with a summary: how many roles were added, and which GitHub logins have no
-`/link` yet.
+For each mapped team, the bridge lists its GitHub members, looks each one up
+among the linked identities, and adds the mapped role to the matching Discord
+member if they don't already have it. It replies with a summary — how many roles
+it granted, and which GitHub logins it couldn't place because nobody has run
+[`/link`](#link) for them yet.
 
 !!! note "Phase 1 only adds roles"
 
-    It never removes roles. Removing a role when someone leaves a team is
-    [on the roadmap](roadmap.md) behind a flag, to avoid accidental removals.
+    It never removes them. Taking a role away when someone leaves a team is
+    [on the roadmap](roadmap.md), gated behind a flag, so an accidental team
+    change can't silently strip access.
 
 ## Events { #events }
 
-The bridge listens for these GitHub webhook events and posts to the repo's
-channel (from [`REPO_TO_CHANNEL`](configuration.md#3-environment-variables)). If the actor
-is linked, they're @mentioned; otherwise their GitHub login is shown as text.
+The bridge listens for these GitHub webhook events and posts to the channel the
+repo is [mapped](#map-repo) to. When the person involved is [linked](#link) they
+get an `@mention`; otherwise their GitHub login shows up as plain text, so the
+message still makes sense.
 
-| Event                               | Trigger                 | Message                          |
-| :---------------------------------- | :---------------------- | :------------------------------- |
-| `pull_request` (`opened`)           | A PR is opened          | Posts title, author, link        |
-| `pull_request` (`review_requested`) | A reviewer is requested | @mentions the requested reviewer |
-| `issues` (`opened`)                 | An issue is opened      | Posts title, author, link        |
+| Event | Trigger | Message |
+| :---- | :------ | :------ |
+| `pull_request` (`opened`) | a PR is opened | title, author, link |
+| `pull_request` (`review_requested`) | a reviewer is requested | @mentions the requested reviewer |
+| `issues` (`opened`) | an issue is opened | title, author, link |
 
-!!! info "Review requested by team"
+!!! info "Review requested from a team"
 
-    Right now only individual reviewers are mentioned. If a review is requested
-    from a whole team, GitHub sends a different field — handling that is on the
-    [roadmap](roadmap.md).
+    Only individual reviewers are mentioned for now. When a review is requested
+    from a whole team, GitHub sends a different field, and wiring that up is
+    [on the roadmap](roadmap.md).
