@@ -72,11 +72,12 @@ class GithubSync(commands.Cog):
     ) -> list[app_commands.Choice[str]]:
         assert self.bot.github is not None
         choices: list[app_commands.Choice[str]] = []
-        # As the installation: lists every repo the app can reach, private too.
-        # (repos.list_for_org would only surface public ones here.)
+        # type="all" is what surfaces private repos here; as the installation the
+        # app already has access to them. (The default omits private ones.)
         async for repo in self.bot.github.rest.paginate(
-            self.bot.github.rest.apps.async_list_repos_accessible_to_installation,
-            map_func=lambda r: r.parsed_data.repositories,
+            self.bot.github.rest.repos.async_list_for_org,
+            org=self.bot.config.org,
+            type="all",
         ):
             if current.lower() in repo.full_name.lower():
                 choices.append(
