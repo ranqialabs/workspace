@@ -11,19 +11,20 @@ is enough to trust what the bot does on its own.
 
 ## GitHub is the source of truth
 
-Your org already answers "who's on which team" and "who can touch which repo" —
-in GitHub, where that information is actually maintained. Asking you to re-answer
-those questions inside Discord would mean two copies of the truth, and two copies
-always drift.
+Your org already answers "who can touch which repo" — in GitHub, where that
+information is actually maintained. Asking you to re-answer that question inside
+Discord would mean two copies of the truth, and two copies always drift.
 
-So the bridge only ever reads that state and reflects it. It **creates a Discord
-role for each GitHub team**, keeps its members in step — adding people who joined,
-removing people who left — and makes each **channel visible only to the teams that
-can reach its repos**. Delete a team on GitHub and its role disappears; move
-someone between teams and their access follows. You never edit a role or a channel
-permission by hand, because the moment you did, GitHub and Discord would disagree.
+So the bridge only ever reads that state and reflects it. You **map a repo to a
+channel** — the one grouping GitHub can't infer — and the bridge **creates an
+access role for that repo**, fills it with everyone who can reach the repo on
+GitHub (team members and direct collaborators alike, since what matters is *access*,
+not how you got it), and makes the **channel visible only to that role**. Grant
+someone access on GitHub and the channel opens up for them; revoke it and it
+closes — you don't touch a role or a permission by hand, because the moment you
+did, GitHub and Discord would disagree.
 
-The rule the bot lives by: it only touches what it created — the team roles and
+The rule the bot lives by: it only touches what it created — the access roles and
 the channels you mapped. Anything you set up yourself is off-limits, so "reflect
 GitHub" can never mean "trample your manual work."
 
@@ -38,7 +39,7 @@ The bridge refuses that entire category of error. The only thing you configure b
 hand is your GitHub org name. Everything else is either **discovered** (the server
 is the one the bot is in; an admin is anyone with *Manage Server*) or chosen
 through the interface Discord already gives you — you **mention** a channel, you
-**pick** a member, and team and repo names come from autocomplete backed by the
+**pick** a member, and repo and user names come from autocomplete backed by the
 live GitHub API. If you can't fat-finger an ID, you can't misconfigure the bridge.
 
 ## Your configuration lives in Discord
@@ -59,8 +60,8 @@ audit log, and they can't disagree because they're the same thing.
 ## Why this shape
 
 One last idea sits under the code rather than in front of the user, but it's worth
-knowing: the bridge is built to **grow without disturbing what works**. Team sync,
-notifications — each is a self-contained unit, and the ones coming later (Google
+knowing: the bridge is built to **grow without disturbing what works**. Access
+sync, notifications — each is a self-contained unit, and the ones coming later (Google
 Workspace, voice, knowledge management; see the [roadmap](roadmap.md)) slot in the
 same way, without touching the ones already running. That's a promise about the
 future more than a feature you use today, but it's why adding the next capability

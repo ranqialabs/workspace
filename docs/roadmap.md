@@ -22,8 +22,8 @@ running.
 
   ***
 
-  Re-sync automatically when a team's membership or repo access changes on
-  GitHub, instead of only on boot and `/sync roles`.
+  Re-sync automatically when a repo's collaborators or a team's membership change
+  on GitHub, instead of only on boot and `/sync roles`.
 
 - :simple-google:{ .lg .middle } **Google Workspace**
 

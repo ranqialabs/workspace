@@ -43,7 +43,7 @@ and is what lets the bridge prove a webhook really came from GitHub.
 | Repository | **Issues** → Read | to hear about opened issues |
 | Repository | **Pull requests** → Read | to hear about PRs and review requests |
 | Repository | **Metadata** → Read | mandatory; GitHub adds it for you |
-| Organization | **Members** → Read | `/sync roles` reads who's in each team |
+| Organization | **Members** → Read | `/sync roles` reads who can access each repo |
 
 **Events.** Subscribe to **Pull request** and **Issues**. You do *not* need a
 separate "Pull request review" subscription — a requested review arrives as an
@@ -93,8 +93,8 @@ open it, and add the bot to your server.
 
     Discord only lets a bot assign roles that sit **below its own** in the role
     list — a safety rule, not a bug. After inviting, drag the bot's role above the
-    team roles it will manage (engineering, design, …), or `/sync roles` will fail
-    with *Missing Permissions* even though the permission is granted.
+    access roles it will manage (`‹repo›-access`), or `/sync roles` will fail with
+    *Missing Permissions* even though the permission is granted.
 
 ## 3. Deploy
 
@@ -155,12 +155,13 @@ Actions**.
 
 The first time the bot connects it does three things on its own: it **finds or
 creates a `#bot-config` channel** (hidden from `@everyone`), registers its slash
-commands, and runs a first **sync** to mirror your GitHub teams into Discord.
+commands, and runs a first **sync** to reconcile access from GitHub.
 
 The guiding idea: **GitHub is the source of truth, Discord reflects it.** You
-don't create team roles or juggle channel permissions by hand — the bot derives
-those from GitHub. You only tell it the two things GitHub can't know: how you want
-repos grouped into channels, and who each GitHub user is on Discord.
+don't create access roles or juggle channel permissions by hand — the bot derives
+those from who can reach each repo on GitHub. You only tell it the two things
+GitHub can't know: how you want repos grouped into channels, and who each GitHub
+user is on Discord.
 
 Every command requires the **Manage Server** permission, and none ask for an ID —
 repos and users come from GitHub-backed autocomplete, channels and members from
@@ -170,14 +171,14 @@ normal Discord mentions.
 | :------ | :----------- |
 | `/map user github_login:‹login› member:@member` | ties a GitHub user to a Discord member (mentions + role sync) |
 | `/map repo repo:‹owner/name› channel:#channel` | routes a repo's notifications to a channel; group several repos into one channel |
-| `/sync roles` | mirrors teams now: creates roles, syncs membership, gates channels |
+| `/sync roles` | reconciles access now: per mapped repo, fills its access role and gates the channel |
 
 So the flow is: [link people](commands.md#map-user) with `/map user`,
 [group repos](commands.md#map-repo) into channels with `/map repo`, and let
-`/sync roles` do the rest — it creates a
-role per GitHub team, adds and removes members to match, and sets each mapped
-channel's permissions so only the roles of teams with repo access can see it.
-`/sync roles` also runs automatically on every boot.
+`/sync roles` do the rest — for each mapped repo it creates an `‹repo›-access`
+role, adds and removes members to match who can reach the repo on GitHub, and sets
+the channel's permissions so only that role can see it. `/sync roles` also runs
+automatically on every boot.
 
 ## Where it keeps state
 

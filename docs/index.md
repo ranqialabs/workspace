@@ -12,21 +12,22 @@ turns GitHub activity into Discord notifications — mentioning the right people
 
 <div class="grid cards" markdown>
 
-- :lucide-users:{ .lg .middle } **GitHub teams, mirrored**
+- :lucide-users:{ .lg .middle } **Access, mirrored**
 
   ***
 
-  The bot creates a Discord role per GitHub team and keeps its members in step —
-  adding and removing to match. GitHub is the source of truth.
+  Map a repo to a channel and the bot creates an access role, filling it with
+  everyone who can reach the repo on GitHub — team members and direct
+  collaborators alike. GitHub is the source of truth.
 
   [:octicons-arrow-right-24: Commands](commands.md#sync-roles)
 
-- :lucide-lock:{ .lg .middle } **Access follows the repos**
+- :lucide-lock:{ .lg .middle } **Access follows the repo**
 
   ***
 
-  Each mapped channel is visible only to the teams that can access its repos on
-  GitHub — derived automatically, no manual permissions.
+  Each mapped channel is visible only to its repo's access role — derived
+  automatically from GitHub, no manual permissions.
 
   [:octicons-arrow-right-24: Commands](commands.md#sync-roles)
 
@@ -55,14 +56,14 @@ turns GitHub activity into Discord notifications — mentioning the right people
 ```mermaid
 flowchart LR
   subgraph gh [GitHub]
-    GH["🐙 org · repos · teams"]
+    GH["🐙 org · repos · collaborators"]
   end
 
   subgraph bot [bridge · one process]
     direction TB
     W["webhook listener"]
     N["notifications"]
-    S["team &amp; access sync"]
+    S["repo access sync"]
     CFG[("#bot-config")]
     W --> N
     N -.-> CFG
@@ -77,7 +78,7 @@ flowchart LR
   GH -- "webhook: PR / issue" --> W
   N -- "post + @mention" --> DC
   A -- "/map · /sync roles" --> S
-  S -- "read teams · repos" --> GH
+  S -- "read repo collaborators" --> GH
   S -- "create roles · sync members · gate channels" --> DC
 ```
 

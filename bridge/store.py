@@ -14,8 +14,8 @@ import discord
 
 from bridge.config import CONFIG_CHANNEL_NAME
 
-# `identity itsmeale 123`, `team engineering 456`, `repo owner/name 789`
-_LINE = re.compile(r"^(?P<kind>identity|team|repo)\s+(?P<key>\S+)\s+(?P<value>\d+)$")
+# `identity itsmeale 123`, `repo owner/name 789`, `access owner/name 456`
+_LINE = re.compile(r"^(?P<kind>identity|repo|access)\s+(?P<key>\S+)\s+(?P<value>\d+)$")
 
 
 # Marks the bot's own live status panel so we can find and edit it instead of
@@ -27,15 +27,19 @@ class Store:
     def __init__(self, channel: discord.TextChannel) -> None:
         self._channel = channel
         self.identity: dict[str, int] = {}  # github login (casefold) -> discord id
-        self.team_to_role: dict[str, int] = {}  # github team slug -> discord role id
         self.repo_to_channel: dict[str, int] = {}  # "owner/repo" -> discord channel
+        self.repo_to_role: dict[str, int] = {}  # "owner/repo" -> access role id
         # (kind, key) -> the message that persists it, so we can delete it
         self._messages: dict[tuple[str, str], discord.Message] = {}
         self._panel: discord.Message | None = None  # the live config panel
 
     async def load(self) -> None:
-        """Rebuild the maps by replaying channel history (oldest first)."""
-        for d in (self.identity, self.team_to_role, self.repo_to_channel):
+        """Rebuild the maps by replaying channel history (oldest first).
+
+        Anything that isn't a config line or the status panel is noise (stray
+        commands, Discord notices) and gets deleted — this channel is ours.
+        """
+        for d in (self.identity, self.repo_to_channel, self.repo_to_role):
             d.clear()
         self._messages.clear()
         async for message in self._channel.history(limit=None, oldest_first=True):
@@ -45,6 +49,8 @@ class Store:
                 self._messages[m["kind"], m["key"]] = message
             elif self._is_panel(message):
                 self._panel = message
+            else:
+                await message.delete()
 
     def _is_panel(self, message: discord.Message) -> bool:
         return (
@@ -56,18 +62,18 @@ class Store:
     def _apply(self, kind: str, key: str, value: int) -> None:
         if kind == "identity":
             self.identity[key.casefold()] = value
-        elif kind == "team":
-            self.team_to_role[key] = value
         elif kind == "repo":
             self.repo_to_channel[key] = value
+        elif kind == "access":
+            self.repo_to_role[key] = value
 
     def _forget(self, kind: str, key: str) -> None:
         if kind == "identity":
             self.identity.pop(key.casefold(), None)
-        elif kind == "team":
-            self.team_to_role.pop(key, None)
         elif kind == "repo":
             self.repo_to_channel.pop(key, None)
+        elif kind == "access":
+            self.repo_to_role.pop(key, None)
 
     async def _persist(self, kind: str, key: str, value: int) -> None:
         # Drop the old line first so a re-map leaves one live message, not two.
@@ -89,17 +95,17 @@ class Store:
     async def link_identity(self, github_login: str, discord_id: int) -> None:
         await self._persist("identity", github_login, discord_id)
 
-    async def map_team(self, team_slug: str, role_id: int) -> None:
-        await self._persist("team", team_slug, role_id)
-
     async def map_repo(self, repo_full_name: str, channel_id: int) -> None:
         await self._persist("repo", repo_full_name, channel_id)
 
-    async def forget_team(self, team_slug: str) -> None:
-        await self._unpersist("team", team_slug)
+    async def map_access_role(self, repo_full_name: str, role_id: int) -> None:
+        await self._persist("access", repo_full_name, role_id)
 
     async def forget_repo(self, repo_full_name: str) -> None:
         await self._unpersist("repo", repo_full_name)
+
+    async def forget_access_role(self, repo_full_name: str) -> None:
+        await self._unpersist("access", repo_full_name)
 
     def discord_id_for(self, github_login: str) -> int | None:
         return self.identity.get(github_login.casefold())
@@ -115,18 +121,9 @@ class Store:
         )
         embed.set_footer(text=_PANEL_MARKER)
 
-        teams = "\n".join(
-            f"`{slug}` → <@&{role_id}>"
-            for slug, role_id in sorted(self.team_to_role.items())
-        )
-        embed.add_field(
-            name=f"Teams → Roles ({len(self.team_to_role)})",
-            value=teams or "*none yet — run `/sync roles`*",
-            inline=False,
-        )
-
         repos = "\n".join(
             f"`{repo}` → <#{channel_id}>"
+            + (f" <@&{role}>" if (role := self.repo_to_role.get(repo)) else "")
             for repo, channel_id in sorted(self.repo_to_channel.items())
         )
         embed.add_field(

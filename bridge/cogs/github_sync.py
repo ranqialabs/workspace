@@ -1,10 +1,12 @@
-"""Cog: GitHub-team -> Discord-role sync + repo/user mapping.
+"""Cog: repo-access -> Discord-role sync + repo/user mapping.
 
-GitHub is the source of truth. `/sync roles` walks the org's teams, creates a
-Discord role per team if missing, and reconciles membership (adds and removes)
-from the identity links. Repos still map to channels by hand (`/map repo`) —
-that grouping is a human decision GitHub can't infer. `/map user` links a GitHub
-login to a Discord member. Everything persists to #bot-config via the store.
+GitHub is the source of truth. You map a repo to a channel by hand (`/map repo`)
+— that grouping is a human decision GitHub can't infer. `/sync roles` then, per
+mapped repo, creates an access role, fills it with everyone who can *effectively*
+see that repo on GitHub (team members and direct collaborators alike, via the
+collaborators API), and gates the channel to that role. Teams don't matter here:
+what counts is who can reach the repo. `/map user` links a GitHub login to a
+Discord member. Everything persists to #bot-config via the store.
 """
 
 from typing import TYPE_CHECKING
@@ -20,7 +22,7 @@ if TYPE_CHECKING:
 class SyncResult:
     def __init__(self) -> None:
         self.created_roles: list[str] = []  # roles created this run
-        self.deleted_roles: list[str] = []  # roles deleted (team gone from GitHub)
+        self.deleted_roles: list[str] = []  # roles deleted (repo unmapped/gone)
         self.added: list[str] = []  # "member -> role"
         self.removed: list[str] = []  # "member -> role"
         self.unmapped: set[str] = set()  # github logins with no discord link
@@ -139,7 +141,7 @@ class GithubSync(commands.Cog):
 
     @sync.command(
         name="roles",
-        description="Mirror GitHub teams: create roles, sync members, gate channels.",
+        description="Per mapped repo: fill its access role from GitHub, gate the channel.",
     )
     async def sync_roles(self, interaction: discord.Interaction) -> None:
         await interaction.response.defer(ephemeral=True)
@@ -148,9 +150,7 @@ class GithubSync(commands.Cog):
         if result.created_roles:
             lines.append(f"Created roles: {', '.join(result.created_roles)}")
         if result.deleted_roles:
-            lines.append(
-                f"Deleted roles (team gone): {', '.join(result.deleted_roles)}"
-            )
+            lines.append(f"Deleted roles: {', '.join(result.deleted_roles)}")
         lines.append(
             f"Added {len(result.added)}, removed {len(result.removed)} role(s)."
         )
@@ -165,153 +165,104 @@ class GithubSync(commands.Cog):
             )
         await interaction.followup.send("\n".join(lines), ephemeral=True)
 
-    async def _team_role(
-        self, guild: discord.Guild, team_slug: str
+    async def _access_role(
+        self, guild: discord.Guild, repo: str
     ) -> tuple[discord.Role, bool]:
-        """The Discord role for a GitHub team, created and registered if missing.
+        """The access role for a mapped repo, created and registered if missing.
 
-        Returns (role, created).
+        Returns (role, created). Named `<repo>-access` (repo name only, no owner).
         """
         assert self.bot.store is not None
-        role_id = self.bot.store.team_to_role.get(team_slug)
+        role_id = self.bot.store.repo_to_role.get(repo)
         role = guild.get_role(role_id) if role_id else None
         # ponytail: if the registered role was deleted by hand, get_role returns
-        # None and we just recreate it — self-healing, at the cost of losing that
-        # role's manual tweaks. The next reconcile re-adds its members.
+        # None and we just recreate it — self-healing. Next reconcile re-adds its
+        # members.
         if role is not None:
             return role, False
-        role = await guild.create_role(name=team_slug, reason="github team sync")
-        await self.bot.store.map_team(team_slug, role.id)
+        name = f"{repo.split('/')[-1]}-access"
+        role = await guild.create_role(name=name, reason="repo access sync")
+        await self.bot.store.map_access_role(repo, role.id)
         return role, True
 
     async def run_sync(self, guild: discord.Guild | None) -> SyncResult:
-        """GitHub is the source of truth: roles, membership, and channel access."""
+        """GitHub is the source of truth: one access role per mapped repo, filled
+        with everyone who can effectively see the repo, and the channel gated to it.
+        """
         result = SyncResult()
         assert guild is not None
         assert self.bot.github is not None
         assert self.bot.store is not None
         gh, store, org = self.bot.github, self.bot.store, self.bot.config.org
 
-        # repo full_name -> set of team roles that can see it (built as we go)
-        repo_roles: dict[str, set[discord.Role]] = {}
-        seen_teams: set[str] = set()
-
-        async for team in gh.rest.paginate(gh.rest.teams.async_list, org=org):
-            seen_teams.add(team.slug)
-            role, created = await self._team_role(guild, team.slug)
+        for repo, channel_id in list(store.repo_to_channel.items()):
+            owner, name = repo.split("/", 1) if "/" in repo else (org, repo)
+            role, created = await self._access_role(guild, repo)
             if created:
-                result.created_roles.append(team.slug)
+                result.created_roles.append(role.name)
 
-            # who *should* have this role, per GitHub
+            # who *should* have this role: everyone with effective access to the
+            # repo — team members and direct collaborators alike.
             want: set[int] = set()
-            async for gh_member in gh.rest.paginate(
-                gh.rest.teams.async_list_members_in_org, org=org, team_slug=team.slug
+            async for collab in gh.rest.paginate(
+                gh.rest.repos.async_list_collaborators,
+                owner=owner,
+                repo=name,
+                affiliation="all",
             ):
-                discord_id = store.discord_id_for(gh_member.login)
+                discord_id = store.discord_id_for(collab.login)
                 if discord_id is None:
-                    result.unmapped.add(gh_member.login)
+                    result.unmapped.add(collab.login)
                 else:
                     want.add(discord_id)
 
-            # reconcile: add the missing, remove the extra (managed role only)
+            # reconcile membership: add the missing, remove the extra
             have = {m.id for m in role.members}
             for discord_id in want - have:
                 member = guild.get_member(discord_id)
                 if member is not None:
-                    await member.add_roles(role, reason=f"github team {team.slug}")
+                    await member.add_roles(role, reason=f"repo access {repo}")
                     result.added.append(f"{member.display_name} → {role.name}")
             for discord_id in have - want:
                 member = guild.get_member(discord_id)
                 if member is not None:
-                    await member.remove_roles(role, reason=f"left team {team.slug}")
+                    await member.remove_roles(role, reason=f"lost access {repo}")
                     result.removed.append(f"{member.display_name} → {role.name}")
 
-            # remember which repos this team can access, for channel gating
-            async for repo in gh.rest.paginate(
-                gh.rest.teams.async_list_repos_in_org, org=org, team_slug=team.slug
-            ):
-                repo_roles.setdefault(repo.full_name, set()).add(role)
+            await self._gate_channel(guild, channel_id, role)
 
-        # The org's actual repos, to detect deleted ones (repo_roles only has
-        # repos some team can access, which isn't the same thing).
-        org_repos: set[str] = set()
-        async for repo in gh.rest.paginate(
-            gh.rest.repos.async_list_for_org, org=org, type="all"
-        ):
-            org_repos.add(repo.full_name)
-
-        await self._prune_orphans(guild, seen_teams, org_repos, result)
-        await self._gate_channels(guild, repo_roles)
+        await self._prune_orphans(guild, result)
         return result
 
-    async def _prune_orphans(
-        self,
-        guild: discord.Guild,
-        seen_teams: set[str],
-        seen_repos: set[str],
-        result: SyncResult,
-    ) -> None:
-        """Delete roles for teams that no longer exist, and drop dead repo maps.
+    async def _prune_orphans(self, guild: discord.Guild, result: SyncResult) -> None:
+        """Delete access roles for repos no longer mapped to a channel.
 
-        GitHub is the source of truth: a team gone from GitHub means its managed
-        role is deleted; a repo gone means its channel mapping is forgotten (the
+        A repo dropped from `/map repo` means its access role is deleted (the
         channel itself is left alone).
         """
         assert self.bot.store is not None
-        for team_slug in list(self.bot.store.team_to_role):
-            if team_slug in seen_teams:
+        for repo in list(self.bot.store.repo_to_role):
+            if repo in self.bot.store.repo_to_channel:
                 continue
-            # Role may already be gone (deleted by hand) — either way, forget it.
-            role = guild.get_role(self.bot.store.team_to_role[team_slug])
+            role = guild.get_role(self.bot.store.repo_to_role[repo])
             if role is not None:
-                await role.delete(reason=f"team {team_slug} removed on github")
-                result.deleted_roles.append(team_slug)
-            await self.bot.store.forget_team(team_slug)
+                await role.delete(reason=f"repo {repo} no longer mapped")
+                result.deleted_roles.append(role.name)
+            await self.bot.store.forget_access_role(repo)
 
-        for repo in list(self.bot.store.repo_to_channel):
-            if repo not in seen_repos:
-                await self.bot.store.forget_repo(repo)
-
-    async def _gate_channels(
-        self, guild: discord.Guild, repo_roles: dict[str, set[discord.Role]]
+    async def _gate_channel(
+        self, guild: discord.Guild, channel_id: int, role: discord.Role
     ) -> None:
-        """Make each mapped channel visible only to roles of teams with access.
-
-        Union: a role sees the channel if its team can access ANY repo mapped
-        there. Only touches mapped channels and bot-managed team roles.
-        """
-        assert self.bot.store is not None
-        managed = set(self.bot.store.team_to_role.values())
-
-        # channel_id -> union of team roles that should see it
-        channel_roles: dict[int, set[discord.Role]] = {}
-        for repo, channel_id in self.bot.store.repo_to_channel.items():
-            channel_roles.setdefault(channel_id, set()).update(
-                repo_roles.get(repo, set())
-            )
-
-        for channel_id, roles in channel_roles.items():
-            channel = guild.get_channel(channel_id)
-            if not isinstance(channel, discord.TextChannel):
-                continue
-            await channel.set_permissions(
-                guild.default_role, view_channel=False, reason="github access sync"
-            )
-            allowed = {r.id for r in roles}
-            for role in roles:
-                await channel.set_permissions(
-                    role, view_channel=True, reason="github access sync"
-                )
-            # revoke access from managed roles that no longer qualify
-            for overwrite_target in list(channel.overwrites):
-                if (
-                    isinstance(overwrite_target, discord.Role)
-                    and overwrite_target.id in managed
-                    and overwrite_target.id not in allowed
-                ):
-                    await channel.set_permissions(
-                        overwrite_target, overwrite=None, reason="github access sync"
-                    )
+        """Make the channel visible only to its repo's access role."""
+        channel = guild.get_channel(channel_id)
+        if not isinstance(channel, discord.TextChannel):
+            return
+        await channel.set_permissions(
+            guild.default_role, view_channel=False, reason="repo access sync"
+        )
+        await channel.set_permissions(
+            role, view_channel=True, reason="repo access sync"
+        )
 
 
 async def setup(bot: "BridgeBot") -> None:
