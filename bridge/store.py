@@ -1,6 +1,7 @@
 """All mappings, persisted to a single Discord channel.
 
-The channel IS the store. Each mapping is one message, `TYPE key value`, so it
+The channel IS the store. Each mapping is one message, `kind [key](url) <mention>`
+— human-readable and clickable, yet still machine-parseable (see `_LINE`) — so it
 round-trips through channel history. On boot we replay the channel to rebuild
 three in-memory dicts; commands append a line and update memory. Later lines win.
 
@@ -14,8 +15,23 @@ import discord
 
 from bridge.config import CONFIG_CHANNEL_NAME
 
-# `identity itsmeale 123`, `repo owner/name 789`, `access owner/name 456`
-_LINE = re.compile(r"^(?P<kind>identity|repo|access)\s+(?P<key>\S+)\s+(?P<value>\d+)$")
+# Lines are human-readable: the key is a markdown link, the value a Discord
+# mention — both clickable in #bot-config. We parse the label out of `[label](…)`
+# and the snowflake out of the mention (`<@id>`, `<#id>`, or `<@&id>`; the kind
+# says which). Examples:
+#   identity [octocat](https://github.com/octocat) <@123>
+#   repo [owner/name](https://github.com/owner/name) <#789>
+#   access [owner/name](https://github.com/owner/name) <@&456>
+_LINE = re.compile(
+    r"^(?P<kind>identity|repo|access)\s+"
+    r"\[(?P<key>[^\]]+)\]\([^)]*\)\s+"
+    r"<(?:@&|@|#)(?P<value>\d+)>$"
+)
+# Legacy plain form (`kind key 123`) — still parsed, then rewritten to the rich
+# form on load so old #bot-config history migrates itself.
+_LEGACY = re.compile(
+    r"^(?P<kind>identity|repo|access)\s+(?P<key>\S+)\s+(?P<value>\d+)$"
+)
 
 
 # Marks the bot's own live status panel so we can find and edit it instead of
@@ -43,10 +59,16 @@ class Store:
             d.clear()
         self._messages.clear()
         async for message in self._channel.history(limit=None, oldest_first=True):
-            m = _LINE.match(message.content.strip())
+            content = message.content.strip()
+            m = _LINE.match(content) or _LEGACY.match(content)
             if m:
-                self._apply(m["kind"], m["key"], int(m["value"]))
-                self._messages[m["kind"], m["key"]] = message
+                kind, key, value = m["kind"], m["key"], int(m["value"])
+                # Migrate legacy plain lines to the rich form in place.
+                new = self._format_line(kind, key, value)
+                if content != new:
+                    await message.edit(content=new)
+                self._apply(kind, key, value)
+                self._messages[kind, key] = message
             elif self._is_panel(message):
                 self._panel = message
             else:
@@ -75,12 +97,27 @@ class Store:
         elif kind == "access":
             self.repo_to_role.pop(key, None)
 
+    @staticmethod
+    def _format_line(kind: str, key: str, value: int) -> str:
+        """A human-readable, clickable line: `kind [key](url) <mention>`.
+
+        The key links to GitHub (a user or a repo); the value is the matching
+        Discord mention (member, channel, or role). Parsed back by `_LINE`.
+        """
+        url = f"https://github.com/{key}"  # login or owner/repo — both valid
+        mention = {"identity": f"<@{value}>", "repo": f"<#{value}>"}.get(
+            kind, f"<@&{value}>"
+        )
+        return f"{kind} [{key}]({url}) {mention}"
+
     async def _persist(self, kind: str, key: str, value: int) -> None:
         # Drop the old line first so a re-map leaves one live message, not two.
         old = self._messages.pop((kind, key), None)
         if old is not None:
             await old.delete()
-        self._messages[kind, key] = await self._channel.send(f"{kind} {key} {value}")
+        self._messages[kind, key] = await self._channel.send(
+            self._format_line(kind, key, value)
+        )
         self._apply(kind, key, value)
         await self.refresh_panel()
 
