@@ -21,10 +21,10 @@ if TYPE_CHECKING:
 
 class SyncResult:
     def __init__(self) -> None:
-        self.created_roles: list[str] = []  # roles created this run
-        self.deleted_roles: list[str] = []  # roles deleted (repo unmapped/gone)
-        self.added: list[str] = []  # "member -> role"
-        self.removed: list[str] = []  # "member -> role"
+        self.created_roles: list[int] = []  # role ids created this run
+        self.deleted_roles: list[str] = []  # role names deleted (repo unmapped/gone)
+        self.added: list[tuple[int, int]] = []  # (member id, role id)
+        self.removed: list[tuple[int, int]] = []  # (member id, role id)
         self.unmapped: set[str] = set()  # github logins with no discord link
 
 
@@ -146,24 +146,44 @@ class GithubSync(commands.Cog):
     async def sync_roles(self, interaction: discord.Interaction) -> None:
         await interaction.response.defer(ephemeral=True)
         result = await self.run_sync(interaction.guild)
-        lines: list[str] = []
-        if result.created_roles:
-            lines.append(f"Created roles: {', '.join(result.created_roles)}")
-        if result.deleted_roles:
-            lines.append(f"Deleted roles: {', '.join(result.deleted_roles)}")
-        lines.append(
-            f"Added {len(result.added)}, removed {len(result.removed)} role(s)."
+        await interaction.followup.send(embed=self._sync_embed(result), ephemeral=True)
+
+    @staticmethod
+    def _sync_embed(result: "SyncResult") -> discord.Embed:
+        """Render a sync run as a tidy embed with real role/member mentions."""
+        changed = bool(
+            result.created_roles
+            or result.deleted_roles
+            or result.added
+            or result.removed
         )
-        for a in result.added:
-            lines.append(f"  + {a}")
-        for r in result.removed:
-            lines.append(f"  − {r}")
+        embed = discord.Embed(
+            title="🔄 Access sync",
+            description=(
+                f"**{len(result.added)}** added · **{len(result.removed)}** removed"
+                if changed
+                else "Everything already in sync — nothing to do."
+            ),
+            color=0x5865F2 if changed else 0x2DA44E,
+        )
+
+        def field(name: str, lines: list[str]) -> None:
+            if lines:  # Discord caps a field at 1024 chars; trim defensively.
+                embed.add_field(name=name, value="\n".join(lines)[:1024], inline=False)
+
+        field("Roles created", [f"<@&{rid}>" for rid in result.created_roles])
+        field("Roles deleted", [f"`{name}`" for name in result.deleted_roles])
+        field("Added", [f"<@{m}> → <@&{r}>" for m, r in result.added])
+        field("Removed", [f"<@{m}> → <@&{r}>" for m, r in result.removed])
         if result.unmapped:
-            lines.append(
-                "Unmapped GitHub logins (run /map user): "
-                + ", ".join(sorted(result.unmapped))
+            field(
+                "Unmapped — run `/map user`",
+                [
+                    f"[{login}](https://github.com/{login})"
+                    for login in sorted(result.unmapped)
+                ],
             )
-        await interaction.followup.send("\n".join(lines), ephemeral=True)
+        return embed
 
     async def _access_role(
         self, guild: discord.Guild, repo: str
@@ -199,7 +219,7 @@ class GithubSync(commands.Cog):
             owner, name = repo.split("/", 1) if "/" in repo else (org, repo)
             role, created = await self._access_role(guild, repo)
             if created:
-                result.created_roles.append(role.name)
+                result.created_roles.append(role.id)
 
             # who *should* have this role: everyone with effective access to the
             # repo — team members and direct collaborators alike.
@@ -222,12 +242,12 @@ class GithubSync(commands.Cog):
                 member = guild.get_member(discord_id)
                 if member is not None:
                     await member.add_roles(role, reason=f"repo access {repo}")
-                    result.added.append(f"{member.display_name} → {role.name}")
+                    result.added.append((member.id, role.id))
             for discord_id in have - want:
                 member = guild.get_member(discord_id)
                 if member is not None:
                     await member.remove_roles(role, reason=f"lost access {repo}")
-                    result.removed.append(f"{member.display_name} → {role.name}")
+                    result.removed.append((member.id, role.id))
 
             await self._gate_channel(guild, channel_id, role)
 
