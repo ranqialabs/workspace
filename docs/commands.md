@@ -43,6 +43,25 @@ Tie a GitHub repo to a Discord channel.
 A repo with no mapping is simply skipped — its events arrive and are ignored, no
 error.
 
+### `/map announce` { #map-announce }
+
+Route a repo's [announcements](#events) to a channel, separate from its plain
+notifications.
+
+```text
+/map announce repo:‹owner/name› channel:#channel
+```
+
+| Parameter | Description |
+| :-------- | :---------- |
+| `repo` | Autocompletes from the org's repos — pick one |
+| `channel` | Where that repo's announcements land |
+
+**Optional.** With no announce channel mapped, announcements fall back to the
+repo's [notifications channel](#map-repo) — so a single `/map repo` still gets
+everything. Point several repos at one announce channel to gather them (all your
+`*-api` releases in one place, say).
+
 ### `/map user` { #map-user }
 
 Tie a GitHub user to a Discord member.
@@ -110,19 +129,23 @@ rather than posting a new one. `/config` just forces that refresh on demand.
 
 ## Events { #events }
 
-The bridge listens for these GitHub webhook events and posts to the channel the
-repo is [mapped](#map-repo) to. When the person involved is [linked](#map-user)
-they get an `@mention`; otherwise their GitHub login shows up as plain text, so
-the message still makes sense.
+The bridge listens for these GitHub webhook events and posts to the repo's
+[announce channel](#map-announce) — or, if none is mapped, its
+[repo channel](#map-repo). When the person involved is [linked](#map-user) they
+get an `@mention`; otherwise their GitHub login shows up as plain text, so the
+message still makes sense.
 
 | Event | Trigger | Message |
 | :---- | :------ | :------ |
-| `pull_request` (`opened`) | a PR is opened | title, author, link |
-| `pull_request` (`review_requested`) | a reviewer is requested | @mentions the requested reviewer |
 | `issues` (`opened`) | an issue is opened | title, author, link |
+| `pull_request` (`opened` non-draft / `ready_for_review`) | a PR is ready for review | title, author, link |
+| `pull_request_review` (`submitted`) | a review is submitted | reviewer, verdict (✅ approved / 🔴 changes / 💬 comment), pings the PR author |
+| `check_suite` (`completed`) | the default branch's CI finishes | ✅ passed / ❌ failed, commit sha and author |
 
-!!! info "Review requested from a team"
+!!! info "One line per push, not per workflow"
 
-    Only individual reviewers are mentioned for now. When a review is requested
-    from a whole team, GitHub sends a different field, and wiring that up is
-    [on the roadmap](roadmap.md).
+    `check_suite` is GitHub's *aggregate* of every workflow on a commit, so the
+    bridge posts one result per push to the default branch — not one per
+    workflow. Only success and failure are announced; cancelled and neutral runs
+    are skipped. The commit author is shown as plain text (a check suite carries
+    the git author name, not a GitHub login to mention).

@@ -21,16 +21,17 @@ from bridge.config import CONFIG_CHANNEL_NAME
 # says which). Examples:
 #   identity [octocat](https://github.com/octocat) <@123>
 #   repo [owner/name](https://github.com/owner/name) <#789>
+#   announce [owner/name](https://github.com/owner/name) <#790>
 #   access [owner/name](https://github.com/owner/name) <@&456>
 _LINE = re.compile(
-    r"^(?P<kind>identity|repo|access)\s+"
+    r"^(?P<kind>identity|repo|announce|access)\s+"
     r"\[(?P<key>[^\]]+)\]\([^)]*\)\s+"
     r"<(?:@&|@|#)(?P<value>\d+)>$"
 )
 # Legacy plain form (`kind key 123`) — still parsed, then rewritten to the rich
 # form on load so old #bot-config history migrates itself.
 _LEGACY = re.compile(
-    r"^(?P<kind>identity|repo|access)\s+(?P<key>\S+)\s+(?P<value>\d+)$"
+    r"^(?P<kind>identity|repo|announce|access)\s+(?P<key>\S+)\s+(?P<value>\d+)$"
 )
 
 
@@ -44,6 +45,7 @@ class Store:
         self._channel = channel
         self.identity: dict[str, int] = {}  # github login (casefold) -> discord id
         self.repo_to_channel: dict[str, int] = {}  # "owner/repo" -> discord channel
+        self.repo_to_announce: dict[str, int] = {}  # "owner/repo" -> announce chan
         self.repo_to_role: dict[str, int] = {}  # "owner/repo" -> access role id
         # (kind, key) -> the message that persists it, so we can delete it
         self._messages: dict[tuple[str, str], discord.Message] = {}
@@ -55,7 +57,12 @@ class Store:
         Anything that isn't a config line or the status panel is noise (stray
         commands, Discord notices) and gets deleted — this channel is ours.
         """
-        for d in (self.identity, self.repo_to_channel, self.repo_to_role):
+        for d in (
+            self.identity,
+            self.repo_to_channel,
+            self.repo_to_announce,
+            self.repo_to_role,
+        ):
             d.clear()
         self._messages.clear()
         async for message in self._channel.history(limit=None, oldest_first=True):
@@ -86,6 +93,8 @@ class Store:
             self.identity[key.casefold()] = value
         elif kind == "repo":
             self.repo_to_channel[key] = value
+        elif kind == "announce":
+            self.repo_to_announce[key] = value
         elif kind == "access":
             self.repo_to_role[key] = value
 
@@ -94,6 +103,8 @@ class Store:
             self.identity.pop(key.casefold(), None)
         elif kind == "repo":
             self.repo_to_channel.pop(key, None)
+        elif kind == "announce":
+            self.repo_to_announce.pop(key, None)
         elif kind == "access":
             self.repo_to_role.pop(key, None)
 
@@ -105,9 +116,11 @@ class Store:
         Discord mention (member, channel, or role). Parsed back by `_LINE`.
         """
         url = f"https://github.com/{key}"  # login or owner/repo — both valid
-        mention = {"identity": f"<@{value}>", "repo": f"<#{value}>"}.get(
-            kind, f"<@&{value}>"
-        )
+        mention = {
+            "identity": f"<@{value}>",
+            "repo": f"<#{value}>",
+            "announce": f"<#{value}>",
+        }.get(kind, f"<@&{value}>")
         return f"{kind} [{key}]({url}) {mention}"
 
     async def _persist(self, kind: str, key: str, value: int) -> None:
@@ -135,6 +148,9 @@ class Store:
     async def map_repo(self, repo_full_name: str, channel_id: int) -> None:
         await self._persist("repo", repo_full_name, channel_id)
 
+    async def map_announce(self, repo_full_name: str, channel_id: int) -> None:
+        await self._persist("announce", repo_full_name, channel_id)
+
     async def map_access_role(self, repo_full_name: str, role_id: int) -> None:
         await self._persist("access", repo_full_name, role_id)
 
@@ -160,6 +176,7 @@ class Store:
 
         repos = "\n".join(
             f"`{repo}` → <#{channel_id}>"
+            + (f" 📣 <#{ann}>" if (ann := self.repo_to_announce.get(repo)) else "")
             + (f" <@&{role}>" if (role := self.repo_to_role.get(repo)) else "")
             for repo, channel_id in sorted(self.repo_to_channel.items())
         )

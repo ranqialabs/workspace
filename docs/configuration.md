@@ -41,13 +41,14 @@ and is what lets the bridge prove a webhook really came from GitHub.
 | Scope | Permission | Why it's needed |
 | :---- | :--------- | :-------------- |
 | Repository | **Issues** → Read | to hear about opened issues |
-| Repository | **Pull requests** → Read | to hear about PRs and review requests |
+| Repository | **Pull requests** → Read | to hear about PRs and reviews |
+| Repository | **Checks** → Read | to hear the main branch's CI result |
 | Repository | **Metadata** → Read | mandatory; GitHub adds it for you |
 | Organization | **Members** → Read | `/sync roles` reads who can access each repo |
 
-**Events.** Subscribe to **Pull request** and **Issues**. You do *not* need a
-separate "Pull request review" subscription — a requested review arrives as an
-action inside the pull_request event.
+**Events.** Subscribe to **Issues**, **Pull request**, **Pull request review**,
+and **Check suite** — the four the bridge listens for. The App has a single
+webhook (below) that delivers all of them for every repo it's installed on.
 
 **Install it.** Under **Where can this app be installed**, choose *Only on this
 account*, save, then open **Install App** and install it on the org.

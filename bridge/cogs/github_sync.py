@@ -95,6 +95,23 @@ class GithubSync(commands.Cog):
             f"Mapped repo `{repo}` → {channel.mention}.", ephemeral=True
         )
 
+    @map.command(
+        name="announce",
+        description="Route a repo's announcements (releases, review, CI) to a channel.",
+    )
+    @app_commands.autocomplete(repo=_repo_choices)
+    async def map_announce(
+        self,
+        interaction: discord.Interaction,
+        repo: str,
+        channel: discord.TextChannel,
+    ) -> None:
+        assert self.bot.store is not None
+        await self.bot.store.map_announce(repo, channel.id)
+        await interaction.response.send_message(
+            f"Announcements for `{repo}` → {channel.mention}.", ephemeral=True
+        )
+
     @map.command(name="user", description="Link a GitHub user to a Discord member.")
     @app_commands.autocomplete(github_login=_member_choices)
     async def map_user(
