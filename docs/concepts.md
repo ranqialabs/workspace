@@ -18,8 +18,8 @@ Discord would mean two copies of the truth, and two copies always drift.
 So the bridge only ever reads that state and reflects it. You **map a repo to a
 channel** — the one grouping GitHub can't infer — and the bridge **creates an
 access role for that repo**, fills it with everyone who can reach the repo on
-GitHub (team members and direct collaborators alike, since what matters is *access*,
-not how you got it), and makes the **channel visible only to that role**. Grant
+GitHub (team members, direct collaborators, and org owners alike, since what
+matters is *access*, not how you got it), and makes the **channel visible only to that role**. Grant
 someone access on GitHub and the channel opens up for them; revoke it and it
 closes — you don't touch a role or a permission by hand, because the moment you
 did, GitHub and Discord would disagree.

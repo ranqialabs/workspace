@@ -74,8 +74,9 @@ For each repo you've [mapped to a channel](#map-repo), the bridge:
 
 1. **Ensures an access role** named `‹repo› devs` exists, creating it if missing.
 2. **Reconciles membership** against the [linked users](#map-user): it reads
-   everyone with effective access to the repo on GitHub — team members and direct
-   collaborators alike — then *adds* the role to those people and *removes* it from
+   everyone with effective access to the repo on GitHub — team members, direct
+   collaborators, and org owners alike — then *adds* the role to those people and
+   *removes* it from
    anyone who no longer has access, so the role always reflects GitHub.
 3. **Gates the channel**: it sets permissions so the channel is visible only to
    that access role, and hidden from everyone else.

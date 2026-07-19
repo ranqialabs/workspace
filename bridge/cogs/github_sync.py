@@ -216,6 +216,20 @@ class GithubSync(commands.Cog):
         assert self.bot.store is not None
         gh, store, org = self.bot.github, self.bot.store, self.bot.config.org
 
+        # Org owners reach every repo by virtue of ownership. The collaborators
+        # API is supposed to include them but doesn't always surface it per-repo,
+        # so we resolve them once and union into every access role. Their logins
+        # still need a /map user link to become a Discord id.
+        owners: set[int] = set()
+        async for admin in gh.rest.paginate(
+            gh.rest.orgs.async_list_members, org=org, role="admin"
+        ):
+            discord_id = store.discord_id_for(admin.login)
+            if discord_id is None:
+                result.unmapped.add(admin.login)
+            else:
+                owners.add(discord_id)
+
         for repo, channel_id in list(store.repo_to_channel.items()):
             owner, name = repo.split("/", 1) if "/" in repo else (org, repo)
             role, created = await self._access_role(guild, repo)
@@ -223,8 +237,8 @@ class GithubSync(commands.Cog):
                 result.created_roles.append(role.id)
 
             # who *should* have this role: everyone with effective access to the
-            # repo — team members and direct collaborators alike.
-            want: set[int] = set()
+            # repo — team members and direct collaborators alike, plus org owners.
+            want: set[int] = set(owners)
             async for collab in gh.rest.paginate(
                 gh.rest.repos.async_list_collaborators,
                 owner=owner,

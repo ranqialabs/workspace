@@ -17,8 +17,8 @@ turns GitHub activity into Discord notifications — mentioning the right people
   ***
 
   Map a repo to a channel and the bot creates an access role, filling it with
-  everyone who can reach the repo on GitHub — team members and direct
-  collaborators alike. GitHub is the source of truth.
+  everyone who can reach the repo on GitHub — team members, direct collaborators,
+  and org owners alike. GitHub is the source of truth.
 
   [:octicons-arrow-right-24: Commands](commands.md#sync-roles)
 
