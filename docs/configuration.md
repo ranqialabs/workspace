@@ -93,7 +93,7 @@ open it, and add the bot to your server.
 
     Discord only lets a bot assign roles that sit **below its own** in the role
     list — a safety rule, not a bug. After inviting, drag the bot's role above the
-    access roles it will manage (`‹repo›-access`), or `/sync roles` will fail with
+    access roles it will manage (`🔒 ‹repo›`), or `/sync roles` will fail with
     *Missing Permissions* even though the permission is granted.
 
 ## 3. Deploy
@@ -175,7 +175,7 @@ normal Discord mentions.
 
 So the flow is: [link people](commands.md#map-user) with `/map user`,
 [group repos](commands.md#map-repo) into channels with `/map repo`, and let
-`/sync roles` do the rest — for each mapped repo it creates an `‹repo›-access`
+`/sync roles` do the rest — for each mapped repo it creates a `🔒 ‹repo›`
 role, adds and removes members to match who can reach the repo on GitHub, and sets
 the channel's permissions so only that role can see it. `/sync roles` also runs
 automatically on every boot.

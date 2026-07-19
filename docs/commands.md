@@ -72,7 +72,7 @@ automatically on every boot.
 
 For each repo you've [mapped to a channel](#map-repo), the bridge:
 
-1. **Ensures an access role** named `‹repo›-access` exists, creating it if missing.
+1. **Ensures an access role** named `🔒 ‹repo›` exists, creating it if missing.
 2. **Reconciles membership** against the [linked users](#map-user): it reads
    everyone with effective access to the repo on GitHub — team members and direct
    collaborators alike — then *adds* the role to those people and *removes* it from
