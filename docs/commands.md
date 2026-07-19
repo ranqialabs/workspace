@@ -129,18 +129,24 @@ rather than posting a new one. `/config` just forces that refresh on demand.
 
 ## Events { #events }
 
-The bridge listens for these GitHub webhook events and posts to the repo's
-[announce channel](#map-announce) — or, if none is mapped, its
+The bridge listens for these GitHub webhook events and posts a rich embed to the
+repo's [announce channel](#map-announce) — or, if none is mapped, its
 [repo channel](#map-repo). When the person involved is [linked](#map-user) they
 get an `@mention`; otherwise their GitHub login shows up as plain text, so the
-message still makes sense.
+message still makes sense. New issues and PRs-ready also ping the repo's
+[`@<repo> devs`](#sync-roles) role.
 
 | Event | Trigger | Message |
 | :---- | :------ | :------ |
-| `issues` (`opened`) | an issue is opened | title, author, link |
-| `pull_request` (`opened` non-draft / `ready_for_review`) | a PR is ready for review | title, author, link |
-| `pull_request_review` (`submitted`) | a review is submitted | reviewer, verdict (✅ approved / 🔴 changes / 💬 comment), pings the PR author |
+| `issues` (`opened`) | an issue is opened | title, body, author, assignees, labels — pings `@<repo> devs` |
+| `issues` (`closed`) | an issue is closed | ✅ completed / 🚫 not planned, who closed it |
+| `issues` (`assigned`/`unassigned`) | someone is (un)assigned | who, and the issue |
+| `pull_request` (`opened` non-draft / `ready_for_review`) | a PR is ready for review | title, body, author — pings `@<repo> devs` |
+| `pull_request_review` (`submitted`) | a review is submitted | reviewer, verdict (✅ approved / 🔴 changes / 💬 comment), names the PR author |
 | `check_suite` (`completed`) | the default branch's CI finishes | ✅ passed / ❌ failed, commit sha and author |
+
+Where each message *looks like* is defined in `bridge/render.py` — one pure
+function per event — so restyling or adding an event is a self-contained change.
 
 !!! info "One line per push, not per workflow"
 
