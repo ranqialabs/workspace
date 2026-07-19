@@ -190,7 +190,8 @@ class GithubSync(commands.Cog):
     ) -> tuple[discord.Role, bool]:
         """The access role for a mapped repo, created and registered if missing.
 
-        Returns (role, created). Named `🔒 <repo>` (repo name only, no owner).
+        Returns (role, created). Named `<repo> devs` (repo name only, no owner) —
+        a collective noun that reads naturally when you @mention it.
         """
         assert self.bot.store is not None
         role_id = self.bot.store.repo_to_role.get(repo)
@@ -200,7 +201,7 @@ class GithubSync(commands.Cog):
         # members.
         if role is not None:
             return role, False
-        name = f"🔒 {repo.split('/')[-1]}"
+        name = f"{repo.split('/')[-1]} devs"
         role = await guild.create_role(name=name, reason="repo access sync")
         await self.bot.store.map_access_role(repo, role.id)
         return role, True
