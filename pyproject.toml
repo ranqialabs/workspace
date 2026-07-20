@@ -9,9 +9,15 @@ dependencies = [
     "githubkit[auth-app]>=0.16.0",
 ]
 
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+pythonpath = ["."]
+
 [dependency-groups]
 dev = [
     "prek>=0.4.10",
+    "pytest>=9.1.1",
+    "pytest-asyncio>=1.4.0",
     "ruff>=0.15.22",
     "ty>=0.0.60",
     "zensical>=0.0.51",

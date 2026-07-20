@@ -9,6 +9,7 @@ from bridge import store
 from bridge.cogs.github_sync import GithubSync
 from bridge.config import Config, Secrets
 from bridge.github_app import installation_client
+from bridge.live import LiveMessages
 from bridge.webhook import WebhookServer
 
 INITIAL_COGS = ["bridge.cogs.github_sync", "bridge.cogs.notifications"]
@@ -22,6 +23,7 @@ class BridgeBot(commands.Bot):
         self.config = config
         self.secrets = secrets
         self.webhook = WebhookServer(secrets.webhook_secret)
+        self.live = LiveMessages()  # one live message per entity (dedup + edit)
         self.github: GitHub | None = None  # set in setup_hook
         self.store: store.Store | None = None  # set in on_ready (needs the guild)
         self._runner: web.AppRunner | None = None

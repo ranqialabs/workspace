@@ -1,12 +1,5 @@
-"""Turn GitHub webhook payloads into Discord messages.
-
-Pure functions: a payload plus a `Mentions` resolver in, a `Rendered` (content +
-embed) or `None` out. No network, no discord client — so each event is trivially
-testable. The cog (cogs/notifications.py) owns registration and sending; this
-module owns *what a message looks like*.
-
-To handle a new event or action, add a renderer and register it in `RENDERERS`.
-"""
+"""GitHub webhook payload -> Discord message. Pure functions (payload + Mentions
+in, Rendered or None out); add a renderer and register it in RENDERERS."""
 
 from collections.abc import Callable
 from typing import NamedTuple, Protocol
@@ -25,28 +18,22 @@ BODY_LIMIT = 400  # issue/PR body chars shown in an embed description
 
 
 class Mentions(Protocol):
-    """How to turn GitHub logins/repos into Discord mentions (backed by the store)."""
+    """GitHub login/repo -> Discord mention (backed by the store)."""
 
     def user(self, github_login: str | None) -> str: ...
     def role(self, repo_full_name: str) -> str | None: ...
 
 
 class Rendered(NamedTuple):
-    content: str | None  # plain text (e.g. a role ping), shown above the embed
+    content: str | None  # ping text, shown above the embed
     embed: discord.Embed | None
-    # A stable id for the entity this message is about (issue, deploy). When set,
-    # the cog edits the last recent message for this key instead of posting anew,
-    # so a fast-changing entity (deploy pending→done) stays one live message.
+    # entity id; if set, edit the live message in place instead of posting anew
     key: str | None = None
 
 
 def _ping(*mentions: str | None) -> str | None:
-    """Join the mentions that will actually notify, into embed-external content.
-
-    Discord only notifies from a message's `content`, never from inside an embed.
-    So whoever must be pinged goes here. Keeps only real `<@…>`/`<@&…>` mentions
-    (drops `None` and plain-text `` `login` `` fallbacks), de-duplicated in order.
-    """
+    """Join the real `<@…>`/`<@&…>` mentions (dropping None/plaintext), deduped.
+    Discord only notifies from `content`, never from inside an embed."""
     seen: dict[str, None] = {}
     for mention in mentions:
         if mention and mention.startswith("<"):
@@ -72,11 +59,8 @@ def _embed(
     description: str | None = None,
     when: str | None = None,
 ) -> discord.Embed:
-    """A styled embed with the shared author line, repo footer, and timestamp.
-
-    `author` is the "🐛 New issue" style header; `when` is an ISO8601 string from
-    the payload (created_at/updated_at) shown as Discord's relative time.
-    """
+    """A styled embed with the shared author line, repo footer, and timestamp
+    (`when` is an ISO8601 string shown as Discord relative time)."""
     embed = discord.Embed(title=title, url=url, description=description, color=color)
     embed.set_author(name=author, url=gh_repo["html_url"])
     embed.set_footer(text=gh_repo["full_name"])
@@ -88,28 +72,19 @@ def _embed(
 # --- issues ---
 
 
-_ISSUE_ACTIONS = frozenset({"opened", "closed", "reopened", "assigned", "unassigned"})
-
-
-def _issue(payload: dict, m: Mentions) -> Rendered | None:
-    """One live message per issue: the embed reflects the *current* state, so any
-    tracked action just re-renders it. The action only decides who to notify."""
-    action = payload.get("action", "")
-    if action not in _ISSUE_ACTIONS:
-        return None  # labeled, edited, milestoned… — noise
-
+def _issue_embed(payload: dict, m: Mentions) -> discord.Embed:
     issue, gh_repo = payload["issue"], payload["repository"]
     closed = issue.get("state") == "closed"
     if closed:
         completed = issue.get("state_reason") == "completed"
-        icon, header = ("✅", "closed") if completed else ("🚫", "closed")
+        icon = "✅" if completed else "🚫"
         color = GREEN if completed else GREY
     else:
-        icon, header, color = "🐛", "issue", GREEN
+        icon, color = "🐛", GREEN
 
     embed = _embed(
         gh_repo,
-        author=f"{icon} {header} · {gh_repo['name']}",
+        author=f"{icon} {'closed' if closed else 'issue'} · {gh_repo['name']}",
         title=f"#{issue['number']} · {issue['title']}",
         url=issue["html_url"],
         description=_body(issue) if not closed else None,
@@ -117,24 +92,37 @@ def _issue(payload: dict, m: Mentions) -> Rendered | None:
         when=issue.get("updated_at") or issue.get("created_at"),
     )
     embed.add_field(name="Opened by", value=m.user(issue["user"]["login"]), inline=True)
-    assignee_mentions = [m.user(a["login"]) for a in issue.get("assignees") or []]
-    if assignee_mentions:
-        embed.add_field(
-            name="Assignees", value=" ".join(assignee_mentions), inline=True
-        )
+    if assignees := [m.user(a["login"]) for a in issue.get("assignees") or []]:
+        embed.add_field(name="Assignees", value=" ".join(assignees), inline=True)
     if labels := _labels(issue):
         embed.add_field(name="Labels", value=labels, inline=False)
+    return embed
 
-    # Who to notify depends on the action, not the state.
+
+def _issue_notify(payload: dict, m: Mentions) -> str | None:
+    issue, repo = payload["issue"], payload["repository"]["full_name"]
+    action = payload.get("action", "")
     if action in ("opened", "reopened"):
-        notify = _ping(m.role(gh_repo["full_name"]), *assignee_mentions)
-    elif action == "assigned":
-        notify = _ping(m.user((payload.get("assignee") or {}).get("login")))
-    else:  # closed / unassigned — update the card, ping no one
-        notify = None
+        assignees = [m.user(a["login"]) for a in issue.get("assignees") or []]
+        return _ping(m.role(repo), *assignees)
+    if action == "assigned":
+        return _ping(m.user((payload.get("assignee") or {}).get("login")))
+    return None  # closed / unassigned — update the card, ping no one
 
+
+def _issue(payload: dict, m: Mentions) -> Rendered | None:
+    """One live message per issue: embed = current state, action = who to notify.
+    Unlisted actions (labeled, edited, milestoned…) are noise."""
+    if payload.get("action", "") not in _ISSUE_ACTIONS:
+        return None
+    issue, gh_repo = payload["issue"], payload["repository"]
     key = f"issue:{gh_repo['full_name']}:{issue['number']}"
-    return Rendered(content=notify, embed=embed, key=key)
+    return Rendered(
+        content=_issue_notify(payload, m), embed=_issue_embed(payload, m), key=key
+    )
+
+
+_ISSUE_ACTIONS = frozenset({"opened", "closed", "reopened", "assigned", "unassigned"})
 
 
 # --- pull requests ---
@@ -175,7 +163,6 @@ def _pr_review_requested(payload: dict, m: Mentions) -> Rendered | None:
         color=BLUE,
         when=pr.get("updated_at"),
     )
-    # Notify the requested reviewer — this is a direct ask.
     return Rendered(content=_ping(who), embed=embed)
 
 
@@ -193,7 +180,6 @@ def _pr_closed(payload: dict, m: Mentions) -> Rendered:
     )
     actor = (payload.get("sender") or {}).get("login")
     embed.add_field(name=verb.capitalize() + " by", value=m.user(actor), inline=True)
-    # Tell the author their PR was merged/closed.
     return Rendered(content=_ping(m.user(pr["user"]["login"])), embed=embed)
 
 
@@ -238,7 +224,6 @@ def _pull_request_review(payload: dict, m: Mentions) -> Rendered | None:
         color=GREEN if state == "approved" else BLUE,
         when=review.get("submitted_at"),
     )
-    # Notify the PR author — the review is aimed at them.
     return Rendered(content=_ping(pr_author), embed=embed)
 
 
