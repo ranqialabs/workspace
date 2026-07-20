@@ -47,8 +47,10 @@ and is what lets the bridge prove a webhook really came from GitHub.
 | Organization | **Members** → Read | `/sync roles` reads who can access each repo |
 
 **Events.** Subscribe to **Issues**, **Pull request**, **Pull request review**,
-and **Check suite** — the four the bridge listens for. The App has a single
-webhook (below) that delivers all of them for every repo it's installed on.
+**Check suite**, **Status**, and **Deployment status** — the ones the bridge
+listens for. The App has a single webhook (below) that delivers all of them for
+every repo it's installed on. (Status/Deployment status carry external-CI results
+like Vercel; skip them if you don't deploy from GitHub.)
 
 **Install it.** Under **Where can this app be installed**, choose *Only on this
 account*, save, then open **Install App** and install it on the org.

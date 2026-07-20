@@ -138,15 +138,27 @@ message still makes sense. New issues and PRs-ready also ping the repo's
 
 | Event | Trigger | Message |
 | :---- | :------ | :------ |
-| `issues` (`opened`) | an issue is opened | title, body, author, assignees, labels — pings `@<repo> devs` |
-| `issues` (`closed`) | an issue is closed | ✅ completed / 🚫 not planned, who closed it |
-| `issues` (`assigned`/`unassigned`) | someone is (un)assigned | who, and the issue |
+| `issues` (`opened`/`reopened`) | an issue is opened | title, body, author, assignees, labels — pings `@<repo> devs` + assignees |
+| `issues` (`assigned`) | someone is assigned | the card, updated — pings the assignee |
+| `issues` (`closed`/`unassigned`) | issue closed or unassigned | the card, updated (✅ completed / 🚫 not planned) — no ping |
 | `pull_request` (`opened` non-draft / `ready_for_review`) | a PR is ready for review | title, body, author — pings `@<repo> devs` |
-| `pull_request_review` (`submitted`) | a review is submitted | reviewer, verdict (✅ approved / 🔴 changes / 💬 comment), names the PR author |
+| `pull_request` (`review_requested`) | a review is requested | who wants whom to review — pings the reviewer |
+| `pull_request` (`closed`) | a PR is merged or closed | 🟣 merged / 🔴 closed, who did it — pings the author |
+| `pull_request_review` (`submitted`) | a review is submitted | reviewer, verdict (✅ approved / 🔴 changes / 💬 comment) + body — pings the PR author |
 | `check_suite` (`completed`) | the default branch's CI finishes | ✅ passed / ❌ failed, commit sha and author |
+| `status`, `deployment_status` | an external deploy (Vercel, …) changes state | 🕒 deploying → ✅ deployed / ❌ failed, with the deploy URL |
 
 Where each message *looks like* is defined in `bridge/render.py` — one pure
 function per event — so restyling or adding an event is a self-contained change.
+
+!!! info "Live messages — edited, not repeated"
+
+    An issue and a deploy each keep **one live message** that the bridge *edits*
+    in place as state changes (an issue gets assigned then closed; a deploy goes
+    pending → done) — instead of stacking a new message per change. It only edits
+    while that message is still recent (under an hour) and still the last thing in
+    the channel; once it's buried or stale, the next change posts fresh. PRs,
+    reviews and CI always post a new message.
 
 !!! info "One line per push, not per workflow"
 

@@ -19,6 +19,7 @@ GREEN = 0x2DA44E
 GREY = 0x6E7681
 BLUE = 0x0969DA
 RED = 0xCF222E
+PURPLE = 0x8250DF  # merged PRs
 
 BODY_LIMIT = 400  # issue/PR body chars shown in an embed description
 
@@ -33,6 +34,10 @@ class Mentions(Protocol):
 class Rendered(NamedTuple):
     content: str | None  # plain text (e.g. a role ping), shown above the embed
     embed: discord.Embed | None
+    # A stable id for the entity this message is about (issue, deploy). When set,
+    # the cog edits the last recent message for this key instead of posting anew,
+    # so a fast-changing entity (deploy pending→done) stays one live message.
+    key: str | None = None
 
 
 def _ping(*mentions: str | None) -> str | None:
@@ -83,20 +88,33 @@ def _embed(
 # --- issues ---
 
 
-def _issue_title(issue: dict) -> str:
-    return f"#{issue['number']} · {issue['title']}"
+_ISSUE_ACTIONS = frozenset({"opened", "closed", "reopened", "assigned", "unassigned"})
 
 
-def _issue_opened(payload: dict, m: Mentions) -> Rendered:
+def _issue(payload: dict, m: Mentions) -> Rendered | None:
+    """One live message per issue: the embed reflects the *current* state, so any
+    tracked action just re-renders it. The action only decides who to notify."""
+    action = payload.get("action", "")
+    if action not in _ISSUE_ACTIONS:
+        return None  # labeled, edited, milestoned… — noise
+
     issue, gh_repo = payload["issue"], payload["repository"]
+    closed = issue.get("state") == "closed"
+    if closed:
+        completed = issue.get("state_reason") == "completed"
+        icon, header = ("✅", "closed") if completed else ("🚫", "closed")
+        color = GREEN if completed else GREY
+    else:
+        icon, header, color = "🐛", "issue", GREEN
+
     embed = _embed(
         gh_repo,
-        author=f"🐛 New issue · {gh_repo['name']}",
-        title=_issue_title(issue),
+        author=f"{icon} {header} · {gh_repo['name']}",
+        title=f"#{issue['number']} · {issue['title']}",
         url=issue["html_url"],
-        description=_body(issue),
-        color=GREEN,
-        when=issue.get("created_at"),
+        description=_body(issue) if not closed else None,
+        color=color,
+        when=issue.get("updated_at") or issue.get("created_at"),
     )
     embed.add_field(name="Opened by", value=m.user(issue["user"]["login"]), inline=True)
     assignee_mentions = [m.user(a["login"]) for a in issue.get("assignees") or []]
@@ -106,67 +124,32 @@ def _issue_opened(payload: dict, m: Mentions) -> Rendered:
         )
     if labels := _labels(issue):
         embed.add_field(name="Labels", value=labels, inline=False)
-    # Notify the repo's devs and any assignees (content pings; embeds don't).
-    return Rendered(
-        content=_ping(m.role(gh_repo["full_name"]), *assignee_mentions), embed=embed
-    )
 
+    # Who to notify depends on the action, not the state.
+    if action in ("opened", "reopened"):
+        notify = _ping(m.role(gh_repo["full_name"]), *assignee_mentions)
+    elif action == "assigned":
+        notify = _ping(m.user((payload.get("assignee") or {}).get("login")))
+    else:  # closed / unassigned — update the card, ping no one
+        notify = None
 
-def _issue_closed(payload: dict, m: Mentions) -> Rendered:
-    issue, gh_repo = payload["issue"], payload["repository"]
-    completed = issue.get("state_reason") == "completed"
-    icon, tag = ("✅", "completed") if completed else ("🚫", "not planned")
-    embed = _embed(
-        gh_repo,
-        author=f"{icon} Issue closed ({tag}) · {gh_repo['name']}",
-        title=_issue_title(issue),
-        url=issue["html_url"],
-        color=GREY,
-        when=issue.get("closed_at"),
-    )
-    embed.add_field(
-        name="Closed by",
-        value=m.user(payload.get("sender", {}).get("login")),
-        inline=True,
-    )
-    return Rendered(content=None, embed=embed)
-
-
-def _issue_assignment(payload: dict, m: Mentions) -> Rendered:
-    issue, gh_repo = payload["issue"], payload["repository"]
-    assigned = payload["action"] == "assigned"
-    who = m.user((payload.get("assignee") or {}).get("login"))
-    verb = "assigned to" if assigned else "unassigned from"
-    embed = _embed(
-        gh_repo,
-        author=f"👤 {gh_repo['name']}",
-        title=_issue_title(issue),
-        url=issue["html_url"],
-        description=f"{who} {verb} this issue",
-        color=BLUE,
-        when=issue.get("updated_at"),
-    )
-    # Notify the person just assigned; unassigning isn't worth a ping.
-    return Rendered(content=_ping(who) if assigned else None, embed=embed)
+    key = f"issue:{gh_repo['full_name']}:{issue['number']}"
+    return Rendered(content=notify, embed=embed, key=key)
 
 
 # --- pull requests ---
 
 
-def _pull_request(payload: dict, m: Mentions) -> Rendered | None:
-    action, pr, gh_repo = (
-        payload["action"],
-        payload["pull_request"],
-        payload["repository"],
-    )
-    # "Ready for review" = opened as non-draft, or a draft flipped to ready.
-    ready = (action == "opened" and not pr.get("draft")) or action == "ready_for_review"
-    if not ready:
-        return None
+def _pr_title(pr: dict) -> str:
+    return f"#{pr['number']} · {pr['title']}"
+
+
+def _pr_ready(payload: dict, m: Mentions) -> Rendered:
+    pr, gh_repo = payload["pull_request"], payload["repository"]
     embed = _embed(
         gh_repo,
         author=f"📥 PR ready for review · {gh_repo['name']}",
-        title=f"#{pr['number']} · {pr['title']}",
+        title=_pr_title(pr),
         url=pr["html_url"],
         description=_body(pr),
         color=GREEN,
@@ -174,6 +157,61 @@ def _pull_request(payload: dict, m: Mentions) -> Rendered | None:
     )
     embed.add_field(name="Opened by", value=m.user(pr["user"]["login"]), inline=True)
     return Rendered(content=_ping(m.role(gh_repo["full_name"])), embed=embed)
+
+
+def _pr_review_requested(payload: dict, m: Mentions) -> Rendered | None:
+    # Only individual reviewers for now (requested_team has no reviewer field).
+    reviewer = payload.get("requested_reviewer")
+    if not reviewer:
+        return None
+    pr, gh_repo = payload["pull_request"], payload["repository"]
+    who = m.user(reviewer["login"])
+    embed = _embed(
+        gh_repo,
+        author=f"👀 Review requested · {gh_repo['name']}",
+        title=_pr_title(pr),
+        url=pr["html_url"],
+        description=f"{m.user(pr['user']['login'])} wants {who} to review",
+        color=BLUE,
+        when=pr.get("updated_at"),
+    )
+    # Notify the requested reviewer — this is a direct ask.
+    return Rendered(content=_ping(who), embed=embed)
+
+
+def _pr_closed(payload: dict, m: Mentions) -> Rendered:
+    pr, gh_repo = payload["pull_request"], payload["repository"]
+    merged = pr.get("merged")
+    icon, verb, color = ("🟣", "merged", PURPLE) if merged else ("🔴", "closed", RED)
+    embed = _embed(
+        gh_repo,
+        author=f"{icon} PR {verb} · {gh_repo['name']}",
+        title=_pr_title(pr),
+        url=pr["html_url"],
+        color=color,
+        when=pr.get("closed_at") or pr.get("updated_at"),
+    )
+    actor = (payload.get("sender") or {}).get("login")
+    embed.add_field(name=verb.capitalize() + " by", value=m.user(actor), inline=True)
+    # Tell the author their PR was merged/closed.
+    return Rendered(content=_ping(m.user(pr["user"]["login"])), embed=embed)
+
+
+# action -> renderer; unlisted actions (edited, synchronize, labeled…) are noise.
+_PR_ACTIONS: dict[str, Renderer] = {
+    "ready_for_review": _pr_ready,
+    "review_requested": _pr_review_requested,
+    "closed": _pr_closed,
+}
+
+
+def _pull_request(payload: dict, m: Mentions) -> Rendered | None:
+    action = payload.get("action", "")
+    # "opened" only counts when it's not a draft; then it's the same as ready.
+    if action == "opened" and not payload["pull_request"].get("draft"):
+        return _pr_ready(payload, m)
+    renderer = _PR_ACTIONS.get(action)
+    return renderer(payload, m) if renderer else None
 
 
 def _pull_request_review(payload: dict, m: Mentions) -> Rendered | None:
@@ -187,15 +225,16 @@ def _pull_request_review(payload: dict, m: Mentions) -> Rendered | None:
     state = (review.get("state") or "").lower()
     icon = {"approved": "✅", "changes_requested": "🔴"}.get(state, "💬")
     verb = {"approved": "approved", "changes_requested": "requested changes on"}.get(
-        state, "reviewed"
+        state, "commented on"
     )
     pr_author = m.user(pr["user"]["login"])
     embed = _embed(
         gh_repo,
         author=f"{icon} Review · {gh_repo['name']}",
-        title=f"#{pr['number']} · {pr['title']}",
-        url=pr["html_url"],
-        description=f"{m.user(review['user']['login'])} {verb} {pr_author}'s PR",
+        title=_pr_title(pr),
+        url=review.get("html_url") or pr["html_url"],
+        description=f"{m.user(review['user']['login'])} {verb} {pr_author}'s PR"
+        + (f"\n\n{body}" if (body := _body(review)) else ""),
         color=GREEN if state == "approved" else BLUE,
         when=review.get("submitted_at"),
     )
@@ -236,29 +275,80 @@ def _check_suite(payload: dict, _m: Mentions) -> Rendered | None:
     return Rendered(content=None, embed=embed)
 
 
+# --- deployments (external CI: Vercel, etc.) ---
+
+# One live message per (commit, provider): pending → success/failure edits it.
+_DEPLOY_STATES = {
+    "pending": ("🕒", "deploying", BLUE),
+    "in_progress": ("🕒", "deploying", BLUE),
+    "queued": ("🕒", "queued", BLUE),
+    "success": ("✅", "deployed", GREEN),
+    "failure": ("❌", "deploy failed", RED),
+    "error": ("❌", "deploy failed", RED),
+}
+
+
+def _status(payload: dict, _m: Mentions) -> Rendered | None:
+    """The `status` event (commit status from Vercel/CI). sha + context is the key."""
+    state = (payload.get("state") or "").lower()
+    styled = _DEPLOY_STATES.get(state)
+    if styled is None:
+        return None
+    icon, word, color = styled
+    gh_repo, sha = payload["repository"], payload.get("sha", "")
+    context = payload.get("context") or "deploy"
+    embed = _embed(
+        gh_repo,
+        author=f"{icon} {context} · {gh_repo['name']}",
+        title=f"{word} — {sha[:7]}",
+        url=payload.get("target_url") or f"{gh_repo['html_url']}/commit/{sha}",
+        description=payload.get("description"),
+        color=color,
+        when=payload.get("updated_at"),
+    )
+    return Rendered(
+        content=None, embed=embed, key=f"deploy:{gh_repo['full_name']}:{sha}:{context}"
+    )
+
+
+def _deployment_status(payload: dict, _m: Mentions) -> Rendered | None:
+    """The `deployment_status` event — cleaner env URL; keyed by deployment id."""
+    ds, deployment, gh_repo = (
+        payload["deployment_status"],
+        payload["deployment"],
+        payload["repository"],
+    )
+    state = (ds.get("state") or "").lower()
+    styled = _DEPLOY_STATES.get(state)
+    if styled is None:
+        return None
+    icon, word, color = styled
+    env = deployment.get("environment") or "deploy"
+    sha = deployment.get("sha", "")
+    embed = _embed(
+        gh_repo,
+        author=f"{icon} {env} · {gh_repo['name']}",
+        title=f"{word} — {sha[:7]}",
+        url=ds.get("environment_url") or ds.get("target_url") or gh_repo["html_url"],
+        description=ds.get("description"),
+        color=color,
+        when=ds.get("updated_at"),
+    )
+    key = f"deploy:{gh_repo['full_name']}:{deployment.get('id')}"
+    return Rendered(content=None, embed=embed, key=key)
+
+
 # --- dispatch ---
 
 Renderer = Callable[[dict, Mentions], Rendered | None]
 
-# issue action -> renderer; unlisted actions (labeled, edited, …) are ignored.
-_ISSUE_ACTIONS: dict[str, Renderer] = {
-    "opened": _issue_opened,
-    "closed": _issue_closed,
-    "assigned": _issue_assignment,
-    "unassigned": _issue_assignment,
-}
-
-
-def _issues(payload: dict, m: Mentions) -> Rendered | None:
-    renderer = _ISSUE_ACTIONS.get(payload.get("action", ""))
-    return renderer(payload, m) if renderer else None
-
-
 RENDERERS: dict[str, Renderer] = {
-    "issues": _issues,
+    "issues": _issue,
     "pull_request": _pull_request,
     "pull_request_review": _pull_request_review,
     "check_suite": _check_suite,
+    "status": _status,
+    "deployment_status": _deployment_status,
 }
 
 
