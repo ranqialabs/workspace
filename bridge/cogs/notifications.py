@@ -101,8 +101,14 @@ class Notifications(commands.Cog):
         chan_id, message_id, touched = live
         if chan_id != channel.id or time.time() - touched > _LIVE_TTL_SECONDS:
             return False
-        if channel.last_message_id != message_id:
-            return False  # someone spoke after it — don't reach back up
+        # Only bail if someone spoke *after* our live message. Snowflake ids grow
+        # over time, so a newer last-message means interference; equal/older/None
+        # (or a stale cache right after our own post) is safe to edit. Comparing
+        # `!= message_id` was wrong: back-to-back events (issue opened+assigned)
+        # race the cache and would post a duplicate.
+        last = channel.last_message_id
+        if last is not None and last > message_id:
+            return False  # a newer message exists — don't reach back up
         try:
             await channel.get_partial_message(message_id).edit(
                 content=rendered.content, embed=rendered.embed
