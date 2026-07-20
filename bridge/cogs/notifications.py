@@ -26,7 +26,6 @@ _EVENTS = (
     "pull_request",
     "pull_request_review",
     "check_suite",
-    "status",
     "deployment_status",
 )
 

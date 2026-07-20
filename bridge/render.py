@@ -277,7 +277,7 @@ def _check_suite(payload: dict, _m: Mentions) -> Rendered | None:
 
 # --- deployments (external CI: Vercel, etc.) ---
 
-# One live message per (commit, provider): pending → success/failure edits it.
+# One live message per deployment: pending → success/failure edits it in place.
 _DEPLOY_STATES = {
     "pending": ("🕒", "deploying", BLUE),
     "in_progress": ("🕒", "deploying", BLUE),
@@ -288,31 +288,11 @@ _DEPLOY_STATES = {
 }
 
 
-def _status(payload: dict, _m: Mentions) -> Rendered | None:
-    """The `status` event (commit status from Vercel/CI). sha + context is the key."""
-    state = (payload.get("state") or "").lower()
-    styled = _DEPLOY_STATES.get(state)
-    if styled is None:
-        return None
-    icon, word, color = styled
-    gh_repo, sha = payload["repository"], payload.get("sha", "")
-    context = payload.get("context") or "deploy"
-    embed = _embed(
-        gh_repo,
-        author=f"{icon} {context} · {gh_repo['name']}",
-        title=f"{word} — {sha[:7]}",
-        url=payload.get("target_url") or f"{gh_repo['html_url']}/commit/{sha}",
-        description=payload.get("description"),
-        color=color,
-        when=payload.get("updated_at"),
-    )
-    return Rendered(
-        content=None, embed=embed, key=f"deploy:{gh_repo['full_name']}:{sha}:{context}"
-    )
-
-
 def _deployment_status(payload: dict, _m: Mentions) -> Rendered | None:
-    """The `deployment_status` event — cleaner env URL; keyed by deployment id."""
+    """The `deployment_status` event — cleaner env URL; keyed by deployment id.
+
+    (We ignore the raw `status` event, which would double-report the same deploy.)
+    """
     ds, deployment, gh_repo = (
         payload["deployment_status"],
         payload["deployment"],
@@ -347,7 +327,6 @@ RENDERERS: dict[str, Renderer] = {
     "pull_request": _pull_request,
     "pull_request_review": _pull_request_review,
     "check_suite": _check_suite,
-    "status": _status,
     "deployment_status": _deployment_status,
 }
 

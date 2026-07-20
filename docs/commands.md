@@ -146,7 +146,7 @@ message still makes sense. New issues and PRs-ready also ping the repo's
 | `pull_request` (`closed`) | a PR is merged or closed | 🟣 merged / 🔴 closed, who did it — pings the author |
 | `pull_request_review` (`submitted`) | a review is submitted | reviewer, verdict (✅ approved / 🔴 changes / 💬 comment) + body — pings the PR author |
 | `check_suite` (`completed`) | the default branch's CI finishes | ✅ passed / ❌ failed, commit sha and author |
-| `status`, `deployment_status` | an external deploy (Vercel, …) changes state | 🕒 deploying → ✅ deployed / ❌ failed, with the deploy URL |
+| `deployment_status` | an external deploy (Vercel, …) changes state | 🕒 deploying → ✅ deployed / ❌ failed, with the deploy URL |
 
 Where each message *looks like* is defined in `bridge/render.py` — one pure
 function per event — so restyling or adding an event is a self-contained change.
