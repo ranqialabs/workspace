@@ -67,7 +67,9 @@ Rules:
   understand the problem is not restricted, but where it gets filed is.
 - Choose `labels` only from the repo's existing labels (`repo_labels`).
 - Set `assignee` only to a login you saw in the conversation or that people
-  clearly agreed on. Leave it null otherwise.
+  clearly agreed on. Leave it null otherwise. When the person you are talking to
+  asks for it themselves, that is their login — not the one who started the
+  discussion.
 - Set `confidence` to how well the conversation actually specifies the work:
   `high` only when someone could start on it as written.
 - If `similar_issues` turns up a real duplicate, say so at the top of the body
@@ -280,7 +282,10 @@ def build(model: str) -> Agent[Deps, IssueDraft]:
 
 
 def _prompt(
-    transcript: Transcript, candidates: list[str], instruction: str | None
+    transcript: Transcript,
+    candidates: list[str],
+    instruction: str | None,
+    requester: str | None = None,
 ) -> list[UserContent]:
     """The user prompt: what they asked for, the conversation, and its images."""
     if len(candidates) == 1:
@@ -288,6 +293,15 @@ def _prompt(
     else:
         listed = ", ".join(f"`{c}`" for c in candidates) or "(none mapped)"
         repo_line = f"Pick the repo from these candidates: {listed}."
+
+    # Without this the agent has no referent for "me" and picks whoever opened
+    # the discussion.
+    who = (
+        f"You are talking to {requester}. In anything they ask you, "
+        '"me" and "I" mean them, not whoever spoke in the conversation.\n\n'
+        if requester
+        else ""
+    )
 
     # The instruction goes first: it's what the person actually wants, and the
     # conversation is only evidence for it.
@@ -300,7 +314,7 @@ def _prompt(
     )
 
     parts: list[UserContent] = [
-        f"{asked}{repo_line}\n\n"
+        f"{who}{asked}{repo_line}\n\n"
         f"Discord conversation, oldest message first:\n\n{transcript.text}"
     ]
     parts.extend(
@@ -318,9 +332,15 @@ class Session:
     files it needed, and starting over would read them again.
     """
 
-    def __init__(self, agent: Agent[Deps, IssueDraft], deps: Deps) -> None:
+    def __init__(
+        self,
+        agent: Agent[Deps, IssueDraft],
+        deps: Deps,
+        requester: str | None = None,
+    ) -> None:
         self._agent = agent
         self._deps = deps
+        self._requester = requester
         self._history: list[ModelMessage] = []
         self.draft: IssueDraft | None = None
 
@@ -345,11 +365,10 @@ class Session:
     ) -> IssueDraft:
         """First pass: what the requester asked for, grounded in the conversation."""
         self._deps.candidates = candidates
-        return await self._run(_prompt(transcript, candidates, prompt))
+        return await self._run(_prompt(transcript, candidates, prompt, self._requester))
 
     async def refine(self, feedback: str, candidates: list[str]) -> IssueDraft:
         """Revise the current draft from a human's note."""
         self._deps.candidates = candidates
-        return await self._run(
-            f"Revise the draft. Feedback from the person who asked for it:\n\n{feedback}"
-        )
+        who = self._requester or "the person who asked for it"
+        return await self._run(f"Revise the draft. Feedback from {who}:\n\n{feedback}")

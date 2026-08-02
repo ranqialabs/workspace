@@ -86,8 +86,13 @@ async def collect(
     *,
     limit: int,
     anchor: discord.Message | None = None,
+    forward: bool = False,
 ) -> Transcript:
-    """The last `limit` human messages before `anchor` (inclusive), oldest first.
+    """Human messages around `anchor` (inclusive), oldest first.
+
+    Backwards by default: the `limit` messages leading up to the anchor. With
+    `forward`, everything from the anchor onwards instead — for pointing at where
+    a discussion started without having to count how long it ran.
 
     Bots are skipped — otherwise the bridge's own notification cards read as
     conversation and the model drafts issues about them.
@@ -98,14 +103,17 @@ async def collect(
         collected.append(anchor)
     async for message in channel.history(
         limit=limit * 2,  # headroom for the bots we drop
-        before=anchor.created_at if anchor is not None else None,
+        after=anchor.created_at if forward and anchor is not None else None,
+        before=None if forward else (anchor.created_at if anchor else None),
+        oldest_first=forward or None,
     ):
         if message.author.bot:
             continue
         collected.append(message)
         if len(collected) >= limit:
             break
-    collected.reverse()
+    if not forward:
+        collected.reverse()
 
     # Every attachment is a separate CDN round trip; serially they dominate the
     # wait before the model even starts.
@@ -121,11 +129,13 @@ async def collect(
             lines.append(f"{_speaker(message, login)}: {body}")
 
     text = "\n\n".join(lines)
-    if len(text) > _MAX_TRANSCRIPT:  # keep the tail — the recent turns matter most
-        text = "[…earlier messages trimmed…]\n\n" + text[-_MAX_TRANSCRIPT:]
+    if len(text) > _MAX_TRANSCRIPT:
+        if forward:  # the anchor is the point; keep it and drop the tail
+            text = text[:_MAX_TRANSCRIPT] + "\n\n[…later messages trimmed…]"
+        else:  # the recent turns matter most
+            text = "[…earlier messages trimmed…]\n\n" + text[-_MAX_TRANSCRIPT:]
 
+    linked = anchor or (collected[-1] if collected else None)
     return Transcript(
-        text=text,
-        images=images,
-        jump_url=collected[-1].jump_url if collected else None,
+        text=text, images=images, jump_url=linked.jump_url if linked else None
     )

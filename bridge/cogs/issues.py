@@ -31,6 +31,8 @@ if TYPE_CHECKING:
 log = logging.getLogger(__name__)
 
 DEFAULT_SPAN = 20  # messages read when you don't say how many
+_MAX_SPAN = 100  # `since` reads to the end of the conversation, up to this
+_CARD_SCAN = 20  # messages searched in a thread for the draft card
 _MAX_SESSIONS = 3  # concurrent drafts; each holds images + agent history in RAM
 _STEP_LINES = 6  # tool calls shown while the agent works
 _EXPIRED = "This draft expired — start a new `/issue`."
@@ -91,8 +93,9 @@ class Issues(commands.Cog):
     )
     @app_commands.describe(
         prompt="What the issue is about — steers the draft. Optional.",
-        from_message="Right-click a message → Copy Message Link, then paste it here.",
-        last="How many messages to read back before that point (default 20).",
+        since="Read from this message onwards. Right-click → Copy Message Link.",
+        from_message="Read the messages *before* this one. Right-click → Copy Link.",
+        last="How many messages to read (default 20). Ignored with `since`.",
         repo="Force the target repo instead of inferring it from the channel.",
     )
     @app_commands.autocomplete(repo=_mapped_repo_choices)
@@ -100,6 +103,7 @@ class Issues(commands.Cog):
         self,
         interaction: discord.Interaction,
         prompt: str | None = None,
+        since: str | None = None,
         from_message: str | None = None,
         last: app_commands.Range[int, 1, 100] = DEFAULT_SPAN,
         repo: str | None = None,
@@ -111,9 +115,10 @@ class Issues(commands.Cog):
             return
         assert interaction.guild is not None
 
+        link = since or from_message
         anchor: discord.Message | None = None
-        if from_message is not None:
-            anchor = await context.resolve_message(interaction.guild, from_message)
+        if link is not None:
+            anchor = await context.resolve_message(interaction.guild, link)
             if anchor is None:
                 await interaction.followup.send(
                     "I need a message link from this server — right-click the "
@@ -130,7 +135,13 @@ class Issues(commands.Cog):
             return
 
         await self._start(
-            interaction, channel, anchor=anchor, span=last, repo=repo, prompt=prompt
+            interaction,
+            channel,
+            anchor=anchor,
+            span=_MAX_SPAN if since else last,
+            repo=repo,
+            prompt=prompt,
+            forward=since is not None,
         )
 
     async def _context_menu(
@@ -195,13 +206,14 @@ class Issues(commands.Cog):
         span: int,
         repo: str | None,
         prompt: str | None = None,
+        forward: bool = False,
     ) -> None:
         assert self.bot.store is not None
         assert self.bot.github is not None
         assert self.bot.issue_agent is not None
 
         transcript = await context.collect(
-            channel, self.bot.store, limit=span, anchor=anchor
+            channel, self.bot.store, limit=span, anchor=anchor, forward=forward
         )
         if transcript.is_empty():
             await interaction.followup.send(
@@ -237,6 +249,7 @@ class Issues(commands.Cog):
                 org=self.bot.config.org,
                 on_step=_progress(status),
             ),
+            requester=self._requester(interaction.user),
         )
         self._sessions[thread.id] = session
         try:
@@ -289,6 +302,18 @@ class Issues(commands.Cog):
             embed=preview(draft, note=note),
             view=view.draft_view(author_id),
         )
+        await self._retitle(status.channel, draft.title)
+
+    @staticmethod
+    async def _retitle(channel: discord.abc.Messageable, title: str) -> None:
+        """Name the thread after the issue it is drafting, so a list of open
+        drafts reads as a list of issues rather than a column of one name."""
+        if not isinstance(channel, discord.Thread) or channel.name == title[:100]:
+            return
+        try:
+            await channel.edit(name=title[:100])
+        except discord.HTTPException:
+            log.debug("could not rename draft thread %s", channel.id, exc_info=True)
 
     def _assignee_note(self, draft: IssueDraft) -> str | None:
         """Warn if the proposed assignee isn't someone we know about."""
@@ -302,6 +327,33 @@ class Issues(commands.Cog):
             "(`/map user`); GitHub may reject the assignment."
         )
 
+    @commands.Cog.listener()
+    async def on_message(self, message: discord.Message) -> None:
+        """A draft thread is a conversation: the requester talking in it revises.
+
+        Only the requester — the thread is public, and anyone else in it is
+        commenting on the draft, not steering it.
+        """
+        if message.author.bot or not message.content.strip():
+            return
+        if not isinstance(message.channel, discord.Thread):
+            return
+        owner = await self._owner_of(message.channel)
+        if owner is None or message.author.id != owner:
+            return
+        session = self._sessions.get(message.channel.id)
+        if session is None:
+            # The card outlives the process that drafted it, so a thread can look
+            # live while the history behind it is gone. Say so, rather than
+            # swallowing what they typed.
+            await message.reply(
+                "I've lost the thread of this draft (I restarted). Use the buttons "
+                "above, or start a new `/issue`.",
+                mention_author=False,
+            )
+            return
+        await self._revise(message.channel, session, message.content, owner)
+
     # --- view.Actions ---
 
     async def refine(self, interaction: discord.Interaction, feedback: str) -> None:
@@ -309,22 +361,30 @@ class Issues(commands.Cog):
         if live is None:
             return
         message, session = live
-        candidates = self._candidates(message.channel)
-        await message.edit(content="✍️ revising…", embed=None, view=None)
-        session.report_to(_progress(message))
+        if isinstance(message.channel, discord.Thread):
+            await self._revise(message.channel, session, feedback, interaction.user.id)
+
+    async def _revise(
+        self,
+        thread: discord.Thread,
+        session: Session,
+        feedback: str,
+        author_id: int,
+    ) -> None:
+        """Run a revision and post the result as a new message in the thread.
+
+        The old card is left where it is: the thread is the record of how the
+        issue got its shape, and editing it away loses that.
+        """
+        status = await thread.send("✍️ revising…")
+        session.report_to(_progress(status))
         try:
-            draft = await session.refine(feedback, candidates)
+            draft = await session.refine(feedback, self._candidates(thread))
         except Exception as exc:  # noqa: BLE001
             log.exception("refine failed")
-            # The card was cleared to show progress; restore it with the buttons,
-            # so a failed revision doesn't strand the draft.
-            await message.edit(
-                content=f"⚠️ {agent.explain(exc)}",
-                embed=preview(session.draft) if session.draft else None,
-                view=view.draft_view(interaction.user.id) if session.draft else None,
-            )
+            await status.edit(content=f"⚠️ {agent.explain(exc)}")
             return
-        await self._show(message, draft, interaction.user.id)
+        await self._show(status, draft, author_id)
 
     async def apply_edit(
         self, interaction: discord.Interaction, title: str, body: str
@@ -397,6 +457,29 @@ class Issues(commands.Cog):
             await message.channel.edit(archived=True)
 
     # --- helpers ---
+
+    async def _owner_of(self, thread: discord.Thread) -> int | None:
+        """Who may steer this draft, read off the buttons under its card.
+
+        The card is the only copy that survives a restart, so keeping a second
+        one in memory would just be a copy that can go stale.
+        """
+        async for message in thread.history(limit=_CARD_SCAN, oldest_first=True):
+            for row in message.components:
+                for item in getattr(row, "children", ()):
+                    _, _, author = (getattr(item, "custom_id", "") or "").partition(
+                        "issue:approve:"
+                    )
+                    if author.isdigit():
+                        return int(author)
+        return None
+
+    def _requester(self, user: discord.User | discord.Member) -> str:
+        """Who is driving the draft, with their GitHub login when we know it —
+        without it the agent has no referent for "assign it to me"."""
+        store = self.bot.store
+        login = store.login_for(user.id) if store else None
+        return f"{user.display_name} (@{login})" if login else user.display_name
 
     def _session_for(self, interaction: discord.Interaction) -> Session | None:
         channel = interaction.channel
