@@ -15,6 +15,7 @@ import base64
 from collections.abc import AsyncIterable, Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
 
+import httpx
 from githubkit import GitHub
 from githubkit.exception import GitHubException
 from pydantic_ai import (
@@ -29,6 +30,7 @@ from pydantic_ai import (
     UserContent,
 )
 from pydantic_ai.capabilities import ProcessEventStream
+from pydantic_ai.exceptions import ModelAPIError, UsageLimitExceeded
 
 from bridge.issue.context import Transcript
 from bridge.issue.draft import IssueDraft
@@ -36,6 +38,9 @@ from bridge.repo import split_repo
 
 _MAX_FILE_CHARS = 6_000
 _MAX_RESULTS = 15
+_MAX_ERROR_CHARS = 400  # provider messages can carry a whole request dump
+# Errors from these come straight out of the stream, untranslated by pydantic-ai.
+_PROVIDER_SDKS = frozenset({"openai", "anthropic", "google", "groq", "mistralai"})
 
 INSTRUCTIONS = """\
 You turn a Discord conversation into a GitHub issue that a developer can pick up
@@ -89,6 +94,42 @@ def _describe(part: ToolCallPart) -> str:
     args = part.args if isinstance(part.args, dict) else {}
     detail = args.get("path") or args.get("query") or args.get("repo") or ""
     return f"{part.tool_name}({detail})" if detail else part.tool_name
+
+
+def _leaves(exc: BaseException) -> list[BaseException]:
+    """Flatten an ExceptionGroup; streaming wraps the real cause in one."""
+    if isinstance(exc, BaseExceptionGroup):
+        return [leaf for sub in exc.exceptions for leaf in _leaves(sub)]
+    return [exc]
+
+
+def explain(exc: BaseException) -> str:
+    """Why a run failed, phrased so the reader knows whether to retry.
+
+    The provider's own words are quoted rather than paraphrased: the cause is
+    usually billing or a key, and no wording of ours resolves that for them.
+    A provider SDK may raise its own error straight out of the stream, so the
+    status code is read by attribute rather than by type.
+    """
+    for leaf in _leaves(exc):
+        if isinstance(leaf, UsageLimitExceeded):
+            return f"This draft hit its usage limit:\n> {leaf}"
+        if isinstance(leaf, httpx.HTTPError):
+            return "Couldn't reach the model provider. Try `/issue` again."
+        if isinstance(leaf, ModelAPIError):
+            detail = getattr(leaf, "body", None) or leaf.message
+            status = getattr(leaf, "status_code", None)
+        elif type(leaf).__module__.split(".")[0] in _PROVIDER_SDKS:
+            detail, status = str(leaf), getattr(leaf, "status_code", None)
+        else:
+            continue
+        detail = str(detail)[:_MAX_ERROR_CHARS]
+        if status == 429:
+            return f"The model provider is rate-limiting us:\n> {detail}"
+        if status in (401, 403):
+            return f"The model provider rejected our API key:\n> {detail}"
+        return f"The model call failed:\n> {detail}"
+    return "Something went wrong reaching the model."
 
 
 async def _report_steps(

@@ -19,7 +19,7 @@ from githubkit.exception import GitHubException
 
 from bridge import render
 from bridge.cogs.notifications import Notifications
-from bridge.issue import context, view
+from bridge.issue import agent, context, view
 from bridge.issue.agent import Deps, Session
 from bridge.issue.draft import IssueDraft, from_embed, preview
 from bridge.render import GREEN, RED
@@ -171,6 +171,11 @@ class Issues(commands.Cog):
             return "Issue drafting is switched off — no model configured."
         if self.bot.store is None or self.bot.github is None:
             return "Still starting up; try again in a moment."
+        # A deleted thread never submits or discards, so its session would hold a
+        # slot forever.
+        for thread_id in list(self._sessions):
+            if self.bot.get_channel(thread_id) is None:
+                del self._sessions[thread_id]
         if len(self._sessions) >= _MAX_SESSIONS:
             return (
                 f"{_MAX_SESSIONS} drafts are already open. "
@@ -235,10 +240,10 @@ class Issues(commands.Cog):
         self._sessions[thread.id] = session
         try:
             draft = await session.start(transcript, candidates, prompt=prompt)
-        except Exception:  # noqa: BLE001 — model/network failure shouldn't kill the cog
+        except Exception as exc:  # noqa: BLE001 — a failed draft mustn't kill the cog
             log.exception("issue draft failed in thread %s", thread.id)
             del self._sessions[thread.id]
-            await status.edit(content="⚠️ The draft failed. Try `/issue` again.")
+            await status.edit(content=f"⚠️ {agent.explain(exc)}")
             return
 
         await self._show(status, draft, interaction.user.id, transcript.jump_url)
@@ -308,9 +313,15 @@ class Issues(commands.Cog):
         session.report_to(_progress(message))
         try:
             draft = await session.refine(feedback, candidates)
-        except Exception:  # noqa: BLE001
+        except Exception as exc:  # noqa: BLE001
             log.exception("refine failed")
-            await message.edit(content="⚠️ The revision failed.")
+            # The card was cleared to show progress; restore it with the buttons,
+            # so a failed revision doesn't strand the draft.
+            await message.edit(
+                content=f"⚠️ {agent.explain(exc)}",
+                embed=preview(session.draft) if session.draft else None,
+                view=view.draft_view(interaction.user.id) if session.draft else None,
+            )
             return
         await self._show(message, draft, interaction.user.id)
 
