@@ -45,9 +45,14 @@ _MAX_SESSIONS = 3  # concurrent drafts; each holds images + agent history in RAM
 # whole window collapses into one line when the run ends.
 _STEP_CARDS = 5
 _EXPIRED = "This draft expired — start a new `/issue`."
-# What opens each kind of run, so a revision doesn't read as a first draft.
+# What opens each kind of run, so a revision doesn't read as a first draft. The
+# second is deliberately vague about the outcome: the agent decides whether it's
+# revising the draft or just answering, and the line goes up before it has.
 _DRAFTING = "🔎 reading the conversation..."
-_REVISING = "✍️ revising..."
+_REVISING = "💭 thinking..."
+# Discord's own ceiling on a message. The agent is told to be brief, so this is a
+# backstop against a wall of text, not the usual case.
+_MAX_MESSAGE = 2000
 # Every draft thread is named from this, so the name is enough to recognise one
 # after a restart — no fetch, and no state we'd have to have kept.
 _THREAD_PREFIX = "issue"
@@ -284,22 +289,29 @@ class Issues(commands.Cog):
         )
         self._sessions[thread.id] = Draft(session, workspace)
         try:
-            draft = await session.start(transcript, candidates, prompt=prompt)
+            reply = await session.start(transcript, candidates, prompt=prompt)
         except Exception as exc:  # noqa: BLE001 — a failed draft mustn't kill the cog
             log.exception("issue draft failed in thread %s", thread.id)
             del self._sessions[thread.id]
             await self._settle(workspace, opening, agent.explain(exc))
             return
 
+        await self._settle(workspace, opening)
+        # `/issue` asks for a draft, so prose here means the agent had something to
+        # say instead — usually that it needs more to go on. Say it and let them
+        # answer in the thread rather than dropping it for a card we don't have.
+        if not isinstance(reply, IssueDraft):
+            await thread.send(reply[:_MAX_MESSAGE])
+            return
+
         # Named once, from the first draft: a rename is a system line in the
         # thread, so re-titling on every refine would bury the conversation.
         try:
-            await thread.edit(name=f"{_THREAD_PREFIX}: {draft.title}"[:100])
+            await thread.edit(name=f"{_THREAD_PREFIX}: {reply.title}"[:100])
         except discord.HTTPException:
             log.debug("could not rename draft thread %s", thread.id, exc_info=True)
 
-        await self._settle(workspace, opening)
-        await self._show(thread, draft, interaction.user.id, transcript.jump_url)
+        await self._show(thread, reply, interaction.user.id, transcript.jump_url)
 
     async def _thread(
         self,
@@ -423,23 +435,25 @@ class Issues(commands.Cog):
     async def _revise(
         self, thread: discord.Thread, open_draft: Draft, feedback: str
     ) -> None:
-        """Run a revision and post the result as a new message in the thread.
+        """Answer them, or revise the draft — whichever they asked for.
 
-        The old card is left where it is: the thread is the record of how the
-        issue got its shape, and editing it away loses that.
+        A revision posts a new card and leaves the old one where it is: the thread
+        is the record of how the issue got its shape, and editing it away loses
+        that. An answer posts as an ordinary message and touches no card.
         """
         opening = await thread.send(_REVISING)
         open_draft.workspace.restart(thread)
         try:
-            revised = await open_draft.session.refine(
-                feedback, self._candidates(thread)
-            )
+            reply = await open_draft.session.refine(feedback, self._candidates(thread))
         except Exception as exc:  # noqa: BLE001
             log.exception("refine failed")
             await self._settle(open_draft.workspace, opening, agent.explain(exc))
             return
         await self._settle(open_draft.workspace, opening)
-        await self._show(thread, revised, open_draft.session.owner_id)
+        if isinstance(reply, IssueDraft):
+            await self._show(thread, reply, open_draft.session.owner_id)
+            return
+        await thread.send(reply[:_MAX_MESSAGE])
 
     async def apply_edit(
         self, interaction: discord.Interaction, title: str, body: str

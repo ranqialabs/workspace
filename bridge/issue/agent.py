@@ -1,8 +1,14 @@
-"""The agent that drafts an issue from a conversation.
+"""The agent behind a conversation: it answers, or it proposes an issue.
+
+A run ends one of two ways, and the model picks which: prose, when someone asked
+a question, or an `IssueDraft`, when they asked for an issue. Anything that isn't
+a draft leaves the current draft alone — a question about the code must not
+rewrite the issue someone is still reviewing.
 
 Read-only by construction: nothing here can write to GitHub. Submitting is the
 cog's job, behind a human click — so a confused model can waste tokens but never
-open an issue.
+open an issue. `propose_issue` is an output, not an action: it ends the run with
+a draft for a human to look at, and reaches GitHub only if they press Submit.
 
 The tools wrap githubkit rather than the GitHub MCP server. MCP would mean a PAT
 (its remote server won't take an installation token), a second identity, and 47
@@ -32,7 +38,9 @@ from pydantic_ai import (
     ModelMessage,
     ModelRetry,
     RunContext,
+    TextOutput,
     ToolCallPart,
+    ToolOutput,
     ToolReturnPart,
     UserContent,
 )
@@ -52,18 +60,36 @@ _MAX_ERROR_CHARS = 400  # provider messages can carry a whole request dump
 _PROVIDER_SDKS = frozenset({"openai", "anthropic", "google", "groq", "mistralai"})
 
 INSTRUCTIONS = """\
-You turn a Discord conversation into a GitHub issue that a developer can pick up
-without asking follow-up questions.
+You are a developer on this team, talking to your colleagues in Discord. You read
+the code, you answer questions about it, and when someone asks for an issue you
+write one.
 
-Read the conversation, then use your tools to ground it in the actual code: find
-the files and symbols people are talking about, and check whether the issue
-already exists before proposing a new one.
+Ground what you say in the actual code before you say it. Find the files and
+symbols people are talking about and read them; cite `path/to/file.py:line` so
+the next person can check you. Saying you're not sure beats guessing.
 
-You may read any repository in the org, not just the one the issue will be filed
+You may read any repository in the org, not just the one an issue would be filed
 against — follow a bug across a client and its service if that is where it leads.
-`repo` is only where the issue gets filed.
 
-House style, from the issues this org already writes:
+Every run ends one of two ways, and you choose:
+
+- **Answer in prose.** The default. Somebody asked a question, wants to think
+  something through, or asked you to go look at something. Reply the way you'd
+  reply to a colleague: as short as the question allows, no preamble restating
+  what they asked, no "great question". Discord markdown, and keep it skimmable.
+- **Call `propose_issue`.** Only when they asked for an issue — "let's write an
+  issue about this", "abre uma issue pra isso". That call ends the run with a
+  draft a human then reviews and submits; it does not file anything itself.
+
+Do not propose an issue just because the conversation described a bug. Somebody
+describing a bug is a conversation; somebody asking you to file it is an issue.
+When you're unsure which they meant, answer and ask.
+
+If an issue draft already exists in this conversation, call `propose_issue` only
+when they asked you to change the issue. Answering a question must not rewrite
+it. When you do revise it, carry over everything they didn't ask you to change.
+
+House style for an issue, from the ones this org already writes:
 
 - `title` is `type: what changes`, lowercase after the prefix. Types in use:
   `fix`, `feat`, `chore`, `refactor`. A reader scanning the list should be able
@@ -139,6 +165,14 @@ class _Unattached:
 
     async def on_result(self, call_id: str, part: ToolReturnPart) -> None:
         pass
+
+
+type Reply = IssueDraft | str
+"""How a run ended: a draft to review, or an answer to read.
+
+Narrow it with `isinstance(reply, IssueDraft)` — a `str` is the agent talking,
+and carries no draft, so it must never overwrite one.
+"""
 
 
 @dataclass
@@ -249,26 +283,53 @@ async def _safely(reporting: Awaitable[None]) -> None:
         log.debug("could not report progress", exc_info=True)
 
 
-def build(model: str) -> Agent[Deps, IssueDraft]:
-    """The issue-drafting agent. One per process; `deps` carries the run's state."""
-    agent = Agent[Deps, IssueDraft](
+def _answer(text: str) -> str:
+    """The prose branch of the output: what the agent says, unchanged.
+
+    `TextOutput` needs a callable to hand the text to, and there is nothing to do
+    to it — the point is only that plain text is a legal way for a run to end.
+    """
+    return text
+
+
+def build(model: str) -> Agent[Deps, Reply]:
+    """The conversational agent. One per process; `deps` carries the run's state.
+
+    Two ways to finish, and the model picks: text when it's answering, or
+    `propose_issue` when it's proposing a draft. `isinstance(output, IssueDraft)`
+    is what the caller reads them apart by.
+    """
+    agent = Agent[Deps, Reply](
         model,
         deps_type=Deps,
-        output_type=IssueDraft,
+        output_type=[
+            TextOutput(_answer),
+            ToolOutput(
+                IssueDraft,
+                name="propose_issue",
+                description=(
+                    "Propose a GitHub issue for a human to review and submit. "
+                    "Use this only when asked for an issue; it files nothing."
+                ),
+            ),
+        ],
         instructions=INSTRUCTIONS,
         retries=2,
         capabilities=[ProcessEventStream(_report_steps)],
     )
 
     @agent.output_validator
-    def _known_repo(ctx: RunContext[Deps], draft: IssueDraft) -> IssueDraft:
+    def _known_repo(ctx: RunContext[Deps], reply: Reply) -> Reply:
+        # Only the draft branch names a repo; prose has nothing to validate.
+        if not isinstance(reply, IssueDraft):
+            return reply
         candidates = ctx.deps.candidates
-        if candidates and draft.repo not in candidates:
+        if candidates and reply.repo not in candidates:
             raise ModelRetry(
-                f"`{draft.repo}` isn't one of the candidates. Choose from: "
+                f"`{reply.repo}` isn't one of the candidates. Choose from: "
                 + ", ".join(f"`{c}`" for c in candidates)
             )
-        return draft
+        return reply
 
     def _repo(ctx: RunContext[Deps], repo: str) -> tuple[str, str]:
         return split_repo(repo, ctx.deps.org)
@@ -416,10 +477,13 @@ def _prompt(
     # conversation is only evidence for it.
     asked = (
         f"What they asked for:\n{instruction}\n\n"
-        "Draft that issue. The conversation below is your evidence — use the parts "
-        "that bear on it and ignore the rest."
+        "Draft that issue with `propose_issue`. The conversation below is your "
+        "evidence — use the parts that bear on it and ignore the rest."
         if instruction
-        else "Work out what issue this conversation is asking for."
+        else (
+            "Work out what issue this conversation is asking for, and draft it "
+            "with `propose_issue`."
+        )
     )
 
     # Joined rather than each part carrying its own trailing blank line — the
@@ -438,15 +502,15 @@ def _prompt(
 
 
 class Session:
-    """One draft being iterated on, with the agent history behind it.
+    """One conversation with the agent, and the draft it may have produced.
 
-    Keeping the history is what makes refining cheap: the agent already read the
-    files it needed, and starting over would read them again.
+    Keeping the history is what makes a follow-up cheap: the agent already read
+    the files it needed, and starting over would read them again.
     """
 
     def __init__(
         self,
-        agent: Agent[Deps, IssueDraft],
+        agent: Agent[Deps, Reply],
         deps: Deps,
         requester: str,
         owner_id: int,
@@ -461,12 +525,16 @@ class Session:
         self._history: list[ModelMessage] = []
         self.draft: IssueDraft | None = None
 
-    async def _run(self, prompt: str | Sequence[UserContent]) -> IssueDraft:
+    async def _run(self, prompt: str | Sequence[UserContent]) -> Reply:
         result = await self._agent.run(
             prompt, deps=self._deps, message_history=self._history or None
         )
         self._history = list(result.all_messages())
-        self.draft = result.output
+        # Only a draft replaces the draft. A run that answered a question has no
+        # draft in it, and taking its prose as one would wipe what the requester
+        # is still reviewing.
+        if isinstance(result.output, IssueDraft):
+            self.draft = result.output
         return result.output
 
     async def start(
@@ -475,14 +543,12 @@ class Session:
         candidates: list[str],
         *,
         prompt: str | None = None,
-    ) -> IssueDraft:
+    ) -> Reply:
         """First pass: what the requester asked for, grounded in the conversation."""
         self._deps.candidates = candidates
         return await self._run(_prompt(transcript, candidates, prompt, self._requester))
 
-    async def refine(self, feedback: str, candidates: list[str]) -> IssueDraft:
-        """Revise the current draft from a human's note."""
+    async def refine(self, feedback: str, candidates: list[str]) -> Reply:
+        """Take a human's note: a revision if they asked for one, else an answer."""
         self._deps.candidates = candidates
-        return await self._run(
-            f"Revise the draft. Feedback from {self._requester}:\n\n{feedback}"
-        )
+        return await self._run(f"{self._requester} says:\n\n{feedback}")

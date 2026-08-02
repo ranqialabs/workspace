@@ -15,8 +15,7 @@ from bridge.config import Config, Secrets
 from bridge.github_app import installation_client
 from bridge.issue import agent as issue_agent
 from bridge.issue import view as issue_view
-from bridge.issue.agent import Deps
-from bridge.issue.draft import IssueDraft
+from bridge.issue.agent import Deps, Reply
 from bridge.live import LiveMessages
 from bridge.webhook import WebhookServer
 
@@ -41,7 +40,7 @@ class BridgeBot(commands.Bot):
         self.live = LiveMessages()  # one live message per entity (dedup + edit)
         self.github: GitHub | None = None  # set in setup_hook
         self.store: store.Store | None = None  # set in on_ready (needs the guild)
-        self.issue_agent: Agent[Deps, IssueDraft] | None = None  # set in setup_hook
+        self.issue_agent: Agent[Deps, Reply] | None = None  # set in setup_hook
         self._runner: web.AppRunner | None = None
         self._ready_once = False
 
