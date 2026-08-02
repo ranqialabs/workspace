@@ -22,7 +22,7 @@ from githubkit.exception import GitHubException
 
 from bridge import render
 from bridge.cogs.notifications import Notifications
-from bridge.agent import context, core, history, threads, view, workspace
+from bridge.agent import context, core, history, stream, threads, view, workspace
 from bridge.agent.core import Deps, Session
 from bridge.agent.draft import IssueDraft, from_embed, preview
 from bridge.render import GREEN, RED
@@ -38,20 +38,12 @@ _MAX_SPAN = 100  # a message link reads to the end of the conversation, up to th
 # Sessions kept in memory. Not a limit on open drafts — a thread we've forgotten
 # rebuilds from its own messages — just how many we keep the read for.
 _CACHED_SESSIONS = 8
-# Seconds between edits of anything we're updating live. Discord buckets message
-# edits per channel at roughly 5 per 5s and discord.py queues instead of raising,
-# so overrunning doesn't fail loudly — it just makes every later edit late. This
-# leaves room for a webhook notification landing in the same channel mid-run.
-_DRAW_EVERY = 1.2
 _EXPIRED = "This draft expired — start a new `/issue`."
 # What opens each kind of run, so a revision doesn't read as a first draft. The
 # second is deliberately vague about the outcome: the agent decides whether it's
 # revising the draft or just answering, and the line goes up before it has.
 _DRAFTING = "🔎 reading the conversation..."
 _REVISING = "💭 thinking..."
-# Discord's own ceiling on a message. The agent is told to be brief, so this is a
-# backstop against a wall of text, not the usual case.
-_MAX_MESSAGE = 2000
 # Messages back we look for a thread's draft card. Deep enough to see past a
 # conversation that ran on after the draft, shallow enough to be one fetch.
 _CARD_SCAN = 50
@@ -321,7 +313,7 @@ class Issues(commands.Cog):
         # say instead — usually that it needs more to go on. Say it and let them
         # answer in the thread rather than dropping it for a card we don't have.
         if not isinstance(reply, IssueDraft):
-            await thread.send(reply[:_MAX_MESSAGE])
+            await thread.send(stream.clip(reply))
             return
 
         await threads.rename(thread, reply.title)
@@ -449,17 +441,25 @@ class Issues(commands.Cog):
         """
         opening = await thread.send(_REVISING)
         open_draft.workspace.restart(thread)
+        live = stream.Live(opening)
         try:
-            reply = await open_draft.session.refine(feedback, self._candidates(thread))
+            open_draft.session.candidates(self._candidates(thread))
+            reply = await open_draft.session.stream(
+                open_draft.session.saying(feedback), live.feed
+            )
         except Exception as exc:  # noqa: BLE001
             log.exception("refine failed")
             await self._settle(open_draft.workspace, opening, core.explain(exc))
             return
-        await self._settle(open_draft.workspace, opening)
+        await open_draft.workspace.collapse()
         if isinstance(reply, IssueDraft):
+            # The opening line was a placeholder for an answer that isn't coming;
+            # the card below says everything it would have.
+            with contextlib.suppress(discord.HTTPException):
+                await opening.delete()
             await self._show(thread, reply, open_draft.session.owner_id)
             return
-        await thread.send(reply[:_MAX_MESSAGE])
+        await live.finish(reply)
 
     async def _resume(self, thread: discord.Thread, message: discord.Message) -> None:
         """Answer in a thread whose session we no longer hold.
@@ -499,20 +499,24 @@ class Issues(commands.Cog):
             history=past,
             draft=from_embed(card.embeds[0]),
         )
+        live = stream.Live(opening)
         try:
-            reply = await session.resume(message.content, self._candidates(thread))
+            session.candidates(self._candidates(thread))
+            reply = await session.stream(session.resuming(message.content), live.feed)
         except Exception as exc:  # noqa: BLE001 — a failed reply mustn't kill the cog
             log.exception("resumed reply failed in thread %s", thread.id)
             await self._settle(workspace, opening, core.explain(exc))
             return
-        await self._settle(workspace, opening)
+        await workspace.collapse()
         # Hold the session from here on: the conversation is live again, and the
         # next message should not pay to rebuild what we now have.
         self._sessions[thread.id] = Draft(session, workspace)
         if isinstance(reply, IssueDraft):
+            with contextlib.suppress(discord.HTTPException):
+                await opening.delete()
             await self._show(thread, reply, owner_id)
             return
-        await thread.send(reply[:_MAX_MESSAGE])
+        await live.finish(reply)
 
     async def _card(self, thread: discord.Thread) -> discord.Message | None:
         """The newest draft preview card in `thread`, if it still has one."""

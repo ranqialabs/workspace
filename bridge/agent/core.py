@@ -586,7 +586,9 @@ class Session:
     ) -> None:
         self._agent = agent
         self._deps = deps
-        self._requester = requester
+        # Public: a caller streaming a turn itself still has to name who is
+        # speaking, and there must be only one spelling of that name.
+        self.requester = requester
         # Who may steer this draft. Held here because it shares the session's
         # lifetime exactly — a second dict keyed by thread would only be one more
         # thing to keep in step.
@@ -650,26 +652,33 @@ class Session:
     ) -> Reply:
         """First pass: what the requester asked for, grounded in the conversation."""
         self._deps.candidates = candidates
-        return await self._run(_prompt(transcript, candidates, prompt, self._requester))
+        return await self._run(_prompt(transcript, candidates, prompt, self.requester))
 
-    async def refine(self, feedback: str, candidates: list[str]) -> Reply:
-        """Take a human's note: a revision if they asked for one, else an answer."""
+    def candidates(self, candidates: list[str]) -> None:
+        """Set what repos an issue from this session could be filed against.
+
+        Read at call time by the output validator, so it has to be set before a
+        run rather than at construction: a `/map repo` between two turns of the
+        same conversation should reach the second one.
+        """
         self._deps.candidates = candidates
-        return await self._run(f"{self._requester} says:\n\n{feedback}")
 
-    async def resume(self, feedback: str, candidates: list[str]) -> Reply:
-        """Same, for a conversation rebuilt from its thread rather than held.
+    def saying(self, feedback: str) -> str:
+        """A human's turn, as the agent should read it."""
+        return f"{self.requester} says:\n\n{feedback}"
+
+    def resuming(self, feedback: str) -> str:
+        """A turn in a conversation rebuilt from its thread rather than held.
 
         The draft is restated because a rebuilt history has the preview card
         filtered out of it — the agent would otherwise be revising an issue it
         can't see. Its fields come from the card, so this is what the thread
         shows, not a remembered copy.
         """
-        self._deps.candidates = candidates
         if self.draft is None:
-            return await self.refine(feedback, candidates)
-        return await self._run(
+            return self.saying(feedback)
+        return (
             "The issue draft currently under review in this conversation:\n"
             f"{self.draft.model_dump_json(indent=2)}\n\n"
-            f"{self._requester} says:\n\n{feedback}"
+            f"{self.saying(feedback)}"
         )
