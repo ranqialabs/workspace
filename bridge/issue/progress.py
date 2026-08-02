@@ -13,6 +13,7 @@ an exception.
 """
 
 import json
+from collections import Counter
 from collections.abc import Sequence
 from typing import Any, cast
 
@@ -28,6 +29,8 @@ _MAX_EXCERPT = 700  # chars of a returned file or blob
 _MAX_ROWS = 8  # collection entries listed before "+N more"
 _MAX_ROW = 90  # chars of any one listed row
 _MAX_FIELD = 1024  # Discord's own ceiling on an embed field value
+_MAX_NAME = 256  # Discord's ceiling on an embed title and on a field name
+_MAX_FIELDS = 6  # arguments shown before the card is more grid than card
 
 # Values that say nothing: an omitted optional reads the same as one never in
 # the signature, and neither earns a place in a card.
@@ -42,29 +45,29 @@ _LEAD = ("query", "path", "repo", "ref", "name", "login", "number", "url")
 # issue, `message` for a commit, `name` for a directory entry or a teammate.
 _ROW_LABEL = ("path", "title", "message", "name", "login")
 
-# What each tool is doing, in words, since the reader is following a draft and
-# not reading our function names. A tool we don't list falls back to its name.
-_VERB = {
-    "read_file": "reading",
-    "search_code": "searching code",
-    "list_dir": "listing",
-    "similar_issues": "checking for duplicates",
-    "repo_labels": "reading labels",
-    "teammates": "looking up teammates",
-    "recent_commits": "reading history",
-}
-
-_ICON = {
-    "read_file": "📄",
-    "search_code": "🔎",
-    "list_dir": "📁",
-    "similar_issues": "🔗",
-    "repo_labels": "🏷️",
-    "teammates": "👥",
-    "recent_commits": "🕘",
+# What each tool is doing, in words and a glyph, since the reader is following a
+# draft and not reading our function names. One entry per tool rather than a
+# dict each, so a tool can't have a verb and lose its icon. A tool we don't list
+# falls back to its name.
+_TOOLS = {
+    "read_file": ("📄", "reading"),
+    "search_code": ("🔎", "searching code"),
+    "list_dir": ("📁", "listing"),
+    "similar_issues": ("🔗", "checking for duplicates"),
+    "repo_labels": ("🏷️", "reading labels"),
+    "teammates": ("👥", "looking up teammates"),
+    "recent_commits": ("🕘", "reading history"),
 }
 
 _RUNNING = "⏳"
+
+
+def _icon(tool: str) -> str:
+    return _TOOLS.get(tool, ("🔧", tool))[0]
+
+
+def _verb(tool: str) -> str:
+    return _TOOLS.get(tool, ("🔧", tool))[1]
 
 
 def _clip(text: str, limit: int) -> str:
@@ -123,7 +126,7 @@ def _ordered(args: dict[str, Any]) -> list[tuple[str, Any]]:
     )
 
 
-def _subject(part: ToolCallPart, args: dict[str, Any]) -> str:
+def _subject(part: ToolCallPart, ordered: list[tuple[str, Any]]) -> str:
     """The one thing this call is about, for the card's title.
 
     A title reading `reading bridge/issue/view.py` is the whole story for most
@@ -131,33 +134,32 @@ def _subject(part: ToolCallPart, args: dict[str, Any]) -> str:
     search term is quoted, since it's prose and would otherwise run into the
     verb in front of it.
     """
-    ordered = _ordered(args)
-    verb = _VERB.get(part.tool_name, part.tool_name)
     if not ordered:
         # No readable arguments: the verb alone dangles ("reading"), so name the
         # tool instead and let the raw arguments below say the rest.
         return part.tool_name
     key, value = ordered[0]
-    subject = _scalar(value, _MAX_ARG)
+    subject = _scalar(value)
     if key == "query":
         subject = f'"{subject}"'
-    return _flat(f"{verb} {subject}", 200)
+    return _flat(f"{_verb(part.tool_name)} {subject}", 200)
 
 
-def call_fields(part: ToolCallPart) -> list[tuple[str, str]]:
+def _call_fields(
+    part: ToolCallPart, args: dict[str, Any], ordered: list[tuple[str, Any]]
+) -> list[tuple[str, str]]:
     """The call's arguments, as embed fields, identifying one first.
 
     Every argument is shown rather than only the leading one: `read_file` on a
     ref, or a search scoped to a repo, is a different call from the one without
     it, and the reader can't tell them apart from a title.
     """
-    args = parse_args(part.args)
     if not args:
         # A non-JSON or not-yet-parseable string is still better than nothing:
         # it's what the model actually sent.
         raw = part.args.strip() if isinstance(part.args, str) else ""
         return [("Arguments", f"```\n{_clip(raw, 400)}\n```")] if raw else []
-    return [(k, f"`{_scalar(v)}`") for k, v in _ordered(args)]
+    return [(k, f"`{_scalar(v)}`") for k, v in ordered]
 
 
 def _rows(content: object) -> list[object] | None:
@@ -225,7 +227,7 @@ def result_summary(part: ToolReturnPart) -> tuple[str, str | None, bool]:
     """
     content = part.content
     if part.outcome != "success":
-        return part.outcome, _clip(_scalar(content, _MAX_FIELD), _MAX_EXCERPT), False
+        return part.outcome, _scalar(content, _MAX_EXCERPT), False
 
     if (failure := _failure(content)) is not None:
         return "failed", _clip(failure, _MAX_EXCERPT), False
@@ -240,7 +242,7 @@ def result_summary(part: ToolReturnPart) -> tuple[str, str | None, bool]:
 
     rows = _rows(content)
     if rows is None:
-        return "done", _clip(_scalar(content, _MAX_FIELD), _MAX_EXCERPT), True
+        return "done", _scalar(content, _MAX_EXCERPT), True
     if not rows:
         return "nothing found", None, True
     counted = f"{len(rows)} result{'s' if len(rows) != 1 else ''}"
@@ -258,12 +260,12 @@ def _fenced(detail: str, *, code: bool) -> str:
 def calling(part: ToolCallPart) -> discord.Embed:
     """The card for a call that has just gone out and hasn't answered yet."""
     args = parse_args(part.args)
-    icon = _ICON.get(part.tool_name, "🔧")
+    ordered = _ordered(args)
     embed = discord.Embed(
-        title=_clip(f"{icon} {_subject(part, args)}", 256),
+        title=_clip(f"{_icon(part.tool_name)} {_subject(part, ordered)}", _MAX_NAME),
         color=GREY,
     )
-    for name, value in call_fields(part)[:6]:
+    for name, value in _call_fields(part, args, ordered)[:_MAX_FIELDS]:
         embed.add_field(name=name, value=_clip(value, _MAX_FIELD), inline=True)
     embed.set_footer(text=f"{_RUNNING} {part.tool_name}")
     return embed
@@ -279,7 +281,7 @@ def answered(
     """
     embed = calling(part)
     headline, detail, ok = result_summary(result)
-    headline = _clip(headline, 256)  # it names a field, and a field name has a cap
+    headline = _clip(headline, _MAX_NAME)  # it names a field, and that has a cap
     embed.color = GREEN if ok else RED
     # The headline names the block, so "15 results" sits above the hits it
     # counts; with nothing to put under it, it is the block.
@@ -303,11 +305,7 @@ def summarise(calls: list[str], *, elapsed: float | None = None) -> str:
     """
     if not calls:
         return "Drafted without looking anything up."
-    counts: dict[str, int] = {}
-    for name in calls:
-        counts[name] = counts.get(name, 0) + 1
-    parts = [
-        f"{count}x {_VERB.get(name, name)}" for name, count in sorted(counts.items())
-    ]
+    counts = Counter(calls)
+    parts = [f"{count}x {_verb(name)}" for name, count in sorted(counts.items())]
     took = f", {elapsed:.0f}s" if elapsed is not None else ""
     return f"Looked at: {', '.join(parts)}{took}."

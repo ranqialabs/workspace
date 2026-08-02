@@ -287,8 +287,7 @@ class Issues(commands.Cog):
         except Exception as exc:  # noqa: BLE001 — a failed draft mustn't kill the cog
             log.exception("issue draft failed in thread %s", thread.id)
             del self._sessions[thread.id]
-            await workspace.collapse()
-            await opening.edit(content=f"⚠️ {agent.explain(exc)}")
+            await self._settle(workspace, opening, agent.explain(exc))
             return
 
         # Named once, from the first draft: a rename is a system line in the
@@ -326,15 +325,23 @@ class Issues(commands.Cog):
         return None
 
     async def _settle(
-        self, workspace: "DraftWorkspace", opening: discord.Message
+        self,
+        workspace: "DraftWorkspace",
+        opening: discord.Message,
+        error: str | None = None,
     ) -> None:
-        """End a run's progress: collapse its cards, drop the line that opened it.
+        """End a run's progress: collapse its cards, then close out the opening line.
 
-        What's left in the thread is one summary line, and the draft posts under
-        it — so the thread reads in the order it happened rather than having the
-        result edited back into its own announcement.
+        On success what's left in the thread is one summary line, and the draft
+        posts under it — so the thread reads in the order it happened rather than
+        having the result edited back into its own announcement. A failed run has
+        nothing to post under it, so the opening line carries the reason instead.
         """
         await workspace.collapse()
+        if error is not None:
+            with contextlib.suppress(discord.HTTPException):
+                await opening.edit(content=f"⚠️ {error}")
+            return
         with contextlib.suppress(discord.HTTPException):
             await opening.delete()
 
@@ -344,12 +351,12 @@ class Issues(commands.Cog):
         draft: IssueDraft,
         author_id: int,
         source_url: str | None = None,
-    ) -> discord.Message:
+    ) -> None:
         """Put the draft and its buttons up, in place or as a new message.
 
         A message means replace it (an inline edit keeps the card where the
-        reader already is); a channel means post one. The returned message is the
-        card, which is also the draft's storage once the session is gone.
+        reader already is); a channel means post one. Either way the card is also
+        the draft's storage once the session is gone, read back off its embed.
         """
         content = (
             f"Drafted from [this conversation](<{source_url}>)." if source_url else None
@@ -358,8 +365,8 @@ class Issues(commands.Cog):
         buttons = view.draft_view(author_id)
         if isinstance(target, discord.Message):
             await target.edit(content=content, embed=embed, view=buttons)
-            return target
-        return await target.send(content=content, embed=embed, view=buttons)
+            return
+        await target.send(content=content, embed=embed, view=buttons)
 
     def _assignee_note(self, draft: IssueDraft) -> str | None:
         """Warn if the proposed assignee isn't a login we have mapped.
@@ -428,8 +435,7 @@ class Issues(commands.Cog):
             )
         except Exception as exc:  # noqa: BLE001
             log.exception("refine failed")
-            await open_draft.workspace.collapse()
-            await opening.edit(content=f"⚠️ {agent.explain(exc)}")
+            await self._settle(open_draft.workspace, opening, agent.explain(exc))
             return
         await self._settle(open_draft.workspace, opening)
         await self._show(thread, revised, open_draft.session.owner_id)
@@ -571,31 +577,33 @@ class DraftWorkspace:
     to a window while the run goes, and collapse into one line when it ends.
     """
 
+    # Cards still on screen, oldest first. Bounded by pruning rather than by a
+    # deque: dropping one here has to delete the message too.
+    _steps: list[_Step]
+    # Every tool the run has called, in order — what the closing summary counts.
+    _called: list[str]
+    _started: float
+
     def __init__(
         self, store: Store, guild: discord.Guild, thread: discord.abc.Messageable
     ) -> None:
         self._store = store
         self._guild = guild
-        self._thread = thread
-        # Cards still on screen, oldest first. Bounded by pruning rather than by a
-        # deque: dropping one here has to delete the message too.
-        self._steps: list[_Step] = []
-        # Every tool the run has called, in order — what the closing summary counts.
-        self._called: list[str] = []
-        self._started = time.monotonic()
         # Serialises post-then-prune against concurrent tool events, so two calls
         # landing together can't both decide the same card is the one to delete.
         self._lock = asyncio.Lock()
+        self.restart(thread)
 
     def restart(self, thread: discord.abc.Messageable) -> None:
         """Watch a fresh run: a refine posts its own cards, and counts its own.
 
-        The previous run's cards have already been collapsed, so there is nothing
-        here to clean up — only the counters to reset.
+        Defines the per-run state in one place, so the constructor and a refine
+        start from the same slate. The previous run's cards have already been
+        collapsed, so there is nothing here to clean up.
         """
         self._thread = thread
-        self._steps.clear()
-        self._called.clear()
+        self._steps = []
+        self._called = []
         self._started = time.monotonic()
 
     def teammates(self) -> dict[str, str]:
@@ -651,9 +659,11 @@ class DraftWorkspace:
                 return  # nothing was watched, so there is nothing to summarise
             steps, self._steps = self._steps, []
             called, self._called = self._called, []
-            for step in steps:
-                with contextlib.suppress(discord.HTTPException):
-                    await step.message.delete()
+            # Independent deletes, and this sits between the run finishing and the
+            # draft appearing — the one moment the reader is waiting on us.
+            await asyncio.gather(
+                *(step.message.delete() for step in steps), return_exceptions=True
+            )
             line = progress.summarise(called, elapsed=time.monotonic() - self._started)
             try:
                 await self._thread.send(f"-# {line}")
