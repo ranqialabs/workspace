@@ -37,7 +37,7 @@ to a long random string and keep it somewhere; it becomes `GITHUB_WEBHOOK_SECRET
 and is what lets the bridge prove a webhook really came from GitHub.
 
 **Permissions.** Read-only everywhere except issues, which the bridge creates
-when someone clicks Submit on an [`/issue`](issues.md) draft:
+when someone clicks Submit on an [`/issue`](agent.md) draft:
 
 | Scope | Permission | Why it's needed |
 | :---- | :--------- | :-------------- |
@@ -95,19 +95,20 @@ Gateway Intents*:
 | Intent | Required for | What breaks without it |
 | :----- | :----------- | :--------------------- |
 | **Server Members** | `/sync roles` | the bot can't see or change members' roles at all |
-| **Message Content** | [`/issue`](issues.md) | message text arrives empty, so there's no conversation to draft from |
+| **Message Content** | [the agent](agent.md) | message text arrives empty, so a mention carries no request and there's no conversation to draft from |
 
 Leave **Presence** off — the bridge never looks at who's online.
 
 !!! warning "Message Content is why an empty draft happens"
 
     If `/issue` replies *"I couldn't read any conversation there"* on a channel
-    that plainly has one, this intent is the reason nine times out of ten. The
-    bot receives the messages either way; without the intent their `content` is
-    blank, which is indistinguishable from an empty channel.
+    that plainly has one, or a mention goes unanswered, this intent is the reason
+    nine times out of ten. The bot receives the messages either way; without the
+    intent their `content` is blank, which is indistinguishable from an empty
+    channel — and a mention with blank content reads as nothing being asked.
 
     Every other feature works fine without it, so the bridge doesn't demand it at
-    boot — you just can't draft issues.
+    boot — you just can't talk to the agent.
 
 **Invite it.** Go to **OAuth2 → URL Generator**, tick the scopes **`bot`** and
 **`applications.commands`**, then under bot permissions tick:
@@ -155,9 +156,9 @@ fly secrets set \
   GITHUB_APP_PRIVATE_KEY="$(cat ranqia-workspace.*.private-key.pem)"
 ```
 
-`OPENAI_API_KEY` is the only optional one: without it [`/issue`](issues.md) is
-switched off and everything else runs unchanged. To draft with a different model,
-set `ISSUE_MODEL` to any [pydantic-ai] model string — the matching provider key
+`OPENAI_API_KEY` is the only optional one: without it [the agent](agent.md) is
+switched off and everything else runs unchanged. To run it on a different model,
+set `AGENT_MODEL` to any [pydantic-ai] model string — the matching provider key
 has to be set too.
 
 !!! danger "Set the key from the file, with the quotes"
@@ -185,7 +186,7 @@ Actions**.
     ```
 
     `.env.example` lists every variable, including `OPENAI_API_KEY` and the
-    optional `ISSUE_MODEL`. `GITHUB_APP_PRIVATE_KEY` accepts either the PEM
+    optional `AGENT_MODEL`. `GITHUB_APP_PRIVATE_KEY` accepts either the PEM
     inline or a **path** to the `.pem`, which is far easier locally.
 
     GitHub still needs a public URL to deliver webhooks to, so expose the port
@@ -221,7 +222,7 @@ role, adds and removes members to match who can reach the repo on GitHub, and se
 the channel's permissions so only that role can see it. `/sync roles` also runs
 automatically on every boot.
 
-Do `/map user` before you rely on [`/issue`](issues.md): it's the same mapping
+Do `/map user` before you rely on [`/issue`](agent.md): it's the same mapping
 the agent resolves a first name through when someone says *"assign it to Ana"*.
 
 ## Where it keeps state

@@ -24,11 +24,16 @@ deploys post rich embeds to the repo's channel, `@mentioning` the people
 involved. Issues and deploys keep one message that gets *edited* in place rather
 than stacking a new one per state change.
 
-**`/issue` drafts a GitHub issue from a conversation.** Point it at a discussion
-and an agent reads the messages, greps the actual code to ground them, checks for
-duplicates, and proposes a draft in a thread. Nothing reaches GitHub until
-whoever asked clicks **Submit**: the agent has no write tool at all, so that
-isn't policy, it's the shape of the code. Talk in the thread to revise it.
+**`@` the bot and it answers.** It reads the conversation, greps the actual code
+to ground itself, and replies in the channel, streaming the answer as it writes
+it. If it can't tell what you meant it reads further back on its own rather than
+guessing.
+
+**Ask it for an issue and you get a draft, not an issue.** It opens a thread and
+proposes one; the thread is then a conversation where you can revise the draft or
+just ask questions in front of it. Nothing reaches GitHub until whoever asked
+clicks **Submit**: the agent has no write tool at all, so that isn't policy, it's
+the shape of the code. `/issue` does the same thing when you'd rather be explicit. Talk in the thread to revise it.
 
 ## Documentation
 

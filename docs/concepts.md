@@ -59,9 +59,9 @@ audit log, and they can't disagree because they're the same thing.
 
 ## A model may propose, only a human disposes
 
-The bridge runs an LLM agent — [`/issue`](issues.md) hands it your conversation
-and lets it read your code. The obvious worry is the obvious one: what happens
-when it gets something wrong?
+The bridge runs an LLM agent, and you reach it by [mentioning it](agent.md) or
+with `/issue`. Either way it reads your conversation and your code. The obvious
+worry is the obvious one: what happens when it gets something wrong?
 
 The answer isn't a careful system prompt, because a prompt is a request and a
 confused model can decline it. **The agent has no tool that writes to GitHub.**
@@ -72,7 +72,9 @@ press.
 
 So the failure mode of a bad draft is a bad draft — visible in a thread, in front
 of the people who were in the conversation, waiting for someone to press Submit
-or Discard. It cannot be an issue nobody meant to file.
+or Discard. It cannot be an issue nobody meant to file. That holds for a draft the
+agent proposed because someone asked it to in conversation just as much as for one
+from `/issue`: both land on the same card, behind the same button.
 
 ```mermaid
 flowchart LR

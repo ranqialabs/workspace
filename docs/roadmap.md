@@ -13,8 +13,9 @@ ones already running.
 - [x] **Access sync** — a role per repo, filled from GitHub, gating its channel.
 - [x] **Notifications** — issues, PRs, reviews, CI and deploys, with live cards
       that get edited rather than repeated.
-- [x] **[`/issue`](issues.md)** — draft a GitHub issue from a conversation,
-      review it in a thread, submit it with a click.
+- [x] **[The agent](agent.md)** — `@` the bot and it answers, grounded in the
+      code, streaming as it writes. Ask it for an issue and you get a draft in a
+      thread to review and submit with a click.
 
 ## Coming next
 
@@ -58,14 +59,14 @@ ones already running.
 - **Mappings are replayed from a channel on boot** — great up to low hundreds of
   entries, but a much larger server would want a real store.
 
-**Drafting**
+**The agent**
 
-- **Drafts don't survive a restart as conversations.** The buttons keep working
-  and the draft is recovered from its own card, but the agent's history is gone,
-  so revising by talking stops working. See [Drafting issues](issues.md).
-- **Three concurrent drafts**, since each holds its images and history in memory.
+- **A rebuilt conversation loses the agent's tool history**, only the prose comes
+  back — so a revision after a restart may re-read a file it had already read.
 - **A recovered draft's body is the preview text**, so one over 1500 characters
   comes back truncated. Every other field is exact.
+- **It reads one channel.** A mention can only read back in the channel it
+  happened in, so a question spanning two channels needs the context pasted.
 
 ## Design principle
 

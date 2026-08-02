@@ -40,14 +40,14 @@ turns GitHub activity into Discord notifications — mentioning the right people
 
   [:octicons-arrow-right-24: Events](commands.md#events)
 
-- :lucide-pen-line:{ .lg .middle } **Issues from conversations**
+- :lucide-pen-line:{ .lg .middle } **An agent in the conversation**
 
   ***
 
   `/issue` reads the discussion, grounds it in the actual code, and drafts an
   issue in a thread. Nothing is filed until someone clicks Submit.
 
-  [:octicons-arrow-right-24: Drafting issues](issues.md)
+  [:octicons-arrow-right-24: Talking to the agent](agent.md)
 
 - :lucide-mouse-pointer-click:{ .lg .middle } **No IDs, ever**
 
@@ -101,7 +101,7 @@ flowchart LR
   A -- "/map · /sync roles" --> S
   S -- "read repo collaborators" --> GH
   S -- "create roles · sync members · gate channels" --> DC
-  U -- "/issue" --> I
+  U -- "@bot · /issue" --> I
   I -- "read code · search issues" --> GH
   I -- "draft in a thread" --> DC
   DC -- "Submit — a human click" --> GH
@@ -112,7 +112,8 @@ no cron, no separate web service, no polling. And the mappings live in a Discord
 channel, so there's **no database and no disk** to manage either.
 
 Note where the arrow into GitHub for a new issue starts: at **Submit**, not at
-the agent. Everything the agent itself can do to GitHub is a read.
+the agent. Everything the agent itself can do to GitHub is a read — however the
+draft got there.
 
 ## Next steps
 

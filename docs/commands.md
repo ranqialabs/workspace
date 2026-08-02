@@ -9,13 +9,14 @@ icon: lucide/terminal
 Admin commands are grouped into two families — **`/map`** for wiring things
 together and **`/sync`** for acting on that wiring — so everything the bot does
 lives under a name that says what it's for. Alongside them,
-[**`/issue`**](issues.md) is the one command anyone can run.
+[**`/issue`**](agent.md) is the one command anyone can run — and you can skip it
+entirely by [just mentioning the bot](agent.md).
 
 | Command | Who can run it |
 | :------ | :------------- |
 | [`/map repo`](#map-repo), [`/map announce`](#map-announce), [`/map user`](#map-user) | Manage Server |
 | [`/sync roles`](#sync-roles), [`/config`](#config) | Manage Server |
-| [`/issue`](issues.md) and *Draft issue from here* | anyone in the server |
+| [`/issue`](agent.md), *Draft issue from here*, and [`@`mentioning the bot](agent.md) | anyone in the server |
 
 Admin commands require Discord's **Manage Server** permission; that's the entire
 access model, so there's no admin role to create. Discord greys them out for
@@ -87,13 +88,17 @@ knows a PR by `itsmeale` should ping a particular person. The bot confirms with 
 small embed showing the GitHub avatar and profile, so you can see at a glance you
 picked the right account. Re-mapping a login overwrites the old link.
 
-It does one more job: [`/issue`](issues.md) resolves *"assign it to Ana"* to a
+It does one more job: [`/issue`](agent.md) resolves *"assign it to Ana"* to a
 GitHub login through these mappings. An unmapped person can't be assigned by
 name — the agent will ask who takes it instead of guessing.
 
 ### `/issue` { #issue }
 
 Draft a GitHub issue from a conversation, review it in a thread, then submit it.
+
+You don't need this command to get an issue — [mentioning the bot](agent.md) and
+asking for one does the same thing, and reads back as far as it needs to on its
+own. `/issue` is for when you want to say exactly which messages to read.
 
 ```text
 /issue [prompt:‹what it's about›] [since_message:‹link›] [last:20] [repo:‹owner/name›]
@@ -111,7 +116,7 @@ Also available as **right-click a message → Apps → Draft issue from here**.
 Unlike every other command, this one is open to anyone — filing an issue is
 ordinary work, and nothing reaches GitHub without a human clicking Submit.
 
-[:octicons-arrow-right-24: How drafting works, in full](issues.md)
+[:octicons-arrow-right-24: How the agent works, in full](agent.md)
 
 ### `/sync roles` { #sync-roles }
 
@@ -195,7 +200,7 @@ function per event — so restyling or adding an event is a self-contained chang
 
 !!! info "An issue submitted from Discord posts once, not twice"
 
-    Clicking Submit on an [`/issue`](issues.md) draft posts the new issue's card
+    Clicking Submit on an [`/issue`](agent.md) draft posts the new issue's card
     to the repo channel immediately — ahead of GitHub's own `issues.opened`
     webhook, which arrives a moment later. Both use the same live-message key, so
     the webhook **edits** that card instead of posting a second one.
