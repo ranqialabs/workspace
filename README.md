@@ -3,12 +3,12 @@
 An opinionated workflow for developing private projects, with discussions,
 permissions, decisions and knowledge tracked on top of:
 
-- **GitHub Organization** — repositories, teams, permissions
-- **Discord Server** — roles, channels, bots, notifications
-- **Google Workspace** — commercial discussions, transcriptions, docs
+- **GitHub Organization**: repositories, teams, permissions
+- **Discord Server**: roles, channels, bots, notifications
+- **Google Workspace**: commercial discussions, transcriptions, docs
 
 It runs as a single bot process (`bridge/`) that holds a Discord gateway
-connection and an HTTP webhook listener on **one event loop** — no cron, no
+connection and an HTTP webhook listener on **one event loop**. No cron, no
 separate web service, no polling. There is no database and no disk: every
 mapping lives as an ordinary message in a private `#bot-config` channel.
 
@@ -27,27 +27,24 @@ than stacking a new one per state change.
 **`/issue` drafts a GitHub issue from a conversation.** Point it at a discussion
 and an agent reads the messages, greps the actual code to ground them, checks for
 duplicates, and proposes a draft in a thread. Nothing reaches GitHub until
-whoever asked clicks **Submit** — the agent has no write tool at all, so that
+whoever asked clicks **Submit**: the agent has no write tool at all, so that
 isn't policy, it's the shape of the code. Talk in the thread to revise it.
 
 ## Documentation
 
-**→ [ranqialabs.github.io/workspace](https://ranqialabs.github.io/workspace/)**
+<div align="center">
 
-| Page | What's in it |
-| :--- | :----------- |
-| [Concepts](https://ranqialabs.github.io/workspace/concepts/) | why it's built this way — worth 5 minutes |
-| [Setup](https://ranqialabs.github.io/workspace/configuration/) | GitHub App, Discord bot, deploy, wiring |
-| [Commands & events](https://ranqialabs.github.io/workspace/commands/) | every slash command and webhook event |
-| [Drafting issues](https://ranqialabs.github.io/workspace/issues/) | how `/issue` works, and its guardrails |
-| [Roadmap](https://ranqialabs.github.io/workspace/roadmap/) | what's next, and the known limits |
+### 👉 [ranqialabs.github.io/workspace](https://ranqialabs.github.io/workspace/) 👈
 
-The sources live in [`docs/`](docs/).
+</div>
+
+Concepts, setup, every command and event, and the roadmap. The sources live in
+[`docs/`](docs/).
 
 ## Running it locally
 
 ```bash
-cp .env.example .env    # fill it in — and never commit it
+cp .env.example .env    # fill it in, and never commit it
 uv sync
 uv run python -m bridge
 ```
