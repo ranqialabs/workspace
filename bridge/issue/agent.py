@@ -514,6 +514,9 @@ class Session:
         deps: Deps,
         requester: str,
         owner_id: int,
+        *,
+        history: list[ModelMessage] | None = None,
+        draft: IssueDraft | None = None,
     ) -> None:
         self._agent = agent
         self._deps = deps
@@ -522,8 +525,10 @@ class Session:
         # lifetime exactly — a second dict keyed by thread would only be one more
         # thing to keep in step.
         self.owner_id = owner_id
-        self._history: list[ModelMessage] = []
-        self.draft: IssueDraft | None = None
+        # Passed in when the conversation was rebuilt from its thread, so a
+        # session resumed after a restart starts where the thread left off.
+        self._history: list[ModelMessage] = history or []
+        self.draft: IssueDraft | None = draft
 
     async def _run(self, prompt: str | Sequence[UserContent]) -> Reply:
         result = await self._agent.run(
@@ -552,3 +557,20 @@ class Session:
         """Take a human's note: a revision if they asked for one, else an answer."""
         self._deps.candidates = candidates
         return await self._run(f"{self._requester} says:\n\n{feedback}")
+
+    async def resume(self, feedback: str, candidates: list[str]) -> Reply:
+        """Same, for a conversation rebuilt from its thread rather than held.
+
+        The draft is restated because a rebuilt history has the preview card
+        filtered out of it — the agent would otherwise be revising an issue it
+        can't see. Its fields come from the card, so this is what the thread
+        shows, not a remembered copy.
+        """
+        self._deps.candidates = candidates
+        if self.draft is None:
+            return await self.refine(feedback, candidates)
+        return await self._run(
+            "The issue draft currently under review in this conversation:\n"
+            f"{self.draft.model_dump_json(indent=2)}\n\n"
+            f"{self._requester} says:\n\n{feedback}"
+        )

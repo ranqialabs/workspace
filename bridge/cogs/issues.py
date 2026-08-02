@@ -11,8 +11,8 @@ shape, but only the requester can act on it.
 import asyncio
 import contextlib
 import logging
+import re
 import time
-from collections import deque
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -25,7 +25,7 @@ from pydantic_ai import ToolCallPart, ToolReturnPart
 
 from bridge import render
 from bridge.cogs.notifications import Notifications
-from bridge.issue import agent, context, progress, view
+from bridge.issue import agent, context, history, progress, view
 from bridge.issue.agent import Deps, Session
 from bridge.issue.draft import IssueDraft, from_embed, preview
 from bridge.render import GREEN, RED
@@ -39,7 +39,9 @@ log = logging.getLogger(__name__)
 
 DEFAULT_SPAN = 20  # messages read when you don't say how many
 _MAX_SPAN = 100  # a message link reads to the end of the conversation, up to this
-_MAX_SESSIONS = 3  # concurrent drafts; each holds images + agent history in RAM
+# Sessions kept in memory. Not a limit on open drafts — a thread we've forgotten
+# rebuilds from its own messages — just how many we keep the read for.
+_CACHED_SESSIONS = 8
 # Tool cards kept on screen at once. Enough to follow what the agent is doing
 # without the draft scrolling out of the thread; older ones are deleted, and the
 # whole window collapses into one line when the run ends.
@@ -53,9 +55,29 @@ _REVISING = "💭 thinking..."
 # Discord's own ceiling on a message. The agent is told to be brief, so this is a
 # backstop against a wall of text, not the usual case.
 _MAX_MESSAGE = 2000
+# Messages back we look for a thread's draft card. Deep enough to see past a
+# conversation that ran on after the draft, shallow enough to be one fetch.
+_CARD_SCAN = 50
+# The owner id every draft button carries, matching `issue/view.py`'s template.
+_OWNER = re.compile(r"issue:\w+:(?P<author>\d+)")
 # Every draft thread is named from this, so the name is enough to recognise one
 # after a restart — no fetch, and no state we'd have to have kept.
 _THREAD_PREFIX = "issue"
+
+
+def _owner_of(card: discord.Message) -> int | None:
+    """Who may steer the draft on `card`, read off its own buttons.
+
+    The requester's id already rides in every button's custom_id so a click
+    survives a restart (see `issue/view.py`); that makes the card the record of
+    who owns the draft, and there is no second place for it to disagree with.
+    """
+    for row in card.components:
+        for item in getattr(row, "children", ()):
+            custom_id = getattr(item, "custom_id", None) or ""
+            if (m := _OWNER.match(custom_id)) is not None:
+                return int(m["author"])
+    return None
 
 
 @dataclass
@@ -75,11 +97,10 @@ class Issues(commands.Cog):
 
     def __init__(self, bot: "BridgeBot") -> None:
         self.bot = bot
-        self._sessions: dict[int, Draft] = {}  # thread id -> live draft
-        # Threads already told their draft is gone. Bounded because it only has to
-        # suppress a repeat reply; the oldest falling out just risks saying it
-        # twice in a thread nobody has touched in a long time.
-        self._lost: deque[int] = deque(maxlen=64)
+        # Live drafts, thread id -> session. A cache, not the record: a thread we
+        # have no entry for is rebuilt from its own messages, so losing this
+        # costs a re-read rather than the conversation.
+        self._sessions: dict[int, Draft] = {}
         self.draft_from_message = app_commands.ContextMenu(
             name="Draft issue from here",
             callback=self._context_menu,
@@ -217,17 +238,22 @@ class Issues(commands.Cog):
             return "Issue drafting is switched off — no model configured."
         if self.bot.store is None or self.bot.github is None:
             return "Still starting up; try again in a moment."
-        # A deleted thread never submits or discards, so its session would hold a
-        # slot forever.
+        self._evict()
+        return None
+
+    def _evict(self) -> None:
+        """Keep the session cache bounded, oldest first.
+
+        Nothing is lost by dropping one: the thread still holds the conversation
+        and its card, so the next message there rebuilds. That's why this evicts
+        instead of refusing to start — a cap on remembering is not a cap on how
+        many drafts may be open.
+        """
         for thread_id in list(self._sessions):
             if self.bot.get_channel(thread_id) is None:
                 del self._sessions[thread_id]
-        if len(self._sessions) >= _MAX_SESSIONS:
-            return (
-                f"{_MAX_SESSIONS} drafts are already open. "
-                "Submit or discard one of them first."
-            )
-        return None
+        while len(self._sessions) > _CACHED_SESSIONS:
+            self._sessions.pop(next(iter(self._sessions)))
 
     # --- the draft run ---
 
@@ -399,10 +425,11 @@ class Issues(commands.Cog):
 
     @commands.Cog.listener()
     async def on_message(self, message: discord.Message) -> None:
-        """A draft thread is a conversation: the requester talking in it revises.
+        """A draft thread is a conversation: talking in it revises, or asks.
 
         Only the requester — the thread is public, and anyone else in it is
-        commenting on the draft, not steering it.
+        commenting on the draft, not steering it. Who that is comes off the
+        thread's own draft card, so it outlives us.
         """
         if message.author.bot or not message.content.strip():
             return
@@ -410,25 +437,20 @@ class Issues(commands.Cog):
         if not isinstance(thread, discord.Thread) or thread.archived:
             return  # submit and discard archive the thread; that draft is done
         # This fires on every message in the server, so the cheap tests come
-        # first: in-memory lookups only, no fetch on the path that says "not us".
-        draft = self._sessions.get(thread.id)
-        if draft is None:
-            # A draft thread we no longer hold a session for. Its card still
-            # works — the buttons rebuild from their own custom_id — but the
-            # agent history a revision needs is gone, so say so rather than
-            # swallowing what they typed. Once per thread: after a restart this
-            # would otherwise answer every message in every old draft.
-            if thread.name.startswith(_THREAD_PREFIX) and thread.id not in self._lost:
-                self._lost.append(thread.id)
-                await message.reply(
-                    "I've lost the thread of this draft (I restarted). Use the "
-                    "buttons above, or start a new `/issue`.",
-                    mention_author=False,
-                )
+        # first: a name check and an in-memory lookup, no fetch on the path that
+        # says "not us".
+        if not thread.name.startswith(_THREAD_PREFIX):
             return
-        if message.author.id != draft.session.owner_id:
+        open_draft = self._sessions.get(thread.id)
+        if open_draft is not None:
+            if message.author.id != open_draft.session.owner_id:
+                return
+            await self._revise(thread, open_draft, message.content)
             return
-        await self._revise(thread, draft, message.content)
+        # A draft thread we hold no session for — we restarted, or it predates
+        # this process. The conversation is still in the thread, so rebuild it
+        # from there rather than telling them we lost it.
+        await self._resume(thread, message)
 
     # --- view.Actions ---
 
@@ -454,6 +476,71 @@ class Issues(commands.Cog):
             await self._show(thread, reply, open_draft.session.owner_id)
             return
         await thread.send(reply[:_MAX_MESSAGE])
+
+    async def _resume(self, thread: discord.Thread, message: discord.Message) -> None:
+        """Answer in a thread whose session we no longer hold.
+
+        Everything a reply needs is in the thread: the conversation is its
+        messages, the draft is its newest preview card, and who may steer it is
+        the owner encoded in that card's buttons. So a restart costs a re-read
+        rather than the conversation.
+        """
+        if self._unavailable() is not None or self.bot.store is None:
+            return
+        assert self.bot.issue_agent is not None
+        assert self.bot.github is not None
+        card = await self._card(thread)
+        if card is None:
+            return  # no draft card: not a thread of ours to answer in
+        owner_id = _owner_of(card)
+        if owner_id is None or message.author.id != owner_id:
+            return
+        assert thread.guild is not None
+        assert self.bot.user is not None
+
+        opening = await thread.send(_REVISING)
+        workspace = DraftWorkspace(self.bot.store, thread.guild, thread)
+        past = await history.rebuild(
+            thread, self.bot.store, bot_user_id=self.bot.user.id
+        )
+        session = Session(
+            self.bot.issue_agent,
+            Deps(
+                github=self.bot.github,
+                org=self.bot.config.org,
+                workspace=workspace,
+            ),
+            requester=self._requester(message.author),
+            owner_id=owner_id,
+            history=past,
+            draft=from_embed(card.embeds[0]),
+        )
+        try:
+            reply = await session.resume(message.content, self._candidates(thread))
+        except Exception as exc:  # noqa: BLE001 — a failed reply mustn't kill the cog
+            log.exception("resumed reply failed in thread %s", thread.id)
+            await self._settle(workspace, opening, agent.explain(exc))
+            return
+        await self._settle(workspace, opening)
+        # Hold the session from here on: the conversation is live again, and the
+        # next message should not pay to rebuild what we now have.
+        self._sessions[thread.id] = Draft(session, workspace)
+        if isinstance(reply, IssueDraft):
+            await self._show(thread, reply, owner_id)
+            return
+        await thread.send(reply[:_MAX_MESSAGE])
+
+    async def _card(self, thread: discord.Thread) -> discord.Message | None:
+        """The newest draft preview card in `thread`, if it still has one."""
+        async for message in thread.history(limit=_CARD_SCAN):
+            if (
+                self.bot.user is not None
+                and message.author.id == self.bot.user.id
+                and message.embeds
+                and from_embed(message.embeds[0]) is not None
+            ):
+                return message
+        return None
 
     async def apply_edit(
         self, interaction: discord.Interaction, title: str, body: str
