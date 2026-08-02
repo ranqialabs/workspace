@@ -42,7 +42,7 @@ sequenceDiagram
   A-->>D: a new card, the old one left in place
   You->>D: click Submit
   D->>GH: create the issue
-  GH-->>D: ✅ #123 created
+  GH-->>D: the draft card stays, ✅ #123 created posts under it
 ```
 
 The thread is the point: everyone in the conversation can watch the draft take
@@ -227,7 +227,7 @@ whatever the agent couldn't work out.
 
 | Button | What happens |
 | :----- | :----------- |
-| **Submit** | Creates the issue on GitHub, posts a card in the repo channel, archives the thread |
+| **Submit** | Creates the issue on GitHub, leaves the draft card in place as the thread's record, confirms with a separate `#XX created` message, posts a card in the repo channel, archives the thread |
 | **Edit** | A modal with the title and body, pre-filled — your text is taken verbatim, no model round trip |
 | **Discard** | Drops the draft and archives the thread |
 

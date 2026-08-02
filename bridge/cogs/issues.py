@@ -19,6 +19,7 @@ from typing import TYPE_CHECKING
 import discord
 from discord import app_commands
 from discord.ext import commands
+from discord.utils import MISSING
 from githubkit.exception import GitHubException
 from pydantic_ai import ToolCallPart, ToolReturnPart
 
@@ -491,25 +492,46 @@ class Issues(commands.Cog):
             return
 
         issue = resp.parsed_data
-        await self._finish(message, f"✅ [#{issue.number}]({issue.html_url}) created.")
+        # The card stays: it's what the thread was for, and the issue it describes
+        # now exists. Only the buttons go, and the footer stops saying "not
+        # submitted yet" — a live Submit here would open a second issue.
+        await self._close(
+            message,
+            embed=preview(draft, note=self._assignee_note(draft), submitted=True),
+        )
+        await message.channel.send(f"✅ [#{issue.number}]({issue.html_url}) created.")
+        await self._archive(message.channel)
         await self._announce(draft.repo, issue.number, issue.html_url, draft.title)
 
     async def cancel(self, interaction: discord.Interaction) -> None:
         message = interaction.message
         if message is None:
             return
-        await self._finish(message, "🗑️ Draft discarded.")
+        # Nothing was created, so the draft has nothing left to say: the card goes.
+        await self._close(message, content="🗑️ Draft discarded.", embed=None)
+        await self._archive(message.channel)
 
-    async def _finish(self, message: discord.Message, content: str) -> None:
-        """Close a draft out: drop its session, replace the card, archive the thread.
+    async def _close(
+        self,
+        message: discord.Message,
+        *,
+        content: str = MISSING,
+        embed: discord.Embed | None,
+    ) -> None:
+        """Drop the draft's session and take its buttons away.
 
-        Submit and discard differ only in what they say — both end the draft, and
-        an archived thread is what stops `on_message` treating it as live.
+        What's left of the card is the caller's call — submit keeps the preview,
+        discard replaces it — but either way the draft stops being actionable.
+        Content defaults to MISSING rather than None so submit keeps the "drafted
+        from this conversation" link; None would clear it.
         """
         self._sessions.pop(message.channel.id, None)
-        await message.edit(content=content, embed=None, view=None)
-        if isinstance(message.channel, discord.Thread):
-            await message.channel.edit(archived=True)
+        await message.edit(content=content, embed=embed, view=None)
+
+    async def _archive(self, channel: discord.abc.Messageable) -> None:
+        """An archived thread is what stops `on_message` treating a draft as live."""
+        if isinstance(channel, discord.Thread):
+            await channel.edit(archived=True)
 
     # --- helpers ---
 

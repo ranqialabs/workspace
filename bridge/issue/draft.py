@@ -32,8 +32,14 @@ class IssueDraft(BaseModel):
     """What the agent couldn't tell from the conversation. Asking beats inventing."""
 
 
-def preview(draft: IssueDraft, *, note: str | None = None) -> discord.Embed:
-    """The draft as a reviewable card."""
+def preview(
+    draft: IssueDraft, *, note: str | None = None, submitted: bool = False
+) -> discord.Embed:
+    """The draft as a reviewable card.
+
+    `submitted` only changes the footer: the card stays in the thread after the
+    issue is created, so it has to stop claiming the issue is still a proposal.
+    """
     body = draft.body[:PREVIEW_LIMIT]
     if len(draft.body) > PREVIEW_LIMIT:
         body += "\n\n..."
@@ -63,7 +69,8 @@ def preview(draft: IssueDraft, *, note: str | None = None) -> discord.Embed:
         )
     if note:
         embed.add_field(name="⚠️", value=note[:1024], inline=False)
-    embed.set_footer(text=f"confidence: {draft.confidence} · not submitted yet")
+    state = "submitted" if submitted else "not submitted yet"
+    embed.set_footer(text=f"confidence: {draft.confidence} · {state}")
     # The card is the draft's only storage once this process forgets it, so the
     # model rides along invisibly instead of being re-read from its own prose.
     # Everything but the body, which is unbounded and would burst the footer —
