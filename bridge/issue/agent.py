@@ -32,6 +32,7 @@ from pydantic_ai import (
     ModelMessage,
     ModelRetry,
     RunContext,
+    ToolCallPart,
     ToolReturnPart,
     UserContent,
 )
@@ -40,7 +41,6 @@ from pydantic_ai.exceptions import ModelAPIError, UsageLimitExceeded
 
 from bridge.issue.context import Transcript
 from bridge.issue.draft import IssueDraft
-from bridge.issue.progress import describe_call, describe_result
 from bridge.repo import split_repo
 
 log = logging.getLogger(__name__)
@@ -112,11 +112,15 @@ class Workspace(Protocol):
         """Mapped GitHub logins to the names people call each other by."""
         ...
 
-    async def on_step(self, call_id: str, step: str) -> None:
-        """Report a tool call to wherever this run is being watched."""
+    async def on_step(self, part: ToolCallPart) -> None:
+        """Report a tool call to wherever this run is being watched.
+
+        The part itself, not a rendered line: how a call should look is the
+        watcher's business, and it needs the arguments to decide.
+        """
         ...
 
-    async def on_result(self, call_id: str, result: str) -> None:
+    async def on_result(self, call_id: str, part: ToolReturnPart) -> None:
         """Report what the call with this id gave back."""
         ...
 
@@ -130,10 +134,10 @@ class _Unattached:
     def teammates(self) -> dict[str, str]:
         return {}
 
-    async def on_step(self, call_id: str, step: str) -> None:
+    async def on_step(self, part: ToolCallPart) -> None:
         pass
 
-    async def on_result(self, call_id: str, result: str) -> None:
+    async def on_result(self, call_id: str, part: ToolReturnPart) -> None:
         pass
 
 
@@ -219,33 +223,30 @@ def explain(exc: BaseException) -> str:
 async def _report_steps(
     ctx: RunContext[Deps], events: AsyncIterable[AgentStreamEvent]
 ) -> None:
-    """Forward each tool call, and what it gave back, to the progress callback.
+    """Forward each tool call, and what it gave back, to the watching workspace.
 
-    Rendering a progress line must never be what kills a draft: a malformed
-    argument or an odd return shape costs one uninformative line, not the run.
+    Reporting progress must never be what kills a draft: a malformed argument, an
+    odd return shape, or a Discord hiccup costs one card, not the run. The guard
+    is here rather than in the workspace so every implementation of the protocol
+    gets it.
     """
     async for event in events:
         if isinstance(event, FunctionToolCallEvent):
-            await ctx.deps.workspace.on_step(
-                event.tool_call_id, _safely(describe_call, event.part)
-            )
+            await _safely(ctx.deps.workspace.on_step(event.part))
         elif isinstance(event, FunctionToolResultEvent) and isinstance(
             event.part, ToolReturnPart
         ):
             # A RetryPromptPart is the model being corrected, not a tool answering;
             # the retried call reports itself when it comes round again.
-            await ctx.deps.workspace.on_result(
-                event.tool_call_id, _safely(describe_result, event.part)
-            )
+            await _safely(ctx.deps.workspace.on_result(event.tool_call_id, event.part))
 
 
-def _safely[T](render: Callable[[T], str], part: T) -> str:
-    """`render(part)`, or a placeholder if it somehow couldn't be rendered."""
+async def _safely(reporting: Awaitable[None]) -> None:
+    """Run a progress report, swallowing whatever it raises."""
     try:
-        return render(part)
-    except Exception:  # noqa: BLE001 - a progress line is not worth a failed run
-        log.debug("could not render a progress line", exc_info=True)
-        return getattr(part, "tool_name", "?")
+        await reporting
+    except Exception:  # noqa: BLE001 - progress is not worth a failed run
+        log.debug("could not report progress", exc_info=True)
 
 
 def build(model: str) -> Agent[Deps, IssueDraft]:
@@ -307,7 +308,9 @@ def build(model: str) -> Agent[Deps, IssueDraft]:
             return f"{path} is not a file; use list_dir"
         text = base64.b64decode(content).decode("utf-8", "replace")
         if len(text) > _MAX_FILE_CHARS:
-            return text[:_MAX_FILE_CHARS] + f"\n…[truncated at {_MAX_FILE_CHARS} chars]"
+            return (
+                text[:_MAX_FILE_CHARS] + f"\n...[truncated at {_MAX_FILE_CHARS} chars]"
+            )
         return text
 
     @agent.tool

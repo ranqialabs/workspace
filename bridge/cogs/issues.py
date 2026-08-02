@@ -9,7 +9,9 @@ shape, but only the requester can act on it.
 """
 
 import asyncio
+import contextlib
 import logging
+import time
 from collections import deque
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
@@ -18,10 +20,11 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 from githubkit.exception import GitHubException
+from pydantic_ai import ToolCallPart, ToolReturnPart
 
 from bridge import render
 from bridge.cogs.notifications import Notifications
-from bridge.issue import agent, context, view
+from bridge.issue import agent, context, progress, view
 from bridge.issue.agent import Deps, Session
 from bridge.issue.draft import IssueDraft, from_embed, preview
 from bridge.render import GREEN, RED
@@ -36,13 +39,14 @@ log = logging.getLogger(__name__)
 DEFAULT_SPAN = 20  # messages read when you don't say how many
 _MAX_SPAN = 100  # a message link reads to the end of the conversation, up to this
 _MAX_SESSIONS = 3  # concurrent drafts; each holds images + agent history in RAM
-_STEP_LINES = 6  # tool calls shown while the agent works
+# Tool cards kept on screen at once. Enough to follow what the agent is doing
+# without the draft scrolling out of the thread; older ones are deleted, and the
+# whole window collapses into one line when the run ends.
+_STEP_CARDS = 5
 _EXPIRED = "This draft expired — start a new `/issue`."
-# What the status message says while each kind of run is in flight. The same
-# string opens the message and heads its progress lines, so a revision doesn't
-# announce itself as a first draft the moment the first tool call lands.
-_DRAFTING = "🔎 working…"
-_REVISING = "✍️ revising…"
+# What opens each kind of run, so a revision doesn't read as a first draft.
+_DRAFTING = "🔎 reading the conversation..."
+_REVISING = "✍️ revising..."
 # Every draft thread is named from this, so the name is enough to recognise one
 # after a restart — no fetch, and no state we'd have to have kept.
 _THREAD_PREFIX = "issue"
@@ -52,8 +56,8 @@ _THREAD_PREFIX = "issue"
 class Draft:
     """One open draft: the agent session, and the Discord side it reports to.
 
-    Paired because they share a lifetime exactly — the workspace draws into the
-    thread's status message, and a refine redirects it to a new one.
+    Paired because they share a lifetime exactly — the workspace posts the run's
+    progress into the thread, and a refine restarts it for the next run.
     """
 
     session: Session
@@ -264,9 +268,9 @@ class Issues(commands.Cog):
             f"Drafting in {thread.mention}.", ephemeral=True
         )
 
-        status = await thread.send("🔎 reading the conversation…")
+        opening = await thread.send(_DRAFTING)
         assert interaction.guild is not None
-        workspace = DraftWorkspace(self.bot.store, interaction.guild, status)
+        workspace = DraftWorkspace(self.bot.store, interaction.guild, thread)
         session = Session(
             self.bot.issue_agent,
             Deps(
@@ -283,7 +287,8 @@ class Issues(commands.Cog):
         except Exception as exc:  # noqa: BLE001 — a failed draft mustn't kill the cog
             log.exception("issue draft failed in thread %s", thread.id)
             del self._sessions[thread.id]
-            await status.edit(content=f"⚠️ {agent.explain(exc)}")
+            await workspace.collapse()
+            await opening.edit(content=f"⚠️ {agent.explain(exc)}")
             return
 
         # Named once, from the first draft: a rename is a system line in the
@@ -293,7 +298,8 @@ class Issues(commands.Cog):
         except discord.HTTPException:
             log.debug("could not rename draft thread %s", thread.id, exc_info=True)
 
-        await self._show(status, draft, interaction.user.id, transcript.jump_url)
+        await self._settle(workspace, opening)
+        await self._show(thread, draft, interaction.user.id, transcript.jump_url)
 
     async def _thread(
         self,
@@ -319,22 +325,41 @@ class Issues(commands.Cog):
             log.exception("could not create a draft thread")
         return None
 
+    async def _settle(
+        self, workspace: "DraftWorkspace", opening: discord.Message
+    ) -> None:
+        """End a run's progress: collapse its cards, drop the line that opened it.
+
+        What's left in the thread is one summary line, and the draft posts under
+        it — so the thread reads in the order it happened rather than having the
+        result edited back into its own announcement.
+        """
+        await workspace.collapse()
+        with contextlib.suppress(discord.HTTPException):
+            await opening.delete()
+
     async def _show(
         self,
-        status: discord.Message,
+        target: discord.Message | discord.abc.Messageable,
         draft: IssueDraft,
         author_id: int,
         source_url: str | None = None,
-    ) -> None:
-        """Replace the progress line with the draft and its buttons."""
-        note = self._assignee_note(draft)
-        await status.edit(
-            content=f"Drafted from [this conversation](<{source_url}>)."
-            if source_url
-            else None,
-            embed=preview(draft, note=note),
-            view=view.draft_view(author_id),
+    ) -> discord.Message:
+        """Put the draft and its buttons up, in place or as a new message.
+
+        A message means replace it (an inline edit keeps the card where the
+        reader already is); a channel means post one. The returned message is the
+        card, which is also the draft's storage once the session is gone.
+        """
+        content = (
+            f"Drafted from [this conversation](<{source_url}>)." if source_url else None
         )
+        embed = preview(draft, note=self._assignee_note(draft))
+        buttons = view.draft_view(author_id)
+        if isinstance(target, discord.Message):
+            await target.edit(content=content, embed=embed, view=buttons)
+            return target
+        return await target.send(content=content, embed=embed, view=buttons)
 
     def _assignee_note(self, draft: IssueDraft) -> str | None:
         """Warn if the proposed assignee isn't a login we have mapped.
@@ -395,17 +420,19 @@ class Issues(commands.Cog):
         The old card is left where it is: the thread is the record of how the
         issue got its shape, and editing it away loses that.
         """
-        status = await thread.send(_REVISING)
-        open_draft.workspace.report_to(status, _REVISING)
+        opening = await thread.send(_REVISING)
+        open_draft.workspace.restart(thread)
         try:
             revised = await open_draft.session.refine(
                 feedback, self._candidates(thread)
             )
         except Exception as exc:  # noqa: BLE001
             log.exception("refine failed")
-            await status.edit(content=f"⚠️ {agent.explain(exc)}")
+            await open_draft.workspace.collapse()
+            await opening.edit(content=f"⚠️ {agent.explain(exc)}")
             return
-        await self._show(status, revised, open_draft.session.owner_id)
+        await self._settle(open_draft.workspace, opening)
+        await self._show(thread, revised, open_draft.session.owner_id)
 
     async def apply_edit(
         self, interaction: discord.Interaction, title: str, body: str
@@ -524,21 +551,11 @@ class Issues(commands.Cog):
 
 @dataclass
 class _Step:
-    """One tool call in the live status, and its answer once it lands."""
+    """One tool call being watched: its card, and the call that produced it."""
 
-    call_id: str  # what pairs a result with its call; never rendered
-    call: str
-    result: str | None = None
-
-    def render(self) -> str:
-        """One line while it's running, two once it has answered.
-
-        Plain ASCII inside the code fence: a decorative glyph falls back to a
-        different font per client and the columns stop lining up.
-        """
-        if self.result is None:
-            return self.call
-        return f"{self.call}\n  -> {self.result}"
+    part: ToolCallPart
+    message: discord.Message
+    started: float
 
 
 class DraftWorkspace:
@@ -547,67 +564,101 @@ class DraftWorkspace:
     Holds the store and guild rather than the cog, so what a tool call can reach
     is what this class names. Both are read at call time: a `/map user` run while
     a draft is open reaches the next revision.
+
+    Progress is messages, not one message edited down to a few lines: a call gets
+    a card of its own with room for what it actually found, and the thread scrolls
+    the way a conversation does. The cost is housekeeping — the cards are pruned
+    to a window while the run goes, and collapse into one line when it ends.
     """
 
     def __init__(
-        self, store: Store, guild: discord.Guild, status: discord.Message
+        self, store: Store, guild: discord.Guild, thread: discord.abc.Messageable
     ) -> None:
         self._store = store
         self._guild = guild
-        self._status = status
-        self._header = _DRAFTING
-        # Only the tail is ever drawn, so only the tail is kept.
-        self._steps: deque[_Step] = deque(maxlen=_STEP_LINES)
+        self._thread = thread
+        # Cards still on screen, oldest first. Bounded by pruning rather than by a
+        # deque: dropping one here has to delete the message too.
+        self._steps: list[_Step] = []
+        # Every tool the run has called, in order — what the closing summary counts.
+        self._called: list[str] = []
+        self._started = time.monotonic()
+        # Serialises post-then-prune against concurrent tool events, so two calls
+        # landing together can't both decide the same card is the one to delete.
         self._lock = asyncio.Lock()
 
-    def report_to(self, status: discord.Message, header: str) -> None:
-        """Draw progress somewhere else: a refine writes to a new message.
+    def restart(self, thread: discord.abc.Messageable) -> None:
+        """Watch a fresh run: a refine posts its own cards, and counts its own.
 
-        The header comes along because a revision is not a first draft: the
-        status says what this run is doing, and the tool lines below it are the
-        same either way.
+        The previous run's cards have already been collapsed, so there is nothing
+        here to clean up — only the counters to reset.
         """
-        self._status = status
-        self._header = header
+        self._thread = thread
         self._steps.clear()
+        self._called.clear()
+        self._started = time.monotonic()
 
     def teammates(self) -> dict[str, str]:
         return self._store.teammates(self._guild)
 
-    async def on_step(self, call_id: str, step: str) -> None:
-        """Show the agent's last few tool calls in the status message."""
-        self._steps.append(_Step(call_id, step))
-        await self._draw()
+    async def on_step(self, part: ToolCallPart) -> None:
+        """Post a card for a call that has just gone out."""
+        async with self._lock:
+            self._called.append(part.tool_name)
+            message = await self._thread.send(embed=progress.calling(part))
+            self._steps.append(_Step(part, message, time.monotonic()))
+            await self._prune()
 
-    async def on_result(self, call_id: str, result: str) -> None:
-        """Attach what came back to the call it answers.
+    async def on_result(self, call_id: str, part: ToolReturnPart) -> None:
+        """Fill in the card of the call this answers.
 
         By id, not by position: tools run concurrently, so the answer that lands
-        first isn't the call that was made first. A result whose call has already
-        scrolled off the tail is dropped: there is nothing left to attach it to.
+        first isn't the call that was made first. A result whose card has already
+        been pruned is dropped — there is nothing left to fill in.
         """
-        for step in self._steps:
-            if step.call_id == call_id:
-                step.result = result
-                break
-        await self._draw()
-
-    async def _draw(self) -> None:
-        """Redraw the tail of the run into the status message.
-
-        A frame that arrives while an edit is in flight is dropped rather than
-        queued: Discord rate-limits edits, and a busy agent would otherwise stack
-        up frames that are stale by the time they render. The next one redraws
-        the full tail anyway.
-        """
-        if self._lock.locked():
-            return
         async with self._lock:
-            body = "\n".join(step.render() for step in self._steps)
+            step = next(
+                (s for s in self._steps if s.part.tool_call_id == call_id), None
+            )
+            if step is None:
+                return
+            embed = progress.answered(
+                step.part, part, elapsed=time.monotonic() - step.started
+            )
+            with contextlib.suppress(discord.HTTPException):
+                await step.message.edit(embed=embed)
+
+    async def _prune(self) -> None:
+        """Keep the window to the newest cards, deleting what falls out of it.
+
+        The thread is where people read the draft, and a run that reads a dozen
+        files would otherwise bury it. Called with the lock held.
+        """
+        while len(self._steps) > _STEP_CARDS:
+            oldest = self._steps.pop(0)
+            with contextlib.suppress(discord.HTTPException):
+                await oldest.message.delete()
+
+    async def collapse(self) -> None:
+        """End the run: replace every card with the one line that outlives them.
+
+        The cards go because their detail was about watching a run, not about the
+        issue — what survives them is how much ground the agent covered. Safe to
+        call twice: a failed run collapses before it reports the failure.
+        """
+        async with self._lock:
+            if not self._called:
+                return  # nothing was watched, so there is nothing to summarise
+            steps, self._steps = self._steps, []
+            called, self._called = self._called, []
+            for step in steps:
+                with contextlib.suppress(discord.HTTPException):
+                    await step.message.delete()
+            line = progress.summarise(called, elapsed=time.monotonic() - self._started)
             try:
-                await self._status.edit(content=f"{self._header}\n```\n{body}\n```")
+                await self._thread.send(f"-# {line}")
             except discord.HTTPException:
-                pass  # a dropped progress edit is not worth failing the run over
+                log.debug("could not post the run summary", exc_info=True)
 
 
 async def setup(bot: "BridgeBot") -> None:

@@ -33,8 +33,9 @@ sequenceDiagram
   loop grounding
     A->>GH: search code · read files · recent commits
     A->>GH: similar issues — is this a duplicate?
-    A-->>D: 🔎 working… (tool calls and what they found, live)
+    A-->>D: a card per tool call, with what it found
   end
+  A-->>D: the cards collapse into one summary line
   A-->>D: draft card + Submit / Edit / Discard
   You->>D: "scope it to the parser only"
   D->>A: revise, keeping the history
@@ -119,25 +120,40 @@ job. Where it gets *filed* is restricted to the candidate repos.
 
 ### Watching it work
 
-A draft takes tens of seconds, and the status message is the only window into
-it. Each tool call shows the arguments it was made with, and gains what it
-found once it answers:
+A draft takes tens of seconds, and the thread is the only window into it. Every
+tool call posts its own card, greyed out while it runs, and filled in with what
+it found once it answers:
 
 ```text
-🔎 working…
-search_code(LiveMessages publish)
-  -> 5 results: bridge/live.py, bridge/render.py, +3 more
-read_file(bridge/live.py, repo=ranqialabs/workspace)
-  -> 1119 chars: """One edited-in-place message per entity
-repo_labels(ranqialabs/workspace)
-  -> 4 results: bug, enhancement, chore, +1 more
-similar_issues(tool args, repo=ranqialabs/workspace)
+🔎 searching code "LiveMessages publish"
+  query   LiveMessages publish
+  5 results
+  - bridge/live.py
+  - bridge/render.py
+  - +3 more
+
+📄 reading bridge/live.py
+  path    bridge/live.py
+  repo    ranqialabs/workspace
+  1,119 chars
+  """One edited-in-place message per entity (issue, deploy).
+
+  No in-memory index (that raced webhooks and vanished on
+  restart). Each keyed message hides its entity key in the
+  embed footer...
 ```
 
-The leading argument is the one that identifies the call: the query it's
-searching for, or the file it's reading. The rest are named. Values are
-clipped, and only the last few calls are kept, so a long run doesn't turn the
-thread into a log.
+The title says what the call is doing and the one argument that identifies it;
+the rest are listed under it. A card is green when the call answered, red when
+it failed, and its footer carries how long it took.
+
+Only the newest few cards stay on screen — older ones are deleted as the run
+goes, so a draft that reads a dozen files doesn't push the card you care about
+out of the thread. When the run ends they all go, replaced by a single line:
+
+```text
+Looked at: 3x reading, 1x searching code, 1x checking for duplicates, 12s.
+```
 
 The result line is the useful half: a search that found the file and one that
 found nothing look identical while only the calls are shown, and they mean very

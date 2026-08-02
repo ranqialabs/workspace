@@ -36,7 +36,7 @@ def preview(draft: IssueDraft, *, note: str | None = None) -> discord.Embed:
     """The draft as a reviewable card."""
     body = draft.body[:PREVIEW_LIMIT]
     if len(draft.body) > PREVIEW_LIMIT:
-        body += "\n\n…"
+        body += "\n\n..."
     embed = discord.Embed(
         title=draft.title,
         description=body,
@@ -88,7 +88,7 @@ def from_embed(embed: discord.Embed) -> IssueDraft | None:
         fields = json.loads(payload)
     except json.JSONDecodeError:
         return None
-    fields["body"] = (embed.description or "").removesuffix("\n\n…")
+    fields["body"] = (embed.description or "").removesuffix("\n\n...")
     try:
         return IssueDraft.model_validate(fields)
     except ValidationError:
