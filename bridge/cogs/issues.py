@@ -220,7 +220,7 @@ class Issues(commands.Cog):
 
     def _unavailable(self) -> str | None:
         """Why we can't draft right now, if we can't."""
-        if self.bot.issue_agent is None:
+        if self.bot.agent is None:
             return "Issue drafting is switched off — no model configured."
         if self.bot.store is None or self.bot.github is None:
             return "Still starting up; try again in a moment."
@@ -255,7 +255,7 @@ class Issues(commands.Cog):
     ) -> None:
         assert self.bot.store is not None
         assert self.bot.github is not None
-        assert self.bot.issue_agent is not None
+        assert self.bot.agent is not None
 
         transcript = await context.collect(
             channel, self.bot.store, limit=span, anchor=anchor
@@ -290,7 +290,7 @@ class Issues(commands.Cog):
         assert interaction.guild is not None
         workspace = DraftWorkspace(self.bot.store, interaction.guild, thread)
         session = Session(
-            self.bot.issue_agent,
+            self.bot.agent,
             Deps(
                 github=self.bot.github,
                 org=self.bot.config.org,
@@ -471,7 +471,7 @@ class Issues(commands.Cog):
         """
         if self._unavailable() is not None or self.bot.store is None:
             return
-        assert self.bot.issue_agent is not None
+        assert self.bot.agent is not None
         assert self.bot.github is not None
         card = await self._card(thread)
         if card is None:
@@ -488,7 +488,7 @@ class Issues(commands.Cog):
             thread, self.bot.store, bot_user_id=self.bot.user.id
         )
         session = Session(
-            self.bot.issue_agent,
+            self.bot.agent,
             Deps(
                 github=self.bot.github,
                 org=self.bot.config.org,

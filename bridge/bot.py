@@ -41,7 +41,7 @@ class BridgeBot(commands.Bot):
         self.live = LiveMessages()  # one live message per entity (dedup + edit)
         self.github: GitHub | None = None  # set in setup_hook
         self.store: store.Store | None = None  # set in on_ready (needs the guild)
-        self.issue_agent: Agent[Deps, Reply] | None = None  # set in setup_hook
+        self.agent: Agent[Deps, Reply] | None = None  # set in setup_hook
         self._runner: web.AppRunner | None = None
         self._ready_once = False
 
@@ -53,9 +53,9 @@ class BridgeBot(commands.Bot):
         # An unknown model string or a missing provider key disables /issue rather
         # than stopping the bridge, which does plenty without drafting.
         try:
-            self.issue_agent = agent_core.build(self.config.issue_model)
+            self.agent = agent_core.build(self.config.agent_model)
         except ValueError, UserError:
-            log.exception("issue agent unavailable; /issue is disabled")
+            log.exception("agent unavailable; mentions and /issue are disabled")
 
         for cog in INITIAL_COGS:
             await self.load_extension(cog)

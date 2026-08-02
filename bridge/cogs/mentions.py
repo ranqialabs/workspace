@@ -102,7 +102,7 @@ class Mentions(commands.Cog):
         if (
             store is None
             or self.bot.github is None
-            or self.bot.issue_agent is None
+            or self.bot.agent is None
             or not isinstance(issues, Issues)
             or message.guild is None
         ):
@@ -111,7 +111,7 @@ class Mentions(commands.Cog):
         placeholder = await message.reply(_THINKING, mention_author=False)
         work = MentionWorkspace(store, message.guild, message.channel, message)
         session = Session(
-            self.bot.issue_agent,
+            self.bot.agent,
             Deps(
                 github=self.bot.github,
                 org=self.bot.config.org,
