@@ -177,7 +177,7 @@ class Issues(commands.Cog):
             interaction,
             message.channel,
             anchor=message,
-            span=DEFAULT_SPAN,
+            span=_MAX_SPAN,  # picking a message means "from here on", same as a link
             repo=None,
             prompt=prompt,
         )
