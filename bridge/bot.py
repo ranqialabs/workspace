@@ -1,24 +1,39 @@
 """The bot process: discord.py Bot + the webhook server, one event loop."""
 
+import logging
+
 import discord
 from aiohttp import web
 from discord.ext import commands
 from githubkit import GitHub
+from pydantic_ai import Agent
+from pydantic_ai.exceptions import UserError
 
 from bridge import store
 from bridge.cogs.github_sync import GithubSync
 from bridge.config import Config, Secrets
 from bridge.github_app import installation_client
+from bridge.issue import agent as issue_agent
+from bridge.issue import view as issue_view
+from bridge.issue.agent import Deps
+from bridge.issue.draft import IssueDraft
 from bridge.live import LiveMessages
 from bridge.webhook import WebhookServer
 
-INITIAL_COGS = ["bridge.cogs.github_sync", "bridge.cogs.notifications"]
+log = logging.getLogger(__name__)
+
+INITIAL_COGS = [
+    "bridge.cogs.github_sync",
+    "bridge.cogs.notifications",
+    "bridge.cogs.issues",
+]
 
 
 class BridgeBot(commands.Bot):
     def __init__(self, config: Config, secrets: Secrets) -> None:
         intents = discord.Intents.default()
         intents.members = True  # needed to read/edit member roles
+        intents.message_content = True  # /issue drafts from what people wrote
         super().__init__(command_prefix="!", intents=intents)
         self.config = config
         self.secrets = secrets
@@ -26,6 +41,7 @@ class BridgeBot(commands.Bot):
         self.live = LiveMessages()  # one live message per entity (dedup + edit)
         self.github: GitHub | None = None  # set in setup_hook
         self.store: store.Store | None = None  # set in on_ready (needs the guild)
+        self.issue_agent: Agent[Deps, IssueDraft] | None = None  # set in setup_hook
         self._runner: web.AppRunner | None = None
         self._ready_once = False
 
@@ -34,8 +50,20 @@ class BridgeBot(commands.Bot):
         # Only wire up things that don't need it here.
         self.github = await installation_client(self.secrets, self.config)
 
+        # An unknown model string or a missing provider key disables /issue rather
+        # than stopping the bridge, which does plenty without drafting.
+        try:
+            self.issue_agent = issue_agent.build(self.config.issue_model)
+        except ValueError, UserError:
+            log.exception("issue agent unavailable; /issue is disabled")
+
         for cog in INITIAL_COGS:
             await self.load_extension(cog)
+
+        # Draft buttons outlive this process: discord.py rebuilds each one from
+        # its custom_id, so they keep working across a restart.
+        for button in issue_view.BUTTONS:
+            self.add_dynamic_items(button)
 
         self._runner = web.AppRunner(self.webhook.app)
         await self._runner.setup()

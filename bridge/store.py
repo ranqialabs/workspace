@@ -163,6 +163,38 @@ class Store:
     def discord_id_for(self, github_login: str) -> int | None:
         return self.identity.get(github_login.casefold())
 
+    def login_for(self, discord_id: int) -> str | None:
+        """The GitHub login linked to a Discord member, if `/map user` ran for them.
+
+        Scans rather than keeping an inverted dict: the mapping mutates at runtime
+        and there are only ever tens of entries.
+        """
+        return next(
+            (login for login, mapped in self.identity.items() if mapped == discord_id),
+            None,
+        )
+
+    def channel_for(self, repo_full_name: str) -> int | None:
+        """Where a repo's news goes: its announce channel, else its plain one."""
+        return self.repo_to_announce.get(repo_full_name) or self.repo_to_channel.get(
+            repo_full_name
+        )
+
+    def repos_for_channel(
+        self, channel_id: int, parent_id: int | None = None
+    ) -> list[str]:
+        """Repos this channel could be about, most specific first.
+
+        A channel mapped to one repo settles it; otherwise every mapped repo is a
+        candidate, so a caller can reject anything outside the list.
+        """
+        here = [
+            repo
+            for repo, mapped in self.repo_to_channel.items()
+            if mapped in {channel_id, parent_id}
+        ]
+        return here or sorted(self.repo_to_channel)
+
     # --- live config panel ---
 
     def render_panel(self) -> discord.Embed:

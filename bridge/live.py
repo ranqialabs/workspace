@@ -19,21 +19,23 @@ _SENTINEL = "⁣"  # zero-width; marks the start of the encoded key in the foote
 _SHIFT = 0xE0000  # tag/PUA plane — codepoints here render as nothing
 
 
-def _encode_key(key: str) -> str:
-    return _SENTINEL + "".join(chr(_SHIFT + ord(c)) for c in key)
+def encode(payload: str) -> str:
+    """`payload` as codepoints that render as nothing, behind a sentinel."""
+    return _SENTINEL + "".join(chr(_SHIFT + ord(c)) for c in payload)
 
 
-def _decode_key(footer_text: str | None) -> str | None:
+def decode(footer_text: str | None) -> str | None:
+    """The hidden payload in a footer, or None if there isn't one."""
     if not footer_text or _SENTINEL not in footer_text:
         return None
     encoded = footer_text.split(_SENTINEL, 1)[1]
     return "".join(chr(ord(c) - _SHIFT) for c in encoded)
 
 
-def stamp(embed: discord.Embed, key: str) -> discord.Embed:
-    """Append the invisible entity key to the embed's (visible) footer text."""
+def stamp(embed: discord.Embed, payload: str) -> discord.Embed:
+    """Hide `payload` after the embed's visible footer text."""
     visible = embed.footer.text or ""
-    embed.set_footer(text=visible + _encode_key(key), icon_url=embed.footer.icon_url)
+    embed.set_footer(text=visible + encode(payload), icon_url=embed.footer.icon_url)
     return embed
 
 
@@ -75,6 +77,6 @@ class LiveMessages:
                 break  # older than the freshness window; nothing fresh beyond here
             if message.author != me or not message.embeds:
                 continue
-            if _decode_key(message.embeds[0].footer.text) == key:
+            if decode(message.embeds[0].footer.text) == key:
                 return message
         return None

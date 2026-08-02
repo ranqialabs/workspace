@@ -48,17 +48,15 @@ class Notifications(commands.Cog):
         async def handler(payload: dict) -> None:
             rendered = render.render(event, payload, self)
             if rendered is not None:
-                await self._route(payload["repository"]["full_name"], rendered)
+                await self.route(payload["repository"]["full_name"], rendered)
 
         return handler
 
-    async def _route(self, repo: str, rendered: render.Rendered) -> None:
+    async def route(self, repo: str, rendered: render.Rendered) -> None:
         """Send to the repo's (announce or plain) channel; edit in place if keyed."""
         if self.bot.store is None:
             return
-        channel_id = self.bot.store.repo_to_announce.get(
-            repo
-        ) or self.bot.store.repo_to_channel.get(repo)
+        channel_id = self.bot.store.channel_for(repo)
         channel = self.bot.get_channel(channel_id) if channel_id else None
         if not isinstance(channel, discord.TextChannel):
             return

@@ -5,6 +5,8 @@ from typing import TYPE_CHECKING
 
 import discord
 
+from bridge.repo import split_repo
+
 if TYPE_CHECKING:
     from githubkit import GitHub
 
@@ -28,7 +30,7 @@ async def reconcile(
     owners = await _org_owners(gh, store, org, result)
 
     for repo, channel_id in list(store.repo_to_channel.items()):
-        owner, name = repo.split("/", 1) if "/" in repo else (org, repo)
+        owner, name = split_repo(repo, org)
         role, created = await _access_role(store, guild, repo)
         if created:
             result.created_roles.append(role.id)

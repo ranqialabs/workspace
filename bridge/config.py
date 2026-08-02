@@ -13,6 +13,9 @@ from pathlib import Path
 # The bot finds (or creates) this channel by name; it stores all mappings.
 CONFIG_CHANNEL_NAME = "bot-config"
 
+# The model that drafts issues.
+DEFAULT_ISSUE_MODEL = "openai:gpt-5.6-terra"
+
 
 @dataclass(frozen=True)
 class Secrets:
@@ -27,10 +30,14 @@ class Secrets:
 @dataclass(frozen=True)
 class Config:
     org: str
+    issue_model: str = DEFAULT_ISSUE_MODEL
 
 
 def load() -> Config:
-    return Config(org=os.environ["GITHUB_ORG"])
+    return Config(
+        org=os.environ["GITHUB_ORG"],
+        issue_model=os.getenv("ISSUE_MODEL", DEFAULT_ISSUE_MODEL),
+    )
 
 
 def load_secrets() -> Secrets:

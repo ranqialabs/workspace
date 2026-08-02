@@ -72,6 +72,12 @@ def _embed(
 # --- issues ---
 
 
+def issue_key(repo_full_name: str, number: int) -> str:
+    """The live-message key for an issue. Anything posting an issue card must use
+    this, or the webhook that follows will post a second card instead of editing."""
+    return f"issue:{repo_full_name}:{number}"
+
+
 def _issue_embed(payload: dict, m: Mentions) -> discord.Embed:
     issue, gh_repo = payload["issue"], payload["repository"]
     closed = issue.get("state") == "closed"
@@ -116,7 +122,7 @@ def _issue(payload: dict, m: Mentions) -> Rendered | None:
     if payload.get("action", "") not in _ISSUE_ACTIONS:
         return None
     issue, gh_repo = payload["issue"], payload["repository"]
-    key = f"issue:{gh_repo['full_name']}:{issue['number']}"
+    key = issue_key(gh_repo["full_name"], issue["number"])
     return Rendered(
         content=_issue_notify(payload, m), embed=_issue_embed(payload, m), key=key
     )
