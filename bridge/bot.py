@@ -13,9 +13,9 @@ from bridge import store
 from bridge.cogs.github_sync import GithubSync
 from bridge.config import Config, Secrets
 from bridge.github_app import installation_client
-from bridge.issue import agent as issue_agent
-from bridge.issue import view as issue_view
-from bridge.issue.agent import Deps, Reply
+from bridge.agent import core as agent_core
+from bridge.agent import view as agent_view
+from bridge.agent.core import Deps, Reply
 from bridge.live import LiveMessages
 from bridge.webhook import WebhookServer
 
@@ -52,7 +52,7 @@ class BridgeBot(commands.Bot):
         # An unknown model string or a missing provider key disables /issue rather
         # than stopping the bridge, which does plenty without drafting.
         try:
-            self.issue_agent = issue_agent.build(self.config.issue_model)
+            self.issue_agent = agent_core.build(self.config.issue_model)
         except ValueError, UserError:
             log.exception("issue agent unavailable; /issue is disabled")
 
@@ -61,7 +61,7 @@ class BridgeBot(commands.Bot):
 
         # Draft buttons outlive this process: discord.py rebuilds each one from
         # its custom_id, so they keep working across a restart.
-        for button in issue_view.BUTTONS:
+        for button in agent_view.BUTTONS:
             self.add_dynamic_items(button)
 
         self._runner = web.AppRunner(self.webhook.app)

@@ -29,7 +29,7 @@ from pydantic_ai import (
     UserPromptPart,
 )
 
-from bridge.issue.context import speaker
+from bridge.agent.context import speaker
 from bridge.store import Store
 
 _MAX_TURNS = 60  # turns rebuilt; a long thread costs tokens on every reply

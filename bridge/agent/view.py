@@ -13,7 +13,7 @@ from typing import Protocol, runtime_checkable
 import discord
 from discord.ext import commands
 
-from bridge.issue.draft import IssueDraft
+from bridge.agent.draft import IssueDraft
 
 _DENIED = "Only whoever ran `/issue` can act on this draft."
 

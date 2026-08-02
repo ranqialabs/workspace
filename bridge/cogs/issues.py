@@ -25,9 +25,9 @@ from pydantic_ai import ToolCallPart, ToolReturnPart
 
 from bridge import render
 from bridge.cogs.notifications import Notifications
-from bridge.issue import agent, context, history, progress, view
-from bridge.issue.agent import Deps, Session
-from bridge.issue.draft import IssueDraft, from_embed, preview
+from bridge.agent import context, core, history, progress, view
+from bridge.agent.core import Deps, Session
+from bridge.agent.draft import IssueDraft, from_embed, preview
 from bridge.render import GREEN, RED
 from bridge.repo import short_name, split_repo
 from bridge.store import Store
@@ -58,7 +58,7 @@ _MAX_MESSAGE = 2000
 # Messages back we look for a thread's draft card. Deep enough to see past a
 # conversation that ran on after the draft, shallow enough to be one fetch.
 _CARD_SCAN = 50
-# The owner id every draft button carries, matching `issue/view.py`'s template.
+# The owner id every draft button carries, matching `agent/view.py`'s template.
 _OWNER = re.compile(r"issue:\w+:(?P<author>\d+)")
 # Every draft thread is named from this, so the name is enough to recognise one
 # after a restart — no fetch, and no state we'd have to have kept.
@@ -69,7 +69,7 @@ def _owner_of(card: discord.Message) -> int | None:
     """Who may steer the draft on `card`, read off its own buttons.
 
     The requester's id already rides in every button's custom_id so a click
-    survives a restart (see `issue/view.py`); that makes the card the record of
+    survives a restart (see `agent/view.py`); that makes the card the record of
     who owns the draft, and there is no second place for it to disagree with.
     """
     for row in card.components:
@@ -319,7 +319,7 @@ class Issues(commands.Cog):
         except Exception as exc:  # noqa: BLE001 — a failed draft mustn't kill the cog
             log.exception("issue draft failed in thread %s", thread.id)
             del self._sessions[thread.id]
-            await self._settle(workspace, opening, agent.explain(exc))
+            await self._settle(workspace, opening, core.explain(exc))
             return
 
         await self._settle(workspace, opening)
@@ -469,7 +469,7 @@ class Issues(commands.Cog):
             reply = await open_draft.session.refine(feedback, self._candidates(thread))
         except Exception as exc:  # noqa: BLE001
             log.exception("refine failed")
-            await self._settle(open_draft.workspace, opening, agent.explain(exc))
+            await self._settle(open_draft.workspace, opening, core.explain(exc))
             return
         await self._settle(open_draft.workspace, opening)
         if isinstance(reply, IssueDraft):
@@ -519,7 +519,7 @@ class Issues(commands.Cog):
             reply = await session.resume(message.content, self._candidates(thread))
         except Exception as exc:  # noqa: BLE001 — a failed reply mustn't kill the cog
             log.exception("resumed reply failed in thread %s", thread.id)
-            await self._settle(workspace, opening, agent.explain(exc))
+            await self._settle(workspace, opening, core.explain(exc))
             return
         await self._settle(workspace, opening)
         # Hold the session from here on: the conversation is live again, and the

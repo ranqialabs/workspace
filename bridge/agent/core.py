@@ -47,8 +47,8 @@ from pydantic_ai import (
 from pydantic_ai.capabilities import ProcessEventStream
 from pydantic_ai.exceptions import ModelAPIError, UsageLimitExceeded
 
-from bridge.issue.context import Transcript
-from bridge.issue.draft import IssueDraft
+from bridge.agent.context import Transcript
+from bridge.agent.draft import IssueDraft
 from bridge.repo import split_repo
 
 log = logging.getLogger(__name__)

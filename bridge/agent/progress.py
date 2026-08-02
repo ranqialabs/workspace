@@ -129,7 +129,7 @@ def _ordered(args: dict[str, Any]) -> list[tuple[str, Any]]:
 def _subject(part: ToolCallPart, ordered: list[tuple[str, Any]]) -> str:
     """The one thing this call is about, for the card's title.
 
-    A title reading `reading bridge/issue/view.py` is the whole story for most
+    A title reading `reading bridge/agent/view.py` is the whole story for most
     calls; the rest of the arguments are below it and don't need to compete. A
     search term is quoted, since it's prose and would otherwise run into the
     verb in front of it.
