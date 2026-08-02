@@ -91,8 +91,8 @@ class Issues(commands.Cog):
     )
     @app_commands.describe(
         prompt="What the issue is about — steers the draft. Optional.",
-        from_message="Link to the message to draft from (its thread of conversation).",
-        last="How many messages to read back (default 20).",
+        from_message="Right-click a message → Copy Message Link, then paste it here.",
+        last="How many messages to read back before that point (default 20).",
         repo="Force the target repo instead of inferring it from the channel.",
     )
     @app_commands.autocomplete(repo=_mapped_repo_choices)
@@ -116,7 +116,8 @@ class Issues(commands.Cog):
             anchor = await context.resolve_message(interaction.guild, from_message)
             if anchor is None:
                 await interaction.followup.send(
-                    "That doesn't look like a message link in this server.",
+                    "I need a message link from this server — right-click the "
+                    "message → Copy Message Link. A bare message id won't do.",
                     ephemeral=True,
                 )
                 return
