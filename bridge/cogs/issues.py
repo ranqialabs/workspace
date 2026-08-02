@@ -260,6 +260,13 @@ class Issues(commands.Cog):
             await status.edit(content=f"⚠️ {agent.explain(exc)}")
             return
 
+        # Named once, from the first draft: a rename is a system line in the
+        # thread, so re-titling on every refine would bury the conversation.
+        try:
+            await thread.edit(name=f"issue: {draft.title}"[:100])
+        except discord.HTTPException:
+            log.debug("could not rename draft thread %s", thread.id, exc_info=True)
+
         await self._show(status, draft, interaction.user.id, transcript.jump_url)
 
     async def _thread(
@@ -302,18 +309,6 @@ class Issues(commands.Cog):
             embed=preview(draft, note=note),
             view=view.draft_view(author_id),
         )
-        await self._retitle(status.channel, draft.title)
-
-    @staticmethod
-    async def _retitle(channel: discord.abc.Messageable, title: str) -> None:
-        """Name the thread after the issue it is drafting, so a list of open
-        drafts reads as a list of issues rather than a column of one name."""
-        if not isinstance(channel, discord.Thread) or channel.name == title[:100]:
-            return
-        try:
-            await channel.edit(name=title[:100])
-        except discord.HTTPException:
-            log.debug("could not rename draft thread %s", channel.id, exc_info=True)
 
     def _assignee_note(self, draft: IssueDraft) -> str | None:
         """Warn if the proposed assignee isn't someone we know about."""

@@ -54,15 +54,27 @@ You may read any repository in the org, not just the one the issue will be filed
 against — follow a bug across a client and its service if that is where it leads.
 `repo` is only where the issue gets filed.
 
-Write the body as Markdown, with whatever of these the conversation supports:
-what happens, what should happen instead, how to reproduce it, and where in the
-code it probably lives (cite `path/to/file.py` and line numbers when you found
-them). Quote the messages that matter instead of paraphrasing them away.
+House style, from the issues this org already writes:
+
+- `title` is `type: what changes`, lowercase after the prefix. Types in use:
+  `fix`, `feat`, `chore`, `refactor`. A reader scanning the list should be able
+  to tell what the issue is from the title alone.
+- Open the body with one or two sentences stating the problem — no `## Summary`
+  heading above them, just the sentences.
+- Add `##` sections only when there is something to separate: `## Reproducing`,
+  `## Cause`, `## Expected`, `## Scope`. Skip the ones you have nothing real to
+  put under. An empty template section is worse than no section.
+- Aim for 1500-2500 characters. A tight issue gets picked up; a long one gets
+  skipped. Cut background the assignee already knows.
+- Cite `path/to/file.py:line` where the work lands. Quote the message that
+  settled something instead of paraphrasing it; drop the rest of the chatter.
 
 Rules:
 - Never invent detail the conversation doesn't support. Put what you'd need to
   know in `questions` instead — a short draft with honest questions beats a
-  confident wrong one.
+  confident wrong one. Leave out anything the issue itself is meant to discover.
+- `questions` is for what blocks someone from starting, not for design choices
+  whose answer is the work.
 - Choose `repo` only from the candidates you're given — the code you read to
   understand the problem is not restricted, but where it gets filed is.
 - Choose `labels` only from the repo's existing labels (`repo_labels`).
