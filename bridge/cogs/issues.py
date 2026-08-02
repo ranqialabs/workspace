@@ -10,6 +10,7 @@ shape, but only the requester can act on it.
 
 import asyncio
 import logging
+from collections import deque
 from typing import TYPE_CHECKING
 
 import discord
@@ -31,11 +32,13 @@ if TYPE_CHECKING:
 log = logging.getLogger(__name__)
 
 DEFAULT_SPAN = 20  # messages read when you don't say how many
-_MAX_SPAN = 100  # `since` reads to the end of the conversation, up to this
-_CARD_SCAN = 20  # messages searched in a thread for the draft card
+_MAX_SPAN = 100  # a message link reads to the end of the conversation, up to this
 _MAX_SESSIONS = 3  # concurrent drafts; each holds images + agent history in RAM
 _STEP_LINES = 6  # tool calls shown while the agent works
 _EXPIRED = "This draft expired — start a new `/issue`."
+# Every draft thread is named from this, so the name is enough to recognise one
+# after a restart — no fetch, and no state we'd have to have kept.
+_THREAD_PREFIX = "issue"
 
 
 class Issues(commands.Cog):
@@ -44,6 +47,10 @@ class Issues(commands.Cog):
     def __init__(self, bot: "BridgeBot") -> None:
         self.bot = bot
         self._sessions: dict[int, Session] = {}  # thread id -> live draft
+        # Threads already told their draft is gone. Bounded because it only has to
+        # suppress a repeat reply; the oldest falling out just risks saying it
+        # twice in a thread nobody has touched in a long time.
+        self._lost: deque[int] = deque(maxlen=64)
         self.draft_from_message = app_commands.ContextMenu(
             name="Draft issue from here",
             callback=self._context_menu,
@@ -247,6 +254,7 @@ class Issues(commands.Cog):
                 on_step=_progress(status),
             ),
             requester=self._requester(interaction.user),
+            owner_id=interaction.user.id,
         )
         self._sessions[thread.id] = session
         try:
@@ -260,7 +268,7 @@ class Issues(commands.Cog):
         # Named once, from the first draft: a rename is a system line in the
         # thread, so re-titling on every refine would bury the conversation.
         try:
-            await thread.edit(name=f"issue: {draft.title}"[:100])
+            await thread.edit(name=f"{_THREAD_PREFIX}: {draft.title}"[:100])
         except discord.HTTPException:
             log.debug("could not rename draft thread %s", thread.id, exc_info=True)
 
@@ -274,7 +282,7 @@ class Issues(commands.Cog):
     ) -> discord.Thread | None:
         """A thread to draft in: hung off the anchor message when there is one, so
         the conversation and its issue stay visibly connected."""
-        name = f"issue · {author.display_name}"[:100]
+        name = f"{_THREAD_PREFIX} · {author.display_name}"[:100]
         try:
             if anchor is not None and isinstance(anchor.channel, discord.TextChannel):
                 return await anchor.create_thread(name=name, auto_archive_duration=1440)
@@ -328,33 +336,31 @@ class Issues(commands.Cog):
         """
         if message.author.bot or not message.content.strip():
             return
-        if not isinstance(message.channel, discord.Thread):
-            return
-        owner = await self._owner_of(message.channel)
-        if owner is None or message.author.id != owner:
-            return
-        session = self._sessions.get(message.channel.id)
+        thread = message.channel
+        if not isinstance(thread, discord.Thread) or thread.archived:
+            return  # submit and discard archive the thread; that draft is done
+        # This fires on every message in the server, so the cheap tests come
+        # first: in-memory lookups only, no fetch on the path that says "not us".
+        session = self._sessions.get(thread.id)
         if session is None:
-            # The card outlives the process that drafted it, so a thread can look
-            # live while the history behind it is gone. Say so, rather than
-            # swallowing what they typed.
-            await message.reply(
-                "I've lost the thread of this draft (I restarted). Use the buttons "
-                "above, or start a new `/issue`.",
-                mention_author=False,
-            )
+            # A draft thread we no longer hold a session for. Its card still
+            # works — the buttons rebuild from their own custom_id — but the
+            # agent history a revision needs is gone, so say so rather than
+            # swallowing what they typed. Once per thread: after a restart this
+            # would otherwise answer every message in every old draft.
+            if thread.name.startswith(_THREAD_PREFIX) and thread.id not in self._lost:
+                self._lost.append(thread.id)
+                await message.reply(
+                    "I've lost the thread of this draft (I restarted). Use the "
+                    "buttons above, or start a new `/issue`.",
+                    mention_author=False,
+                )
             return
-        await self._revise(message.channel, session, message.content, owner)
+        if message.author.id != session.owner_id:
+            return
+        await self._revise(thread, session, message.content, session.owner_id)
 
     # --- view.Actions ---
-
-    async def refine(self, interaction: discord.Interaction, feedback: str) -> None:
-        live = await self._live(interaction)
-        if live is None:
-            return
-        message, session = live
-        if isinstance(message.channel, discord.Thread):
-            await self._revise(message.channel, session, feedback, interaction.user.id)
 
     async def _revise(
         self,
@@ -450,43 +456,15 @@ class Issues(commands.Cog):
 
     # --- helpers ---
 
-    async def _owner_of(self, thread: discord.Thread) -> int | None:
-        """Who may steer this draft, read off the buttons under its card.
-
-        The card is the only copy that survives a restart, so keeping a second
-        one in memory would just be a copy that can go stale.
-        """
-        async for message in thread.history(limit=_CARD_SCAN, oldest_first=True):
-            for row in message.components:
-                for item in getattr(row, "children", ()):
-                    _, _, author = (getattr(item, "custom_id", "") or "").partition(
-                        "issue:approve:"
-                    )
-                    if author.isdigit():
-                        return int(author)
-        return None
-
     def _requester(self, user: discord.User | discord.Member) -> str:
-        """Who is driving the draft, with their GitHub login when we know it —
-        without it the agent has no referent for "assign it to me"."""
+        """Who is driving the draft, named exactly as the transcript names them —
+        without that the agent has no referent for "assign it to me"."""
         store = self.bot.store
-        login = store.login_for(user.id) if store else None
-        return f"{user.display_name} (@{login})" if login else user.display_name
+        return context.speaker(user, store.login_for(user.id) if store else None)
 
     def _session_for(self, interaction: discord.Interaction) -> Session | None:
         channel = interaction.channel
         return self._sessions.get(channel.id) if channel is not None else None
-
-    async def _live(
-        self, interaction: discord.Interaction
-    ) -> tuple[discord.Message, Session] | None:
-        """The draft's message and its session, or an apology and None."""
-        message = interaction.message
-        session = self._session_for(interaction)
-        if message is None or session is None:
-            await interaction.followup.send(_EXPIRED, ephemeral=True)
-            return None
-        return message, session
 
     def draft_for(self, interaction: discord.Interaction) -> IssueDraft | None:
         """The live draft, or the one recovered from its own preview card.
@@ -526,7 +504,9 @@ def _progress(status: discord.Message):
     Discord rate-limits edits, and a busy agent would otherwise stack up frames
     that are stale by the time they render. The next step redraws the full tail.
     """
-    steps: list[str] = []
+    # Only the tail is ever drawn, so only the tail is kept — the closure outlives
+    # the run, held by the session it reports to.
+    steps: deque[str] = deque(maxlen=_STEP_LINES)
     lock = asyncio.Lock()
 
     async def on_step(step: str) -> None:
@@ -534,7 +514,7 @@ def _progress(status: discord.Message):
         if lock.locked():
             return
         async with lock:
-            body = "\n".join(f"· {s}" for s in steps[-_STEP_LINES:])
+            body = "\n".join(f"· {s}" for s in steps)
             try:
                 await status.edit(content=f"🔎 working…\n```\n{body}\n```")
             except discord.HTTPException:

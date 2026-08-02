@@ -27,7 +27,6 @@ class Actions(Protocol):
     async def apply_edit(
         self, interaction: discord.Interaction, title: str, body: str
     ) -> None: ...
-    async def refine(self, interaction: discord.Interaction, feedback: str) -> None: ...
     async def cancel(self, interaction: discord.Interaction) -> None: ...
     async def start_from_menu(
         self,
@@ -111,15 +110,6 @@ class EditButton(_DraftButton):
         await interaction.response.send_modal(EditModal(draft))
 
 
-class RefineButton(_DraftButton):
-    prefix, label, style = "refine", "Refine", discord.ButtonStyle.primary
-
-    async def act(self, interaction: discord.Interaction) -> None:
-        # A modal rather than "type your feedback in the thread": it acks the
-        # interaction for free, and can't be confused with other people talking.
-        await interaction.response.send_modal(RefineModal())
-
-
 class CancelButton(_DraftButton):
     prefix, label, style = "cancel", "Discard", discord.ButtonStyle.danger
 
@@ -183,27 +173,11 @@ class PromptModal(discord.ui.Modal, title="Draft an issue"):
         )
 
 
-class RefineModal(discord.ui.Modal, title="Refine draft"):
-    """Tell the agent what to change; it revises with its history intact."""
-
-    feedback = discord.ui.TextInput(
-        label="What should change?",
-        placeholder="e.g. this is about the webhook handler, not the renderer",
-        style=discord.TextStyle.paragraph,
-        max_length=1000,
-    )
-
-    async def on_submit(self, interaction: discord.Interaction) -> None:
-        await interaction.response.defer()
-        if (actions := _actions(interaction)) is not None:
-            await actions.refine(interaction, self.feedback.value)
-
-
-BUTTONS = (ApproveButton, RefineButton, EditButton, CancelButton)
+BUTTONS = (ApproveButton, EditButton, CancelButton)
 
 
 def draft_view(author_id: int) -> discord.ui.View:
-    """The four buttons, bound to whoever asked for the draft.
+    """The draft's buttons, bound to whoever asked for it.
 
     timeout=None because the view is never held in memory — the buttons are
     rebuilt from their custom_id when clicked, however much later that is.

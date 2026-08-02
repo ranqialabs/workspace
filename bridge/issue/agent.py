@@ -297,7 +297,7 @@ def _prompt(
     transcript: Transcript,
     candidates: list[str],
     instruction: str | None,
-    requester: str | None = None,
+    requester: str,
 ) -> list[UserContent]:
     """The user prompt: what they asked for, the conversation, and its images."""
     if len(candidates) == 1:
@@ -310,9 +310,7 @@ def _prompt(
     # the discussion.
     who = (
         f"You are talking to {requester}. In anything they ask you, "
-        '"me" and "I" mean them, not whoever spoke in the conversation.\n\n'
-        if requester
-        else ""
+        '"me" and "I" mean them, not whoever spoke in the conversation.'
     )
 
     # The instruction goes first: it's what the person actually wants, and the
@@ -320,13 +318,16 @@ def _prompt(
     asked = (
         f"What they asked for:\n{instruction}\n\n"
         "Draft that issue. The conversation below is your evidence — use the parts "
-        "that bear on it and ignore the rest.\n\n"
+        "that bear on it and ignore the rest."
         if instruction
-        else "Work out what issue this conversation is asking for.\n\n"
+        else "Work out what issue this conversation is asking for."
     )
 
+    # Joined rather than each part carrying its own trailing blank line — the
+    # separator belongs between the sections, not baked into each one.
+    preamble = "\n\n".join([who, asked, repo_line])
     parts: list[UserContent] = [
-        f"{who}{asked}{repo_line}\n\n"
+        f"{preamble}\n\n"
         f"Discord conversation, oldest message first:\n\n{transcript.text}"
     ]
     parts.extend(
@@ -348,11 +349,16 @@ class Session:
         self,
         agent: Agent[Deps, IssueDraft],
         deps: Deps,
-        requester: str | None = None,
+        requester: str,
+        owner_id: int,
     ) -> None:
         self._agent = agent
         self._deps = deps
         self._requester = requester
+        # Who may steer this draft. Held here because it shares the session's
+        # lifetime exactly — a second dict keyed by thread would only be one more
+        # thing to keep in step.
+        self.owner_id = owner_id
         self._history: list[ModelMessage] = []
         self.draft: IssueDraft | None = None
 
@@ -382,5 +388,6 @@ class Session:
     async def refine(self, feedback: str, candidates: list[str]) -> IssueDraft:
         """Revise the current draft from a human's note."""
         self._deps.candidates = candidates
-        who = self._requester or "the person who asked for it"
-        return await self._run(f"Revise the draft. Feedback from {who}:\n\n{feedback}")
+        return await self._run(
+            f"Revise the draft. Feedback from {self._requester}:\n\n{feedback}"
+        )

@@ -17,7 +17,7 @@ from bridge.store import Store
 
 _LINK = re.compile(r"https://(?:\w+\.)?discord\.com/channels/(\d+)/(\d+)/(\d+)")
 
-_MAX_MESSAGES = 100
+_MAX_MESSAGES = 100  # also Discord's page size, so one fetch covers the cap
 _MAX_TRANSCRIPT = 200_000  # chars of conversation we send to the model
 _MAX_IMAGE = 4 * 1024 * 1024  # skip anything bigger; the model won't need it
 _MAX_TEXT_ATTACHMENT = 100_000  # chars per text/log file
@@ -54,9 +54,14 @@ async def resolve_message(guild: discord.Guild, link: str) -> discord.Message | 
         return None
 
 
-def _speaker(message: discord.Message, login: str | None) -> str:
-    name = message.author.display_name
-    return f"{name} (@{login})" if login else name
+def speaker(user: discord.User | discord.Member, login: str | None) -> str:
+    """How a person is named to the model, wherever they turn up.
+
+    One formatter on purpose: the prompt tells the agent that the requester is
+    the person it's talking to, and it can only match them to their lines in the
+    transcript if both are written the same way.
+    """
+    return f"{user.display_name} (@{login})" if login else user.display_name
 
 
 async def _attachments(
@@ -134,7 +139,7 @@ async def collect(
         body = "\n".join(filter(None, [message.content, *notes]))
         if body.strip():
             login = store.login_for(message.author.id)
-            lines.append(f"{_speaker(message, login)}: {body}")
+            lines.append(f"{speaker(message.author, login)}: {body}")
 
     text = "\n\n".join(lines)
     if len(text) > _MAX_TRANSCRIPT:
