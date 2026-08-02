@@ -1,10 +1,14 @@
-"""One tool call, as a card a human can read.
+"""What the agent is doing, as one card a human can glance at.
 
-The live status is the only window into a run that takes tens of seconds, so a
-card has to say what the agent is *doing* and what it learned. A line of
-`search_code(...)` says the first; only a real excerpt of the answer says the
-second, and the difference between a search that found the file and one that
-found nothing is what tells you where the draft is heading.
+The live status is the only window into a run that takes tens of seconds. It has
+to say what the agent is *doing* and roughly what it found — enough to see it is
+looking in the right place — without becoming the thing you read instead of the
+answer.
+
+So: one line per call, and one card holding all of them. An earlier version gave
+each call its own card and pruned them as the run went; that made the channel
+dance, buried the draft, and spent the channel's edit budget on scaffolding. A
+line keeps the subject and the magnitude of the answer and drops the excerpt.
 
 Formatting is pure and total. A progress card is never worth failing a run over,
 so every shape `args` can arrive in (a dict, a JSON string, a half-streamed
@@ -22,15 +26,16 @@ import pydantic_core
 
 from pydantic_ai import ToolCallPart, ToolReturnPart
 
-from bridge.render import GREEN, GREY, RED
+from bridge.render import GREY
 
 _MAX_ARG = 180  # chars of any single argument value
-_MAX_EXCERPT = 700  # chars of a returned file or blob
+_MAX_EXCERPT = 700  # chars of a returned file or blob, for a headline's detail
 _MAX_ROWS = 8  # collection entries listed before "+N more"
 _MAX_ROW = 90  # chars of any one listed row
-_MAX_FIELD = 1024  # Discord's own ceiling on an embed field value
 _MAX_NAME = 256  # Discord's ceiling on an embed title and on a field name
-_MAX_FIELDS = 6  # arguments shown before the card is more grid than card
+_MAX_LINE = 90  # chars of one call's line; wider wraps on a narrow client
+_MAX_LINES = 12  # lines kept on the card before the oldest fold into a count
+_MAX_BODY = 4096  # Discord's own ceiling on an embed description
 
 # Values that say nothing: an omitted optional reads the same as one never in
 # the signature, and neither earns a place in a card.
@@ -145,23 +150,6 @@ def _subject(part: ToolCallPart, ordered: list[tuple[str, Any]]) -> str:
     return _flat(f"{_verb(part.tool_name)} {subject}", 200)
 
 
-def _call_fields(
-    part: ToolCallPart, args: dict[str, Any], ordered: list[tuple[str, Any]]
-) -> list[tuple[str, str]]:
-    """The call's arguments, as embed fields, identifying one first.
-
-    Every argument is shown rather than only the leading one: `read_file` on a
-    ref, or a search scoped to a repo, is a different call from the one without
-    it, and the reader can't tell them apart from a title.
-    """
-    if not args:
-        # A non-JSON or not-yet-parseable string is still better than nothing:
-        # it's what the model actually sent.
-        raw = part.args.strip() if isinstance(part.args, str) else ""
-        return [("Arguments", f"```\n{_clip(raw, 400)}\n```")] if raw else []
-    return [(k, f"`{_scalar(v)}`") for k, v in ordered]
-
-
 def _rows(content: object) -> list[object] | None:
     """The rows of a countable answer, or None if it isn't one.
 
@@ -249,52 +237,42 @@ def result_summary(part: ToolReturnPart) -> tuple[str, str | None, bool]:
     return counted, _listing(rows), True
 
 
-def _fenced(detail: str, *, code: bool) -> str:
-    """A detail block that fits an embed field, fenced when it's file content."""
-    if not code:
-        return _clip(detail, _MAX_FIELD)
-    body = _clip(detail, _MAX_FIELD - 8)
-    return f"```\n{body}\n```"
+def line(part: ToolCallPart, result: ToolReturnPart | None) -> str:
+    """One call as one line: what it's doing, and what came back.
 
-
-def calling(part: ToolCallPart) -> discord.Embed:
-    """The card for a call that has just gone out and hasn't answered yet."""
-    args = parse_args(part.args)
-    ordered = _ordered(args)
-    embed = discord.Embed(
-        title=_clip(f"{_icon(part.tool_name)} {_subject(part, ordered)}", _MAX_NAME),
-        color=GREY,
-    )
-    for name, value in _call_fields(part, args, ordered)[:_MAX_FIELDS]:
-        embed.add_field(name=name, value=_clip(value, _MAX_FIELD), inline=True)
-    embed.set_footer(text=f"{_RUNNING} {part.tool_name}")
-    return embed
-
-
-def answered(
-    part: ToolCallPart, result: ToolReturnPart, *, elapsed: float | None = None
-) -> discord.Embed:
-    """The card for a call once its answer is in.
-
-    Built from the call rather than by editing the pending card's fields: the
-    two say different things, and rebuilding is how they stay consistent.
+    A line rather than a card because a run makes a dozen of these and the reader
+    is following a conversation, not auditing it. What survives the squeeze is the
+    subject (which file, which query) and the magnitude of the answer — enough to
+    see the agent is looking in the right place, and no more.
     """
-    embed = calling(part)
-    headline, detail, ok = result_summary(result)
-    headline = _clip(headline, _MAX_NAME)  # it names a field, and that has a cap
-    embed.color = GREEN if ok else RED
-    # The headline names the block, so "15 results" sits above the hits it
-    # counts; with nothing to put under it, it is the block.
-    if detail:
-        # File content keeps its own shape inside a fence; a list of hits reads
-        # better as markdown, where a long path can wrap.
-        code = isinstance(result.content, str)
-        embed.add_field(name=headline, value=_fenced(detail, code=code), inline=False)
-    else:
-        embed.add_field(name="Result", value=f"*{headline}*", inline=False)
-    took = f" · {elapsed:.1f}s" if elapsed is not None else ""
-    embed.set_footer(text=f"{part.tool_name} · {headline}{took}")
-    return embed
+    subject = _subject(part, _ordered(parse_args(part.args)))
+    if result is None:
+        return f"{_RUNNING} {_flat(subject, _MAX_LINE)}"
+    headline, _, ok = result_summary(result)
+    mark = _icon(part.tool_name) if ok else "⚠️"
+    # The headline is the point of the line, so the subject yields to it when the
+    # two together won't fit.
+    room = _MAX_LINE - len(headline) - 4
+    return f"{mark} {_flat(subject, max(room, 24))}  `{_flat(headline, 40)}`"
+
+
+def card(lines: Sequence[str]) -> discord.Embed:
+    """Every call this run has made, stacked, as one embed we keep editing.
+
+    One message rather than one per call: the cards used to be posted, pruned and
+    deleted as the run went, which made the channel dance and spent the channel's
+    edit budget on scaffolding. Editing one message costs one request per update
+    and holds still while the reader reads it.
+
+    Always grey: the card only exists while the run does, and `collapse` replaces
+    it with a summary line rather than recolouring it green.
+    """
+    body = "\n".join(lines[-_MAX_LINES:]) or _RUNNING
+    if len(lines) > _MAX_LINES:
+        body = f"-# +{len(lines) - _MAX_LINES} earlier\n{body}"
+    return discord.Embed(
+        title="🤖 working...", description=_clip(body, _MAX_BODY), color=GREY
+    )
 
 
 def summarise(calls: list[str], *, elapsed: float | None = None) -> str:

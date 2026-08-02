@@ -42,10 +42,11 @@ _MAX_SPAN = 100  # a message link reads to the end of the conversation, up to th
 # Sessions kept in memory. Not a limit on open drafts — a thread we've forgotten
 # rebuilds from its own messages — just how many we keep the read for.
 _CACHED_SESSIONS = 8
-# Tool cards kept on screen at once. Enough to follow what the agent is doing
-# without the draft scrolling out of the thread; older ones are deleted, and the
-# whole window collapses into one line when the run ends.
-_STEP_CARDS = 5
+# Seconds between edits of anything we're updating live. Discord buckets message
+# edits per channel at roughly 5 per 5s and discord.py queues instead of raising,
+# so overrunning doesn't fail loudly — it just makes every later edit late. This
+# leaves room for a webhook notification landing in the same channel mid-run.
+_DRAW_EVERY = 1.2
 _EXPIRED = "This draft expired — start a new `/issue`."
 # What opens each kind of run, so a revision doesn't read as a first draft. The
 # second is deliberately vague about the outcome: the agent decides whether it's
@@ -680,31 +681,28 @@ class Issues(commands.Cog):
 
 @dataclass
 class _Step:
-    """One tool call being watched: its card, and the call that produced it."""
+    """One tool call being watched, and its answer once there is one."""
 
     part: ToolCallPart
-    message: discord.Message
-    started: float
+    result: ToolReturnPart | None = None
 
 
 class DraftWorkspace:
-    """What one draft's agent may ask of Discord — `agent.Workspace`.
+    """What one draft's agent may ask of Discord — `core.Workspace`.
 
     Holds the store and guild rather than the cog, so what a tool call can reach
     is what this class names. Both are read at call time: a `/map user` run while
     a draft is open reaches the next revision.
 
-    Progress is messages, not one message edited down to a few lines: a call gets
-    a card of its own with room for what it actually found, and the thread scrolls
-    the way a conversation does. The cost is housekeeping — the cards are pruned
-    to a window while the run goes, and collapse into one line when it ends.
+    Progress is one message, edited: a line per call, appended as the run goes.
+    A card per call meant posting and deleting a dozen messages, which made the
+    channel dance and spent its edit budget on scaffolding. One message costs one
+    request per update, holds still, and collapses to a single line at the end.
     """
 
-    # Cards still on screen, oldest first. Bounded by pruning rather than by a
-    # deque: dropping one here has to delete the message too.
     _steps: list[_Step]
-    # Every tool the run has called, in order — what the closing summary counts.
-    _called: list[str]
+    _message: discord.Message | None
+    _last_drawn: float
     _started: float
 
     def __init__(
@@ -712,40 +710,41 @@ class DraftWorkspace:
     ) -> None:
         self._store = store
         self._guild = guild
-        # Serialises post-then-prune against concurrent tool events, so two calls
-        # landing together can't both decide the same card is the one to delete.
+        # Serialises the read-modify-draw of the card, so two tool events landing
+        # together can't both render a half-updated line list.
         self._lock = asyncio.Lock()
         self.restart(thread)
 
     def restart(self, thread: discord.abc.Messageable) -> None:
-        """Watch a fresh run: a refine posts its own cards, and counts its own.
+        """Watch a fresh run: a new card, and its own count.
 
         Defines the per-run state in one place, so the constructor and a refine
-        start from the same slate. The previous run's cards have already been
+        start from the same slate. The previous run's card has already been
         collapsed, so there is nothing here to clean up.
         """
         self._thread = thread
         self._steps = []
-        self._called = []
+        self._message = None
+        # Far enough in the past that the first call draws immediately.
+        self._last_drawn = 0.0
         self._started = time.monotonic()
 
     def teammates(self) -> dict[str, str]:
         return self._store.teammates(self._guild)
 
     async def on_step(self, part: ToolCallPart) -> None:
-        """Post a card for a call that has just gone out."""
+        """Note a call that has just gone out, and show it."""
         async with self._lock:
-            self._called.append(part.tool_name)
-            message = await self._thread.send(embed=progress.calling(part))
-            self._steps.append(_Step(part, message, time.monotonic()))
-            await self._prune()
+            self._steps.append(_Step(part))
+            # Always draw a new call, whatever the clock says: this is the one
+            # update that tells the reader the agent moved on to something else.
+            await self._draw(force=True)
 
     async def on_result(self, call_id: str, part: ToolReturnPart) -> None:
-        """Fill in the card of the call this answers.
+        """Fill in the line of the call this answers.
 
         By id, not by position: tools run concurrently, so the answer that lands
-        first isn't the call that was made first. A result whose card has already
-        been pruned is dropped — there is nothing left to fill in.
+        first isn't the call that was made first.
         """
         async with self._lock:
             step = next(
@@ -753,43 +752,49 @@ class DraftWorkspace:
             )
             if step is None:
                 return
-            embed = progress.answered(
-                step.part, part, elapsed=time.monotonic() - step.started
-            )
-            with contextlib.suppress(discord.HTTPException):
-                await step.message.edit(embed=embed)
+            step.result = part
+            await self._draw()
 
-    async def _prune(self) -> None:
-        """Keep the window to the newest cards, deleting what falls out of it.
+    async def _draw(self, *, force: bool = False) -> None:
+        """Put the current lines on the card, within the edit budget.
 
-        The thread is where people read the draft, and a run that reads a dozen
-        files would otherwise bury it. Called with the lock held.
+        Discord buckets message edits per channel (~5 per 5s) and discord.py
+        queues rather than raising, so overrunning doesn't fail — it just makes
+        every later edit late, including the answer streaming under this. Hence a
+        floor between draws. Called with the lock held.
         """
-        while len(self._steps) > _STEP_CARDS:
-            oldest = self._steps.pop(0)
-            with contextlib.suppress(discord.HTTPException):
-                await oldest.message.delete()
+        now = time.monotonic()
+        if not force and now - self._last_drawn < _DRAW_EVERY:
+            return
+        self._last_drawn = now
+        embed = progress.card([progress.line(s.part, s.result) for s in self._steps])
+        with contextlib.suppress(discord.HTTPException):
+            if self._message is None:
+                self._message = await self._thread.send(embed=embed)
+            else:
+                await self._message.edit(embed=embed)
 
     async def collapse(self) -> None:
-        """End the run: replace every card with the one line that outlives them.
+        """End the run: replace the card with the one line that outlives it.
 
-        The cards go because their detail was about watching a run, not about the
+        The lines go because their detail was about watching a run, not about the
         issue — what survives them is how much ground the agent covered. Safe to
         call twice: a failed run collapses before it reports the failure.
         """
         async with self._lock:
-            if not self._called:
+            if not self._steps:
                 return  # nothing was watched, so there is nothing to summarise
             steps, self._steps = self._steps, []
-            called, self._called = self._called, []
-            # Independent deletes, and this sits between the run finishing and the
-            # draft appearing — the one moment the reader is waiting on us.
-            await asyncio.gather(
-                *(step.message.delete() for step in steps), return_exceptions=True
-            )
+            message, self._message = self._message, None
+            called = [s.part.tool_name for s in steps]
             line = progress.summarise(called, elapsed=time.monotonic() - self._started)
+            # Edited into place rather than deleted and reposted: the card is
+            # already where the reader is looking, and one request beats two.
             try:
-                await self._thread.send(f"-# {line}")
+                if message is not None:
+                    await message.edit(content=f"-# {line}", embed=None)
+                else:
+                    await self._thread.send(f"-# {line}")
             except discord.HTTPException:
                 log.debug("could not post the run summary", exc_info=True)
 
