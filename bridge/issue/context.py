@@ -18,9 +18,9 @@ from bridge.store import Store
 _LINK = re.compile(r"https://(?:\w+\.)?discord\.com/channels/(\d+)/(\d+)/(\d+)")
 
 _MAX_MESSAGES = 100
-_MAX_TRANSCRIPT = 40_000  # chars of conversation we send to the model
+_MAX_TRANSCRIPT = 200_000  # chars of conversation we send to the model
 _MAX_IMAGE = 4 * 1024 * 1024  # skip anything bigger; the model won't need it
-_MAX_TEXT_ATTACHMENT = 8_000  # chars per text/log file
+_MAX_TEXT_ATTACHMENT = 100_000  # chars per text/log file
 
 
 @dataclass
@@ -73,8 +73,17 @@ async def _attachments(
             else:
                 notes.append(f"[image too large to read: {a.filename}]")
         elif kind.startswith("text/") or kind.startswith("application/json"):
-            body = (await a.read()).decode("utf-8", "replace")[:_MAX_TEXT_ATTACHMENT]
-            notes.append(f"<file name={a.filename}>\n{body}\n</file>")
+            text = (await a.read()).decode("utf-8", "replace")
+            body = text[:_MAX_TEXT_ATTACHMENT]
+            # Say so in-band: a model that can't see the cut will answer from the
+            # part it got as though that were the whole file.
+            cut = (
+                f"\n[…truncated: {len(text)} chars total, first "
+                f"{_MAX_TEXT_ATTACHMENT} shown]"
+                if len(text) > _MAX_TEXT_ATTACHMENT
+                else ""
+            )
+            notes.append(f"<file name={a.filename}>\n{body}{cut}\n</file>")
         else:
             notes.append(f"[attachment: {a.filename} ({kind or 'unknown type'})]")
     return notes, images
