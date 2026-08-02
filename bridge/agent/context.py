@@ -94,6 +94,49 @@ async def _attachments(
     return notes, images
 
 
+async def read_back(
+    channel: discord.abc.Messageable,
+    store: Store,
+    *,
+    limit: int,
+    before: int | discord.Message | None = None,
+) -> str:
+    """The `limit` human messages before `before`, oldest first, as plain text.
+
+    What `read_conversation` is: the agent arrives with a small seed and decides
+    for itself how far back it has to read to know what "isso" refers to. Text
+    rather than a `Transcript` because this answers a tool call — attachments and
+    images belong to the seed, which is built once and sent with the prompt.
+    """
+    limit = max(1, min(limit, _MAX_MESSAGES))
+    collected: list[discord.Message] = []
+    # A snowflake works as well as a message here, which is what lets a thread
+    # read the channel it hangs off from its own id.
+    cutoff = (
+        discord.Object(id=before)
+        if isinstance(before, int)
+        else before  # a Message, or None for "from the newest"
+    )
+    async for message in channel.history(
+        limit=min(limit * 2, _MAX_MESSAGES), before=cutoff
+    ):
+        if message.author.bot or not message.content.strip():
+            continue
+        collected.append(message)
+        if len(collected) >= limit:
+            break
+    collected.reverse()  # history() is newest-first; flip to reading order
+
+    lines = [
+        f"{speaker(m.author, store.login_for(m.author.id))}: {m.content}"
+        for m in collected
+    ]
+    text = "\n\n".join(lines)
+    if len(text) > _MAX_TRANSCRIPT:
+        text = "[...earlier messages trimmed...]\n\n" + text[-_MAX_TRANSCRIPT:]
+    return text
+
+
 async def collect(
     channel: discord.abc.Messageable,
     store: Store,

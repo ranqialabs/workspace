@@ -25,6 +25,7 @@ INITIAL_COGS = [
     "bridge.cogs.github_sync",
     "bridge.cogs.notifications",
     "bridge.cogs.issues",
+    "bridge.cogs.mentions",
 ]
 
 
@@ -32,7 +33,7 @@ class BridgeBot(commands.Bot):
     def __init__(self, config: Config, secrets: Secrets) -> None:
         intents = discord.Intents.default()
         intents.members = True  # needed to read/edit member roles
-        intents.message_content = True  # /issue drafts from what people wrote
+        intents.message_content = True  # mentions and /issue read what people wrote
         super().__init__(command_prefix="!", intents=intents)
         self.config = config
         self.secrets = secrets

@@ -62,6 +62,7 @@ _TOOLS = {
     "repo_labels": ("🏷️", "reading labels"),
     "teammates": ("👥", "looking up teammates"),
     "recent_commits": ("🕘", "reading history"),
+    "read_conversation": ("💬", "reading back"),
 }
 
 _RUNNING = "⏳"

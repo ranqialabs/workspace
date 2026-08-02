@@ -138,6 +138,15 @@ class Workspace(Protocol):
         """Mapped GitHub logins to the names people call each other by."""
         ...
 
+    async def earlier(self, limit: int) -> str:
+        """The `limit` messages before the ones the agent was already given.
+
+        Reading further back is the agent's call, not ours: a mention arrives with
+        a small seed, and only the agent knows whether "isso" needs five messages
+        of context or fifty. Scoped to the channel the request came from.
+        """
+        ...
+
     async def on_step(self, part: ToolCallPart) -> None:
         """Report a tool call to wherever this run is being watched.
 
@@ -159,6 +168,9 @@ class _Unattached:
 
     def teammates(self) -> dict[str, str]:
         return {}
+
+    async def earlier(self, limit: int) -> str:
+        return ""
 
     async def on_step(self, part: ToolCallPart) -> None:
         pass
@@ -418,6 +430,18 @@ def build(model: str) -> Agent[Deps, Reply]:
         return [label.name for label in resp.parsed_data]
 
     @agent.tool
+    async def read_conversation(ctx: RunContext[Deps], messages: int = 25) -> str:
+        """Read further back in this Discord channel, before what you were given.
+
+        Use this when you were dropped into the middle of a conversation and what
+        someone means by "this" or "isso" is in messages you can't see. Ask for
+        more if the first read still doesn't settle it. Reads only the channel the
+        request came from, and only messages already there.
+        """
+        earlier = await ctx.deps.workspace.earlier(max(1, min(messages, 100)))
+        return earlier or "(nothing earlier in this channel)"
+
+    @agent.tool
     def teammates(ctx: RunContext[Deps]) -> list[dict[str, str]]:
         """Who can be assigned, as `login` and the `name` people call them by.
 
@@ -501,6 +525,48 @@ def _prompt(
     return parts
 
 
+def asked_prompt(
+    seed: Transcript,
+    *,
+    candidates: list[str],
+    asked: str,
+    requester: str,
+    pointed_at: bool,
+) -> list[UserContent]:
+    """The prompt for a request made by mentioning us in a conversation.
+
+    Unlike `/issue`, this doesn't say what the outcome should be — answering and
+    proposing an issue are both on the table and the instructions govern which.
+    What it does say is how little context it came with, and that reading more is
+    the agent's job: without that the model answers confidently off eight
+    messages it should have known were not the whole story.
+    """
+    listed = ", ".join(f"`{c}`" for c in candidates) or "(none mapped)"
+    context_note = (
+        "They replied to a specific message, so that message and their request "
+        "are below. That reply is them pointing at something."
+        if pointed_at
+        else "Below are the last few messages of the channel, for orientation only."
+    )
+    parts: list[UserContent] = [
+        f"You are talking to {requester} in Discord. In anything they ask you, "
+        '"me" and "I" mean them.\n\n'
+        f"What they said to you:\n{asked}\n\n"
+        f"{context_note} It may well not be enough to know what they mean — if "
+        "anything is unclear, or they refer to something you can't see, call "
+        "`read_conversation` to read further back before answering. Prefer reading "
+        "more over guessing.\n\n"
+        f"If this turns into an issue, it can only be filed against: {listed}.\n\n"
+        f"The conversation, oldest message first:\n\n{seed.text}"
+    ]
+    parts.extend(
+        BinaryContent(data=data, media_type=kind) for data, kind in seed.images
+    )
+    if seed.images:
+        parts.append("The images above were shared in that conversation.")
+    return parts
+
+
 class Session:
     """One conversation with the agent, and the draft it may have produced.
 
@@ -529,6 +595,39 @@ class Session:
         # session resumed after a restart starts where the thread left off.
         self._history: list[ModelMessage] = history or []
         self.draft: IssueDraft | None = draft
+
+    async def stream(
+        self,
+        prompt: str | Sequence[UserContent],
+        on_answer: Callable[[str], Awaitable[None]],
+    ) -> Reply:
+        """Run, handing the answer so far to `on_answer` as it is written.
+
+        `stream_output` rather than `stream_text`, because the output type is a
+        union: the model picks prose or a draft, and `stream_text` raises on the
+        draft branch. `stream_output` covers both, yielding validated snapshots —
+        accumulated text for an answer, a partly-filled `IssueDraft` for a draft.
+
+        Only prose is forwarded. A half-written draft is not worth showing: its
+        card is built from a validated model and a partial one renders as a card
+        with holes in it, so a draft arrives whole or not at all.
+
+        Each snapshot is the whole answer so far, not a delta — which is what a
+        Discord edit wants anyway, since an edit replaces the message.
+        """
+        async with self._agent.run_stream(
+            prompt, deps=self._deps, message_history=self._history or None
+        ) as result:
+            async for snapshot in result.stream_output():
+                if isinstance(snapshot, str):
+                    await on_answer(snapshot)
+            # Completes the stream, applies the output validators, and is what
+            # puts the final message into the history.
+            output = await result.get_output()
+            self._history = list(result.all_messages())
+        if isinstance(output, IssueDraft):
+            self.draft = output
+        return output
 
     async def _run(self, prompt: str | Sequence[UserContent]) -> Reply:
         result = await self._agent.run(

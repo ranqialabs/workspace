@@ -8,11 +8,9 @@ The thread is the point: everyone in the conversation can watch the draft take
 shape, but only the requester can act on it.
 """
 
-import asyncio
 import contextlib
 import logging
 import re
-import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -21,16 +19,14 @@ from discord import app_commands
 from discord.ext import commands
 from discord.utils import MISSING
 from githubkit.exception import GitHubException
-from pydantic_ai import ToolCallPart, ToolReturnPart
 
 from bridge import render
 from bridge.cogs.notifications import Notifications
-from bridge.agent import context, core, history, progress, view
+from bridge.agent import context, core, history, threads, view, workspace
 from bridge.agent.core import Deps, Session
 from bridge.agent.draft import IssueDraft, from_embed, preview
 from bridge.render import GREEN, RED
 from bridge.repo import short_name, split_repo
-from bridge.store import Store
 
 if TYPE_CHECKING:
     from bridge.bot import BridgeBot
@@ -61,9 +57,6 @@ _MAX_MESSAGE = 2000
 _CARD_SCAN = 50
 # The owner id every draft button carries, matching `agent/view.py`'s template.
 _OWNER = re.compile(r"issue:\w+:(?P<author>\d+)")
-# Every draft thread is named from this, so the name is enough to recognise one
-# after a restart — no fetch, and no state we'd have to have kept.
-_THREAD_PREFIX = "issue"
 
 
 def _owner_of(card: discord.Message) -> int | None:
@@ -291,7 +284,7 @@ class Issues(commands.Cog):
             )
             return
 
-        thread = await self._thread(channel, anchor, interaction.user)
+        thread = await threads.open_for(anchor, interaction.user, channel)
         if thread is None:
             await interaction.followup.send(
                 "I couldn't open a thread here — check my permissions.", ephemeral=True
@@ -331,59 +324,49 @@ class Issues(commands.Cog):
             await thread.send(reply[:_MAX_MESSAGE])
             return
 
-        # Named once, from the first draft: a rename is a system line in the
-        # thread, so re-titling on every refine would bury the conversation.
-        try:
-            await thread.edit(name=f"{_THREAD_PREFIX}: {reply.title}"[:100])
-        except discord.HTTPException:
-            log.debug("could not rename draft thread %s", thread.id, exc_info=True)
+        await threads.rename(thread, reply.title)
 
         await self._show(thread, reply, interaction.user.id, transcript.jump_url)
 
-    async def _thread(
-        self,
-        channel: discord.abc.Messageable,
-        anchor: discord.Message | None,
-        author: discord.User | discord.Member,
-    ) -> discord.Thread | None:
-        """A thread to draft in: hung off the anchor message when there is one, so
-        the conversation and its issue stay visibly connected."""
-        name = f"{_THREAD_PREFIX} · {author.display_name}"[:100]
-        try:
-            if anchor is not None and isinstance(anchor.channel, discord.TextChannel):
-                return await anchor.create_thread(name=name, auto_archive_duration=1440)
-            if isinstance(channel, discord.TextChannel):
-                return await channel.create_thread(
-                    name=name,
-                    auto_archive_duration=1440,
-                    type=discord.ChannelType.public_thread,
-                )
-            if isinstance(channel, discord.Thread):
-                return channel  # already in a thread; draft right here
-        except discord.Forbidden, discord.HTTPException:
-            log.exception("could not create a draft thread")
-        return None
-
     async def _settle(
         self,
-        workspace: "DraftWorkspace",
+        work: DraftWorkspace,
         opening: discord.Message,
         error: str | None = None,
     ) -> None:
-        """End a run's progress: collapse its cards, then close out the opening line.
+        """End a run's progress: collapse its card, then close out the opening line.
 
         On success what's left in the thread is one summary line, and the draft
         posts under it — so the thread reads in the order it happened rather than
         having the result edited back into its own announcement. A failed run has
         nothing to post under it, so the opening line carries the reason instead.
         """
-        await workspace.collapse()
+        await work.collapse()
         if error is not None:
             with contextlib.suppress(discord.HTTPException):
                 await opening.edit(content=f"⚠️ {error}")
             return
         with contextlib.suppress(discord.HTTPException):
             await opening.delete()
+
+    def candidates_for(self, channel: object) -> list[str]:
+        """The repos a channel could be about — what the mention cog asks."""
+        return self._candidates(channel)
+
+    async def show(
+        self,
+        target: discord.Message | discord.abc.Messageable,
+        draft: IssueDraft,
+        author_id: int,
+        source_url: str | None = None,
+    ) -> None:
+        """Put a draft up for review, wherever it was produced.
+
+        Public because a mention can produce a draft too, and a draft has to be
+        reviewable the same way however it got here — the same card, the same
+        buttons, the same Submit as the only path to GitHub.
+        """
+        await self._show(target, draft, author_id, source_url)
 
     async def _show(
         self,
@@ -440,7 +423,7 @@ class Issues(commands.Cog):
         # This fires on every message in the server, so the cheap tests come
         # first: a name check and an in-memory lookup, no fetch on the path that
         # says "not us".
-        if not thread.name.startswith(_THREAD_PREFIX):
+        if not thread.name.startswith(threads.PREFIX):
             return
         open_draft = self._sessions.get(thread.id)
         if open_draft is not None:
@@ -679,124 +662,25 @@ class Issues(commands.Cog):
         )
 
 
-@dataclass
-class _Step:
-    """One tool call being watched, and its answer once there is one."""
+class DraftWorkspace(workspace.Workspace):
+    """A draft's workspace: reads back in the channel its thread hangs off.
 
-    part: ToolCallPart
-    result: ToolReturnPart | None = None
-
-
-class DraftWorkspace:
-    """What one draft's agent may ask of Discord — `core.Workspace`.
-
-    Holds the store and guild rather than the cog, so what a tool call can reach
-    is what this class names. Both are read at call time: a `/map user` run while
-    a draft is open reaches the next revision.
-
-    Progress is one message, edited: a line per call, appended as the run goes.
-    A card per call meant posting and deleting a dozen messages, which made the
-    channel dance and spent its edit budget on scaffolding. One message costs one
-    request per update, holds still, and collapses to a single line at the end.
+    The thread itself is the agent's own conversation and already reaches it as
+    history; what it can't see is the discussion that came before the draft, which
+    is in the parent channel above the thread's anchor.
     """
 
-    _steps: list[_Step]
-    _message: discord.Message | None
-    _last_drawn: float
-    _started: float
-
-    def __init__(
-        self, store: Store, guild: discord.Guild, thread: discord.abc.Messageable
-    ) -> None:
-        self._store = store
-        self._guild = guild
-        # Serialises the read-modify-draw of the card, so two tool events landing
-        # together can't both render a half-updated line list.
-        self._lock = asyncio.Lock()
-        self.restart(thread)
-
-    def restart(self, thread: discord.abc.Messageable) -> None:
-        """Watch a fresh run: a new card, and its own count.
-
-        Defines the per-run state in one place, so the constructor and a refine
-        start from the same slate. The previous run's card has already been
-        collapsed, so there is nothing here to clean up.
-        """
-        self._thread = thread
-        self._steps = []
-        self._message = None
-        # Far enough in the past that the first call draws immediately.
-        self._last_drawn = 0.0
-        self._started = time.monotonic()
-
-    def teammates(self) -> dict[str, str]:
-        return self._store.teammates(self._guild)
-
-    async def on_step(self, part: ToolCallPart) -> None:
-        """Note a call that has just gone out, and show it."""
-        async with self._lock:
-            self._steps.append(_Step(part))
-            # Always draw a new call, whatever the clock says: this is the one
-            # update that tells the reader the agent moved on to something else.
-            await self._draw(force=True)
-
-    async def on_result(self, call_id: str, part: ToolReturnPart) -> None:
-        """Fill in the line of the call this answers.
-
-        By id, not by position: tools run concurrently, so the answer that lands
-        first isn't the call that was made first.
-        """
-        async with self._lock:
-            step = next(
-                (s for s in self._steps if s.part.tool_call_id == call_id), None
-            )
-            if step is None:
-                return
-            step.result = part
-            await self._draw()
-
-    async def _draw(self, *, force: bool = False) -> None:
-        """Put the current lines on the card, within the edit budget.
-
-        Discord buckets message edits per channel (~5 per 5s) and discord.py
-        queues rather than raising, so overrunning doesn't fail — it just makes
-        every later edit late, including the answer streaming under this. Hence a
-        floor between draws. Called with the lock held.
-        """
-        now = time.monotonic()
-        if not force and now - self._last_drawn < _DRAW_EVERY:
-            return
-        self._last_drawn = now
-        embed = progress.card([progress.line(s.part, s.result) for s in self._steps])
-        with contextlib.suppress(discord.HTTPException):
-            if self._message is None:
-                self._message = await self._thread.send(embed=embed)
-            else:
-                await self._message.edit(embed=embed)
-
-    async def collapse(self) -> None:
-        """End the run: replace the card with the one line that outlives it.
-
-        The lines go because their detail was about watching a run, not about the
-        issue — what survives them is how much ground the agent covered. Safe to
-        call twice: a failed run collapses before it reports the failure.
-        """
-        async with self._lock:
-            if not self._steps:
-                return  # nothing was watched, so there is nothing to summarise
-            steps, self._steps = self._steps, []
-            message, self._message = self._message, None
-            called = [s.part.tool_name for s in steps]
-            line = progress.summarise(called, elapsed=time.monotonic() - self._started)
-            # Edited into place rather than deleted and reposted: the card is
-            # already where the reader is looking, and one request beats two.
-            try:
-                if message is not None:
-                    await message.edit(content=f"-# {line}", embed=None)
-                else:
-                    await self._thread.send(f"-# {line}")
-            except discord.HTTPException:
-                log.debug("could not post the run summary", exc_info=True)
+    async def earlier(self, limit: int) -> str:
+        thread = self._channel
+        if not isinstance(thread, discord.Thread):
+            return await context.read_back(thread, self._store, limit=limit)
+        # A forum channel holds posts rather than messages, so there is no
+        # preceding discussion to read there.
+        if not isinstance(thread.parent, discord.TextChannel):
+            return ""
+        return await context.read_back(
+            thread.parent, self._store, limit=limit, before=thread.id
+        )
 
 
 async def setup(bot: "BridgeBot") -> None:
