@@ -17,7 +17,7 @@ from bridge.config import CONFIG_CHANNEL_NAME
 from bridge.render import BLURPLE
 
 # Lines are human-readable: the key is a markdown link, the value a Discord
-# mention — both clickable in #bot-config. We parse the label out of `[label](…)`
+# mention — both clickable in #bot-config. We parse the label out of `[label](...)`
 # and the snowflake out of the mention (`<@id>`, `<#id>`, or `<@&id>`; the kind
 # says which). Examples:
 #   identity [octocat](https://github.com/octocat) <@123>

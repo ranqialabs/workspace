@@ -83,7 +83,7 @@ async def _attachments(
             # Say so in-band: a model that can't see the cut will answer from the
             # part it got as though that were the whole file.
             cut = (
-                f"\n[…truncated: {len(text)} chars total, first "
+                f"\n[...truncated: {len(text)} chars total, first "
                 f"{_MAX_TEXT_ATTACHMENT} shown]"
                 if len(text) > _MAX_TEXT_ATTACHMENT
                 else ""
@@ -144,9 +144,9 @@ async def collect(
     text = "\n\n".join(lines)
     if len(text) > _MAX_TRANSCRIPT:
         if anchor is not None:  # the anchor is the point; keep it, drop the tail
-            text = text[:_MAX_TRANSCRIPT] + "\n\n[…later messages trimmed…]"
+            text = text[:_MAX_TRANSCRIPT] + "\n\n[...later messages trimmed...]"
         else:  # no anchor, so the recent turns are what matter
-            text = "[…earlier messages trimmed…]\n\n" + text[-_MAX_TRANSCRIPT:]
+            text = "[...earlier messages trimmed...]\n\n" + text[-_MAX_TRANSCRIPT:]
 
     linked = anchor or (collected[-1] if collected else None)
     return Transcript(

@@ -33,7 +33,7 @@ class Rendered(NamedTuple):
 
 
 def _ping(*mentions: str | None) -> str | None:
-    """Join the real `<@…>`/`<@&…>` mentions (dropping None/plaintext), deduped.
+    """Join the real `<@...>`/`<@&...>` mentions (dropping None/plaintext), deduped.
     Discord only notifies from `content`, never from inside an embed."""
     seen: dict[str, None] = {}
     for mention in mentions:
@@ -119,7 +119,7 @@ def _issue_notify(payload: dict, m: Mentions) -> str | None:
 
 def _issue(payload: dict, m: Mentions) -> Rendered | None:
     """One live message per issue: embed = current state, action = who to notify.
-    Unlisted actions (labeled, edited, milestoned…) are noise."""
+    Unlisted actions (labeled, edited, milestoned...) are noise."""
     if payload.get("action", "") not in _ISSUE_ACTIONS:
         return None
     issue, gh_repo = payload["issue"], payload["repository"]
@@ -190,7 +190,7 @@ def _pr_closed(payload: dict, m: Mentions) -> Rendered:
     return Rendered(content=_ping(m.user(pr["user"]["login"])), embed=embed)
 
 
-# action -> renderer; unlisted actions (edited, synchronize, labeled…) are noise.
+# action -> renderer; unlisted actions (edited, synchronize, labeled...) are noise.
 _PR_ACTIONS: dict[str, Renderer] = {
     "ready_for_review": _pr_ready,
     "review_requested": _pr_review_requested,
