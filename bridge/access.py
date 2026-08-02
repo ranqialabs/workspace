@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING
 
 import discord
 
-from bridge.repo import split_repo
+from bridge.repo import short_name, split_repo
 
 if TYPE_CHECKING:
     from githubkit import GitHub
@@ -82,7 +82,7 @@ async def _access_role(
         return role, False
     # ponytail: a hand-deleted role just gets recreated here (self-healing).
     role = await guild.create_role(
-        name=f"{repo.split('/')[-1]} devs", reason="repo access sync"
+        name=f"{short_name(repo)} devs", reason="repo access sync"
     )
     await store.map_access_role(repo, role.id)
     return role, True

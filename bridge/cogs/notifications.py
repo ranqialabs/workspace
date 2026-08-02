@@ -11,20 +11,13 @@ from bridge import render
 if TYPE_CHECKING:
     from bridge.bot import BridgeBot
 
-# Events we render; each is registered to the same generic handler.
-_EVENTS = (
-    "issues",
-    "pull_request",
-    "pull_request_review",
-    "check_suite",
-    "deployment_status",
-)
-
 
 class Notifications(commands.Cog):
     def __init__(self, bot: "BridgeBot") -> None:
         self.bot = bot
-        for event in _EVENTS:
+        # Whatever render.py knows how to draw, we listen for — registering a
+        # renderer is the whole of adding an event, with no second list to match.
+        for event in render.RENDERERS:
             bot.webhook.register(event, self._event_handler(event))
 
     # --- Mentions protocol (render.py calls back into these) ---

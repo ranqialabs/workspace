@@ -15,6 +15,7 @@ from discord.ext import commands
 
 from bridge import access
 from bridge.access import SyncResult
+from bridge.render import BLURPLE, GREEN
 
 if TYPE_CHECKING:
     from bridge.bot import BridgeBot
@@ -119,7 +120,7 @@ class GithubSync(commands.Cog):
         # Enrich the confirmation with the GitHub profile (name + avatar). One
         # request, only for the chosen login — cheap, and this is where an image
         # can actually render (Discord autocomplete choices are text-only).
-        embed = discord.Embed(title="Identity linked", color=0x2DA44E)
+        embed = discord.Embed(title="Identity linked", color=GREEN)
         try:
             resp = await self.bot.github.rest.users.async_get_by_username(github_login)
             user = resp.parsed_data
@@ -182,7 +183,7 @@ class GithubSync(commands.Cog):
                 if changed
                 else "Everything already in sync — nothing to do."
             ),
-            color=0x5865F2 if changed else 0x2DA44E,
+            color=BLURPLE if changed else GREEN,
         )
 
         def field(name: str, lines: list[str]) -> None:

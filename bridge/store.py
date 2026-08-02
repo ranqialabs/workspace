@@ -14,6 +14,7 @@ import re
 import discord
 
 from bridge.config import CONFIG_CHANNEL_NAME
+from bridge.render import BLURPLE
 
 # Lines are human-readable: the key is a markdown link, the value a Discord
 # mention — both clickable in #bot-config. We parse the label out of `[label](…)`
@@ -174,6 +175,19 @@ class Store:
             None,
         )
 
+    def teammates(self, guild: discord.Guild) -> dict[str, str]:
+        """Mapped logins to the display names people actually call each other by.
+
+        Names the members here rather than handing out bare logins: a first name
+        in a conversation only reaches a login through the name beside it. A
+        member who has left keeps their login, unnamed — the mapping still points
+        at a real GitHub account.
+        """
+        return {
+            login: member.display_name if (member := guild.get_member(did)) else login
+            for login, did in sorted(self.identity.items())
+        }
+
     def channel_for(self, repo_full_name: str) -> int | None:
         """Where a repo's news goes: its announce channel, else its plain one."""
         return self.repo_to_announce.get(repo_full_name) or self.repo_to_channel.get(
@@ -202,7 +216,7 @@ class Store:
         embed = discord.Embed(
             title="⚙️ Bridge configuration",
             description="Live view of every GitHub → Discord mapping.",
-            color=0x5865F2,
+            color=BLURPLE,
         )
         embed.set_footer(text=_PANEL_MARKER)
 

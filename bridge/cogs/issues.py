@@ -11,6 +11,7 @@ shape, but only the requester can act on it.
 import asyncio
 import logging
 from collections import deque
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 import discord
@@ -24,7 +25,8 @@ from bridge.issue import agent, context, view
 from bridge.issue.agent import Deps, Session
 from bridge.issue.draft import IssueDraft, from_embed, preview
 from bridge.render import GREEN, RED
-from bridge.repo import split_repo
+from bridge.repo import short_name, split_repo
+from bridge.store import Store
 
 if TYPE_CHECKING:
     from bridge.bot import BridgeBot
@@ -41,12 +43,24 @@ _EXPIRED = "This draft expired — start a new `/issue`."
 _THREAD_PREFIX = "issue"
 
 
+@dataclass
+class Draft:
+    """One open draft: the agent session, and the Discord side it reports to.
+
+    Paired because they share a lifetime exactly — the workspace draws into the
+    thread's status message, and a refine redirects it to a new one.
+    """
+
+    session: Session
+    workspace: "DraftWorkspace"
+
+
 class Issues(commands.Cog):
     """Implements view.Actions — the buttons call back into these methods."""
 
     def __init__(self, bot: "BridgeBot") -> None:
         self.bot = bot
-        self._sessions: dict[int, Session] = {}  # thread id -> live draft
+        self._sessions: dict[int, Draft] = {}  # thread id -> live draft
         # Threads already told their draft is gone. Bounded because it only has to
         # suppress a repeat reply; the oldest falling out just risks saying it
         # twice in a thread nobody has touched in a long time.
@@ -246,17 +260,19 @@ class Issues(commands.Cog):
         )
 
         status = await thread.send("🔎 reading the conversation…")
+        assert interaction.guild is not None
+        workspace = DraftWorkspace(self.bot.store, interaction.guild, status)
         session = Session(
             self.bot.issue_agent,
             Deps(
                 github=self.bot.github,
                 org=self.bot.config.org,
-                on_step=_progress(status),
+                workspace=workspace,
             ),
             requester=self._requester(interaction.user),
             owner_id=interaction.user.id,
         )
-        self._sessions[thread.id] = session
+        self._sessions[thread.id] = Draft(session, workspace)
         try:
             draft = await session.start(transcript, candidates, prompt=prompt)
         except Exception as exc:  # noqa: BLE001 — a failed draft mustn't kill the cog
@@ -316,15 +332,19 @@ class Issues(commands.Cog):
         )
 
     def _assignee_note(self, draft: IssueDraft) -> str | None:
-        """Warn if the proposed assignee isn't someone we know about."""
+        """Warn if the proposed assignee isn't a login we have mapped.
+
+        Rare, since the agent resolves names through `teammates`: this catches a
+        draft recovered from an older card, or a mapping removed since.
+        """
         store = self.bot.store
         if draft.assignee is None or store is None:
             return None
         if store.discord_id_for(draft.assignee) is not None:
             return None
         return (
-            f"`{draft.assignee}` isn't linked to a Discord member "
-            "(`/map user`); GitHub may reject the assignment."
+            f"`{draft.assignee}` isn't a mapped GitHub login — run `/map user`, "
+            "then say who to assign. GitHub may reject the assignment as it is."
         )
 
     @commands.Cog.listener()
@@ -341,8 +361,8 @@ class Issues(commands.Cog):
             return  # submit and discard archive the thread; that draft is done
         # This fires on every message in the server, so the cheap tests come
         # first: in-memory lookups only, no fetch on the path that says "not us".
-        session = self._sessions.get(thread.id)
-        if session is None:
+        draft = self._sessions.get(thread.id)
+        if draft is None:
             # A draft thread we no longer hold a session for. Its card still
             # works — the buttons rebuild from their own custom_id — but the
             # agent history a revision needs is gone, so say so rather than
@@ -356,18 +376,14 @@ class Issues(commands.Cog):
                     mention_author=False,
                 )
             return
-        if message.author.id != session.owner_id:
+        if message.author.id != draft.session.owner_id:
             return
-        await self._revise(thread, session, message.content, session.owner_id)
+        await self._revise(thread, draft, message.content)
 
     # --- view.Actions ---
 
     async def _revise(
-        self,
-        thread: discord.Thread,
-        session: Session,
-        feedback: str,
-        author_id: int,
+        self, thread: discord.Thread, open_draft: Draft, feedback: str
     ) -> None:
         """Run a revision and post the result as a new message in the thread.
 
@@ -375,14 +391,16 @@ class Issues(commands.Cog):
         issue got its shape, and editing it away loses that.
         """
         status = await thread.send("✍️ revising…")
-        session.report_to(_progress(status))
+        open_draft.workspace.report_to(status)
         try:
-            draft = await session.refine(feedback, self._candidates(thread))
+            revised = await open_draft.session.refine(
+                feedback, self._candidates(thread)
+            )
         except Exception as exc:  # noqa: BLE001
             log.exception("refine failed")
             await status.edit(content=f"⚠️ {agent.explain(exc)}")
             return
-        await self._show(status, draft, author_id)
+        await self._show(status, revised, open_draft.session.owner_id)
 
     async def apply_edit(
         self, interaction: discord.Interaction, title: str, body: str
@@ -435,22 +453,23 @@ class Issues(commands.Cog):
             return
 
         issue = resp.parsed_data
-        self._sessions.pop(message.channel.id, None)
-        await message.edit(
-            content=f"✅ [#{issue.number}]({issue.html_url}) created.",
-            embed=None,
-            view=None,
-        )
+        await self._finish(message, f"✅ [#{issue.number}]({issue.html_url}) created.")
         await self._announce(draft.repo, issue.number, issue.html_url, draft.title)
-        if isinstance(message.channel, discord.Thread):
-            await message.channel.edit(archived=True)
 
     async def cancel(self, interaction: discord.Interaction) -> None:
         message = interaction.message
         if message is None:
             return
+        await self._finish(message, "🗑️ Draft discarded.")
+
+    async def _finish(self, message: discord.Message, content: str) -> None:
+        """Close a draft out: drop its session, replace the card, archive the thread.
+
+        Submit and discard differ only in what they say — both end the draft, and
+        an archived thread is what stops `on_message` treating it as live.
+        """
         self._sessions.pop(message.channel.id, None)
-        await message.edit(content="🗑️ Draft discarded.", embed=None, view=None)
+        await message.edit(content=content, embed=None, view=None)
         if isinstance(message.channel, discord.Thread):
             await message.channel.edit(archived=True)
 
@@ -464,7 +483,8 @@ class Issues(commands.Cog):
 
     def _session_for(self, interaction: discord.Interaction) -> Session | None:
         channel = interaction.channel
-        return self._sessions.get(channel.id) if channel is not None else None
+        open_draft = self._sessions.get(channel.id) if channel is not None else None
+        return open_draft.session if open_draft is not None else None
 
     def draft_for(self, interaction: discord.Interaction) -> IssueDraft | None:
         """The live draft, or the one recovered from its own preview card.
@@ -490,37 +510,56 @@ class Issues(commands.Cog):
         if not isinstance(notifications, Notifications):
             return
         embed = discord.Embed(title=f"#{number} · {title}", url=url, color=GREEN)
-        embed.set_author(name=f"🐛 issue · {repo.rpartition('/')[2]}")
+        embed.set_author(name=f"🐛 issue · {short_name(repo)}")
         embed.set_footer(text=repo)
         await notifications.route(
             repo, render.Rendered(None, embed, render.issue_key(repo, number))
         )
 
 
-def _progress(status: discord.Message):
-    """A callback that shows the agent's last few tool calls in `status`.
+class DraftWorkspace:
+    """What one draft's agent may ask of Discord — `agent.Workspace`.
 
-    A step that arrives while an edit is in flight is dropped rather than queued:
-    Discord rate-limits edits, and a busy agent would otherwise stack up frames
-    that are stale by the time they render. The next step redraws the full tail.
+    Holds the store and guild rather than the cog, so what a tool call can reach
+    is what this class names. Both are read at call time: a `/map user` run while
+    a draft is open reaches the next revision.
     """
-    # Only the tail is ever drawn, so only the tail is kept — the closure outlives
-    # the run, held by the session it reports to.
-    steps: deque[str] = deque(maxlen=_STEP_LINES)
-    lock = asyncio.Lock()
 
-    async def on_step(step: str) -> None:
-        steps.append(step)
-        if lock.locked():
+    def __init__(
+        self, store: Store, guild: discord.Guild, status: discord.Message
+    ) -> None:
+        self._store = store
+        self._guild = guild
+        self._status = status
+        # Only the tail is ever drawn, so only the tail is kept.
+        self._steps: deque[str] = deque(maxlen=_STEP_LINES)
+        self._lock = asyncio.Lock()
+
+    def report_to(self, status: discord.Message) -> None:
+        """Draw progress somewhere else — a refine writes to a new message."""
+        self._status = status
+        self._steps.clear()
+
+    def teammates(self) -> dict[str, str]:
+        return self._store.teammates(self._guild)
+
+    async def on_step(self, step: str) -> None:
+        """Show the agent's last few tool calls in the status message.
+
+        A step that arrives while an edit is in flight is dropped rather than
+        queued: Discord rate-limits edits, and a busy agent would otherwise stack
+        up frames that are stale by the time they render. The next step redraws
+        the full tail.
+        """
+        self._steps.append(step)
+        if self._lock.locked():
             return
-        async with lock:
-            body = "\n".join(f"· {s}" for s in steps)
+        async with self._lock:
+            body = "\n".join(f"· {s}" for s in self._steps)
             try:
-                await status.edit(content=f"🔎 working…\n```\n{body}\n```")
+                await self._status.edit(content=f"🔎 working…\n```\n{body}\n```")
             except discord.HTTPException:
                 pass  # a dropped progress edit is not worth failing the run over
-
-    return on_step
 
 
 async def setup(bot: "BridgeBot") -> None:

@@ -13,6 +13,7 @@ GREY = 0x6E7681
 BLUE = 0x0969DA
 RED = 0xCF222E
 PURPLE = 0x8250DF  # merged PRs
+BLURPLE = 0x5865F2  # Discord's own colour: our panels, not GitHub's news
 
 BODY_LIMIT = 400  # issue/PR body chars shown in an embed description
 

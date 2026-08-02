@@ -6,14 +6,18 @@ open an issue.
 
 The tools wrap githubkit rather than the GitHub MCP server. MCP would mean a PAT
 (its remote server won't take an installation token), a second identity, and 47
-tool definitions in context; these six reuse the app auth the bot already has.
+tool definitions in context; these reuse the app auth the bot already has.
 Each returns a hand-trimmed dict — returning githubkit's parsed models would put
-the context bloat we just avoided straight back in.
+the context bloat we just avoided straight back in. A GitHub call that fails
+comes back as an `error` row (`_reports_failure`), so the model reads a refusal
+the same way whichever tool it came from.
 """
 
 import base64
+import functools
 from collections.abc import AsyncIterable, Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
+from typing import Protocol
 
 import httpx
 from githubkit import GitHub
@@ -78,10 +82,13 @@ Rules:
 - Choose `repo` only from the candidates you're given — the code you read to
   understand the problem is not restricted, but where it gets filed is.
 - Choose `labels` only from the repo's existing labels (`repo_labels`).
-- Set `assignee` only to a login you saw in the conversation or that people
-  clearly agreed on. Leave it null otherwise. When the person you are talking to
-  asks for it themselves, that is their login — not the one who started the
-  discussion.
+- `assignee` is a GitHub login from `teammates`, not a name from the
+  conversation. If nobody there matches, leave it null and ask who takes it in
+  `questions` — a login that doesn't exist is rejected, and one that does
+  assigns a stranger.
+- Assign only who was actually named or agreed on. When the person you are
+  talking to asks for it themselves, that is their login — not the one who
+  started the discussion.
 - Set `confidence` to how well the conversation actually specifies the work:
   `high` only when someone could start on it as written.
 - If `similar_issues` turns up a real duplicate, say so at the top of the body
@@ -89,18 +96,76 @@ Rules:
 """
 
 
+class Workspace(Protocol):
+    """What the agent may ask the Discord side — implemented by the issues cog.
+
+    Everything here is read at call time, not snapshotted into `Deps`: a
+    `/map user` run while a draft is open has to reach the next revision.
+    """
+
+    def teammates(self) -> dict[str, str]:
+        """Mapped GitHub logins to the names people call each other by."""
+        ...
+
+    async def on_step(self, step: str) -> None:
+        """Report a tool call to wherever this run is being watched."""
+        ...
+
+
+class _Unattached:
+    """A workspace that knows nothing — the default when nobody wired one up.
+
+    Lets every tool read `ctx.deps.workspace` without a null check.
+    """
+
+    def teammates(self) -> dict[str, str]:
+        return {}
+
+    async def on_step(self, step: str) -> None:
+        pass
+
+
 @dataclass
 class Deps:
     """Per-run state: the app-authed client, the org, and the repos on offer.
 
-    `on_step` is how the run reports progress — carried here rather than in a
+    `workspace` is how the run reaches Discord — carried here rather than in a
     global so each run reports to its own thread.
     """
 
     github: GitHub
     org: str
     candidates: list[str] = field(default_factory=list)
-    on_step: Callable[[str], Awaitable[None]] | None = None
+    workspace: Workspace = field(default_factory=_Unattached)
+
+
+def _reports_failure[**P, T](
+    doing: str,
+) -> Callable[
+    [Callable[P, Awaitable[T]]], Callable[P, Awaitable[T | list[dict[str, str]]]]
+]:
+    """Hand a failed GitHub call back to the model instead of raising it.
+
+    One error shape for every tool: a model that reads `error` from one tool can
+    read it from all of them, and a new tool gets the handling by saying what it
+    was doing rather than by copying a `try` block.
+    """
+
+    def decorate(
+        fn: Callable[P, Awaitable[T]],
+    ) -> Callable[P, Awaitable[T | list[dict[str, str]]]]:
+        @functools.wraps(fn)
+        async def wrapped(
+            *args: P.args, **kwargs: P.kwargs
+        ) -> T | list[dict[str, str]]:
+            try:
+                return await fn(*args, **kwargs)
+            except GitHubException as exc:
+                return [{"error": f"{doing} failed: {exc}"}]
+
+        return wrapped
+
+    return decorate
 
 
 def _describe(part: ToolCallPart) -> str:
@@ -151,8 +216,8 @@ async def _report_steps(
 ) -> None:
     """Forward each tool call to the run's progress callback."""
     async for event in events:
-        if isinstance(event, FunctionToolCallEvent) and ctx.deps.on_step is not None:
-            await ctx.deps.on_step(_describe(event.part))
+        if isinstance(event, FunctionToolCallEvent):
+            await ctx.deps.workspace.on_step(_describe(event.part))
 
 
 def build(model: str) -> Agent[Deps, IssueDraft]:
@@ -180,6 +245,7 @@ def build(model: str) -> Agent[Deps, IssueDraft]:
         return split_repo(repo, ctx.deps.org)
 
     @agent.tool
+    @_reports_failure("search")
     async def search_code(ctx: RunContext[Deps], query: str) -> list[dict[str, str]]:
         """Find code across the org by keyword.
 
@@ -187,12 +253,9 @@ def build(model: str) -> Agent[Deps, IssueDraft]:
         skips files over 384KB, is rate-limited to ~10 calls/minute, and does not
         do regex. Use it to locate a symbol or string, then read_file to confirm.
         """
-        try:
-            resp = await ctx.deps.github.rest.search.async_code(
-                q=f"{query} org:{ctx.deps.org}", per_page=_MAX_RESULTS
-            )
-        except GitHubException as exc:
-            return [{"error": f"search failed: {exc}"}]
+        resp = await ctx.deps.github.rest.search.async_code(
+            q=f"{query} org:{ctx.deps.org}", per_page=_MAX_RESULTS
+        )
         return [
             {"repo": item.repository.full_name, "path": item.path}
             for item in resp.parsed_data.items
@@ -220,32 +283,28 @@ def build(model: str) -> Agent[Deps, IssueDraft]:
         return text
 
     @agent.tool
+    @_reports_failure("listing the directory")
     async def list_dir(
         ctx: RunContext[Deps], repo: str, path: str = ""
     ) -> list[dict[str, str]]:
         """List a directory, to get oriented before reading files."""
         owner, name = _repo(ctx, repo)
-        try:
-            resp = await ctx.deps.github.rest.repos.async_get_content(owner, name, path)
-        except GitHubException as exc:
-            return [{"error": f"could not list {path or '/'}: {exc}"}]
+        resp = await ctx.deps.github.rest.repos.async_get_content(owner, name, path)
         data = resp.parsed_data
         if not isinstance(data, list):
             return [{"error": f"{path} is a file; use read_file"}]
         return [{"name": e.name, "type": e.type} for e in data]
 
     @agent.tool
+    @_reports_failure("searching issues")
     async def similar_issues(
         ctx: RunContext[Deps], repo: str, query: str
     ) -> list[dict[str, object]]:
         """Search a repo's existing issues, to catch duplicates before drafting."""
         owner, name = _repo(ctx, repo)
-        try:
-            resp = await ctx.deps.github.rest.search.async_issues_and_pull_requests(
-                q=f"{query} repo:{owner}/{name} is:issue", per_page=_MAX_RESULTS
-            )
-        except GitHubException as exc:
-            return [{"error": f"search failed: {exc}"}]
+        resp = await ctx.deps.github.rest.search.async_issues_and_pull_requests(
+            q=f"{query} repo:{owner}/{name} is:issue", per_page=_MAX_RESULTS
+        )
         return [
             {
                 "number": item.number,
@@ -257,30 +316,39 @@ def build(model: str) -> Agent[Deps, IssueDraft]:
         ]
 
     @agent.tool
+    @_reports_failure("reading the repo's labels")
     async def repo_labels(ctx: RunContext[Deps], repo: str) -> list[str]:
         """The labels this repo actually has. Don't propose any others."""
         owner, name = _repo(ctx, repo)
-        try:
-            resp = await ctx.deps.github.rest.issues.async_list_labels_for_repo(
-                owner, name, per_page=100
-            )
-        except GitHubException as exc:
-            return [f"error: {exc}"]
+        resp = await ctx.deps.github.rest.issues.async_list_labels_for_repo(
+            owner, name, per_page=100
+        )
         return [label.name for label in resp.parsed_data]
 
     @agent.tool
+    def teammates(ctx: RunContext[Deps]) -> list[dict[str, str]]:
+        """Who can be assigned, as `login` and the `name` people call them by.
+
+        The conversation uses first names; GitHub only takes logins. Resolve any
+        name through this list before setting `assignee` — a name that isn't
+        here has no GitHub account we know of.
+        """
+        mapped = ctx.deps.workspace.teammates()
+        if not mapped:
+            return [{"error": "nobody is mapped yet; `/map user` links a login"}]
+        return [{"login": login, "name": name} for login, name in mapped.items()]
+
+    @agent.tool
+    @_reports_failure("listing commits")
     async def recent_commits(
         ctx: RunContext[Deps], repo: str, path: str | None = None
     ) -> list[dict[str, str]]:
         """Recent commits, optionally only those touching one path — useful for
         working out whether something regressed and who last touched it."""
         owner, name = _repo(ctx, repo)
-        try:
-            resp = await ctx.deps.github.rest.repos.async_list_commits(
-                owner, name, per_page=10, **({"path": path} if path else {})
-            )
-        except GitHubException as exc:
-            return [{"error": f"could not list commits: {exc}"}]
+        resp = await ctx.deps.github.rest.repos.async_list_commits(
+            owner, name, per_page=10, **({"path": path} if path else {})
+        )
         return [
             {
                 "sha": c.sha[:8],
@@ -361,10 +429,6 @@ class Session:
         self.owner_id = owner_id
         self._history: list[ModelMessage] = []
         self.draft: IssueDraft | None = None
-
-    def report_to(self, on_step: Callable[[str], Awaitable[None]] | None) -> None:
-        """Send progress somewhere else — a refine writes to a different message."""
-        self._deps.on_step = on_step
 
     async def _run(self, prompt: str | Sequence[UserContent]) -> IssueDraft:
         result = await self._agent.run(
