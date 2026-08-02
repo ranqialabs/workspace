@@ -93,9 +93,8 @@ class Issues(commands.Cog):
     )
     @app_commands.describe(
         prompt="What the issue is about — steers the draft. Optional.",
-        since="Read from this message onwards. Right-click → Copy Message Link.",
-        from_message="Read the messages *before* this one. Right-click → Copy Link.",
-        last="How many messages to read (default 20). Ignored with `since`.",
+        since_message="Read from this message onwards. Right-click → Copy Link.",
+        last="How many messages to read (default 20). Ignored with a message link.",
         repo="Force the target repo instead of inferring it from the channel.",
     )
     @app_commands.autocomplete(repo=_mapped_repo_choices)
@@ -103,8 +102,7 @@ class Issues(commands.Cog):
         self,
         interaction: discord.Interaction,
         prompt: str | None = None,
-        since: str | None = None,
-        from_message: str | None = None,
+        since_message: str | None = None,
         last: app_commands.Range[int, 1, 100] = DEFAULT_SPAN,
         repo: str | None = None,
     ) -> None:
@@ -115,10 +113,9 @@ class Issues(commands.Cog):
             return
         assert interaction.guild is not None
 
-        link = since or from_message
         anchor: discord.Message | None = None
-        if link is not None:
-            anchor = await context.resolve_message(interaction.guild, link)
+        if since_message is not None:
+            anchor = await context.resolve_message(interaction.guild, since_message)
             if anchor is None:
                 await interaction.followup.send(
                     "I need a message link from this server — right-click the "
@@ -138,10 +135,11 @@ class Issues(commands.Cog):
             interaction,
             channel,
             anchor=anchor,
-            span=_MAX_SPAN if since else last,
+            # A link says "start here"; how far it runs is the conversation's
+            # business, not a number the requester should have to guess.
+            span=_MAX_SPAN if anchor else last,
             repo=repo,
             prompt=prompt,
-            forward=since is not None,
         )
 
     async def _context_menu(
@@ -206,14 +204,13 @@ class Issues(commands.Cog):
         span: int,
         repo: str | None,
         prompt: str | None = None,
-        forward: bool = False,
     ) -> None:
         assert self.bot.store is not None
         assert self.bot.github is not None
         assert self.bot.issue_agent is not None
 
         transcript = await context.collect(
-            channel, self.bot.store, limit=span, anchor=anchor, forward=forward
+            channel, self.bot.store, limit=span, anchor=anchor
         )
         if transcript.is_empty():
             await interaction.followup.send(

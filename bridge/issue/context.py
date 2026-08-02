@@ -95,13 +95,12 @@ async def collect(
     *,
     limit: int,
     anchor: discord.Message | None = None,
-    forward: bool = False,
 ) -> Transcript:
-    """Human messages around `anchor` (inclusive), oldest first.
+    """Human messages, oldest first.
 
-    Backwards by default: the `limit` messages leading up to the anchor. With
-    `forward`, everything from the anchor onwards instead — for pointing at where
-    a discussion started without having to count how long it ran.
+    From `anchor` onwards when there is one — pointing at where a discussion
+    started beats counting how many messages it ran for. Otherwise the last
+    `limit` messages in the channel.
 
     Bots are skipped — otherwise the bridge's own notification cards read as
     conversation and the model drafts issues about them.
@@ -111,18 +110,18 @@ async def collect(
     if anchor is not None:
         collected.append(anchor)
     async for message in channel.history(
-        limit=limit * 2,  # headroom for the bots we drop
-        after=anchor.created_at if forward and anchor is not None else None,
-        before=None if forward else (anchor.created_at if anchor else None),
-        oldest_first=forward or None,
+        # Headroom for the bots we drop, capped at one page — a second costs a
+        # round trip for messages we'd discard anyway.
+        limit=min(limit * 2, _MAX_MESSAGES),
+        after=anchor.created_at if anchor else None,
     ):
         if message.author.bot:
             continue
         collected.append(message)
         if len(collected) >= limit:
             break
-    if not forward:
-        collected.reverse()
+    if anchor is None:
+        collected.reverse()  # no anchor means newest-first; flip to reading order
 
     # Every attachment is a separate CDN round trip; serially they dominate the
     # wait before the model even starts.
@@ -139,9 +138,9 @@ async def collect(
 
     text = "\n\n".join(lines)
     if len(text) > _MAX_TRANSCRIPT:
-        if forward:  # the anchor is the point; keep it and drop the tail
+        if anchor is not None:  # the anchor is the point; keep it, drop the tail
             text = text[:_MAX_TRANSCRIPT] + "\n\n[…later messages trimmed…]"
-        else:  # the recent turns matter most
+        else:  # no anchor, so the recent turns are what matter
             text = "[…earlier messages trimmed…]\n\n" + text[-_MAX_TRANSCRIPT:]
 
     linked = anchor or (collected[-1] if collected else None)
