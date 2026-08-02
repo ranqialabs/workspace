@@ -4,7 +4,7 @@ icon: lucide/lightbulb
 
 # Concepts
 
-The bridge is built on three convictions. None of them are technical trivia —
+The bridge is built on four convictions. None of them are technical trivia —
 each one is a choice about how the tool should feel to use, and each one is why a
 particular piece of friction you'd expect simply isn't here. Understanding them
 is enough to trust what the bot does on its own.
@@ -57,12 +57,47 @@ single message it edits in place (never reposts, so it never floods) showing the
 whole current state with real mentions. The channel is both the storage and the
 audit log, and they can't disagree because they're the same thing.
 
+## A model may propose, only a human disposes
+
+The bridge runs an LLM agent — [`/issue`](issues.md) hands it your conversation
+and lets it read your code. The obvious worry is the obvious one: what happens
+when it gets something wrong?
+
+The answer isn't a careful system prompt, because a prompt is a request and a
+confused model can decline it. **The agent has no tool that writes to GitHub.**
+It can search code, read files, list commits, look for duplicate issues, and read
+who's mapped to whom. That's the complete list. Creating the issue is done by the
+cog, in a different module, behind a button that only the person who asked can
+press.
+
+So the failure mode of a bad draft is a bad draft — visible in a thread, in front
+of the people who were in the conversation, waiting for someone to press Submit
+or Discard. It cannot be an issue nobody meant to file.
+
+```mermaid
+flowchart LR
+  C["💬 conversation"] --> A["🤖 agent · read-only tools"]
+  A --> D["📝 draft in a thread"]
+  D -- "Submit · a human click" --> G["🐙 GitHub"]
+  A -. "no path" .-x G
+```
+
+The same instinct runs through the rest of the design: the bot only touches what
+it created, and the one write permission it holds on GitHub is used in exactly
+one place.
+
 ## Why this shape
 
 One last idea sits under the code rather than in front of the user, but it's worth
 knowing: the bridge is built to **grow without disturbing what works**. Access
-sync, notifications — each is a self-contained unit, and the ones coming later (Google
-Workspace, voice, knowledge management; see the [roadmap](roadmap.md)) slot in the
-same way, without touching the ones already running. That's a promise about the
-future more than a feature you use today, but it's why adding the next capability
-won't put the last one at risk.
+sync, notifications, issue drafting — each is a self-contained cog, and the ones
+coming later (Google Workspace, voice, knowledge management; see the
+[roadmap](roadmap.md)) slot in the same way, without touching the ones already
+running.
+
+`/issue` is the proof it holds. Adding an agent, a thread lifecycle, buttons and
+a whole model integration touched no part of access sync or notifications — it
+arrived as one more cog, and a webhook event it needed already went through the
+same dispatch table everything else uses. That's a promise about the future more
+than a feature you use today, but it's why adding the next capability won't put
+the last one at risk.

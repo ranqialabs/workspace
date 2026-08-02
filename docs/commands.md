@@ -6,13 +6,20 @@ icon: lucide/terminal
 
 ## Slash commands
 
-The commands are grouped into two families — **`/map`** for wiring things
+Admin commands are grouped into two families — **`/map`** for wiring things
 together and **`/sync`** for acting on that wiring — so everything the bot does
-lives under a name that says what it's for.
+lives under a name that says what it's for. Alongside them,
+[**`/issue`**](issues.md) is the one command anyone can run.
 
-Every command requires the caller to have Discord's **Manage Server**
-permission; that's the entire access model, so there's no admin role to create.
-Discord greys the commands out for anyone without it.
+| Command | Who can run it |
+| :------ | :------------- |
+| [`/map repo`](#map-repo), [`/map announce`](#map-announce), [`/map user`](#map-user) | Manage Server |
+| [`/sync roles`](#sync-roles), [`/config`](#config) | Manage Server |
+| [`/issue`](issues.md) and *Draft issue from here* | anyone in the server |
+
+Admin commands require Discord's **Manage Server** permission; that's the entire
+access model, so there's no admin role to create. Discord greys them out for
+anyone without it.
 
 And you never touch an ID. Repo and user names come from **autocomplete backed by
 the GitHub API** — start typing and the bot offers your org's real repos or
@@ -79,6 +86,32 @@ This is the join that makes mentions and access sync work: it's how the bridge
 knows a PR by `itsmeale` should ping a particular person. The bot confirms with a
 small embed showing the GitHub avatar and profile, so you can see at a glance you
 picked the right account. Re-mapping a login overwrites the old link.
+
+It does one more job: [`/issue`](issues.md) resolves *"assign it to Ana"* to a
+GitHub login through these mappings. An unmapped person can't be assigned by
+name — the agent will ask who takes it instead of guessing.
+
+### `/issue` { #issue }
+
+Draft a GitHub issue from a conversation, review it in a thread, then submit it.
+
+```text
+/issue [prompt:‹what it's about›] [since_message:‹link›] [last:20] [repo:‹owner/name›]
+```
+
+| Parameter | Description |
+| :-------- | :---------- |
+| `prompt` | What the issue is about — steers the draft. Optional |
+| `since_message` | A message **link**; reads from there forward |
+| `last` | How many messages to read (default 20, max 100) |
+| `repo` | Force the target repo instead of inferring it from the channel |
+
+Also available as **right-click a message → Apps → Draft issue from here**.
+
+Unlike every other command, this one is open to anyone — filing an issue is
+ordinary work, and nothing reaches GitHub without a human clicking Submit.
+
+[:octicons-arrow-right-24: How drafting works, in full](issues.md)
 
 ### `/sync roles` { #sync-roles }
 
@@ -159,6 +192,13 @@ function per event — so restyling or adding an event is a self-contained chang
     while that message is still recent (under an hour) and still the last thing in
     the channel; once it's buried or stale, the next change posts fresh. PRs,
     reviews and CI always post a new message.
+
+!!! info "An issue submitted from Discord posts once, not twice"
+
+    Clicking Submit on an [`/issue`](issues.md) draft posts the new issue's card
+    to the repo channel immediately — ahead of GitHub's own `issues.opened`
+    webhook, which arrives a moment later. Both use the same live-message key, so
+    the webhook **edits** that card instead of posting a second one.
 
 !!! info "One line per push, not per workflow"
 

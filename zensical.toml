@@ -51,6 +51,7 @@ nav = [
   { "Concepts" = "concepts.md" },
   { "Setup" = "configuration.md" },
   { "Commands & events" = "commands.md" },
+  { "Drafting issues" = "issues.md" },
   { "Roadmap" = "roadmap.md" },
 ]
 

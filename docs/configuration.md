@@ -6,9 +6,9 @@ icon: lucide/settings
 
 Most bots make you hunt for IDs — copy the server ID, copy each role ID, paste a
 channel ID into a config file, keep them in sync forever. This one doesn't. The
-**only** thing you configure by hand is the GitHub org name. The server, who's
-allowed to run admin commands, and every mapping between GitHub and Discord are
-either discovered at runtime or set later with slash commands, using
+**only** thing you configure by hand is the GitHub org name (plus secrets). The
+server, who's allowed to run admin commands, and every mapping between GitHub and
+Discord are either discovered at runtime or set later with slash commands, using
 autocomplete and mentions. You will not paste a single snowflake ID.
 
 There are four stages, and you do them in order: register the
@@ -36,15 +36,24 @@ itself.
 to a long random string and keep it somewhere; it becomes `GITHUB_WEBHOOK_SECRET`
 and is what lets the bridge prove a webhook really came from GitHub.
 
-**Permissions.** All read-only — the bridge observes, it never writes to GitHub:
+**Permissions.** Read-only everywhere except issues, which the bridge creates
+when someone clicks Submit on an [`/issue`](issues.md) draft:
 
 | Scope | Permission | Why it's needed |
 | :---- | :--------- | :-------------- |
-| Repository | **Issues** → Read | to hear about opened issues |
+| Repository | **Issues** → Read **and write** | to hear about issues, and to create one from a draft |
+| Repository | **Contents** → Read | `/issue` reads the code to ground a draft in it |
 | Repository | **Pull requests** → Read | to hear about PRs and reviews |
 | Repository | **Checks** → Read | to hear the main branch's CI result |
 | Repository | **Metadata** → Read | mandatory; GitHub adds it for you |
 | Organization | **Members** → Read | `/sync roles` reads who can access each repo |
+
+!!! info "Write is granted to the bot, not to the agent"
+
+    **Issues → Write** is the one non-read permission, and it's used in exactly
+    one place: the cog's Submit handler. The drafting agent has no tool that can
+    reach it. If you'd rather not grant it, everything else still works — you
+    just can't submit a draft from Discord.
 
 **Events.** Subscribe to **Issues**, **Pull request**, **Pull request review**,
 **Check suite**, and **Deployment status** — the ones the bridge listens for. The
@@ -80,17 +89,36 @@ shows it exactly once. This is `DISCORD_TOKEN`, the credential the bot logs in
 with. Treat it like a password; if it leaks, Reset Token again and the old one
 dies.
 
-**Turn on the one intent that matters.** Still on the Bot page, under *Privileged
-Gateway Intents*, enable **Server Members Intent**. Without it the bot literally
-cannot see or change members' roles, and `/sync roles` fails. Leave **Presence**
-and **Message Content** off — the bridge uses slash commands, so it never needs
-to read message text.
+**Turn on two privileged intents.** Still on the Bot page, under *Privileged
+Gateway Intents*:
+
+| Intent | Required for | What breaks without it |
+| :----- | :----------- | :--------------------- |
+| **Server Members** | `/sync roles` | the bot can't see or change members' roles at all |
+| **Message Content** | [`/issue`](issues.md) | message text arrives empty, so there's no conversation to draft from |
+
+Leave **Presence** off — the bridge never looks at who's online.
+
+!!! warning "Message Content is why an empty draft happens"
+
+    If `/issue` replies *"I couldn't read any conversation there"* on a channel
+    that plainly has one, this intent is the reason nine times out of ten. The
+    bot receives the messages either way; without the intent their `content` is
+    blank, which is indistinguishable from an empty channel.
+
+    Every other feature works fine without it, so the bridge doesn't demand it at
+    boot — you just can't draft issues.
 
 **Invite it.** Go to **OAuth2 → URL Generator**, tick the scopes **`bot`** and
-**`applications.commands`**, then under bot permissions tick **Manage Roles**,
-**View Channels**, **Send Messages**, **Manage Channels** (so it can create its
-own config channel), and **Embed Links**. Copy the URL it builds at the bottom,
-open it, and add the bot to your server.
+**`applications.commands`**, then under bot permissions tick:
+
+- **Manage Roles** — create and fill the `‹repo› devs` access roles
+- **Manage Channels** — create its own `#bot-config` channel, and gate mapped ones
+- **View Channels**, **Send Messages**, **Embed Links** — post notifications and cards
+- **Read Message History** — read the conversation `/issue` drafts from
+- **Create Public Threads** and **Send Messages in Threads** — every draft lives in a thread
+
+Copy the URL it builds at the bottom, open it, and add the bot to your server.
 
 !!! tip "Put the bot's role near the top"
 
@@ -114,8 +142,8 @@ The single non-secret setting lives right in `fly.toml`, in plain sight:
   WEBHOOK_PORT = '8080'
 ```
 
-The four secrets never touch that file — they go through `fly secrets`, which
-stores them encrypted:
+The secrets never touch that file — they go through `fly secrets`, which stores
+them encrypted:
 
 ```bash
 fly launch --no-deploy   # first time only: names the app, picks a region
@@ -123,8 +151,14 @@ fly secrets set \
   DISCORD_TOKEN=... \
   GITHUB_APP_ID=... \
   GITHUB_WEBHOOK_SECRET=... \
+  OPENAI_API_KEY=... \
   GITHUB_APP_PRIVATE_KEY="$(cat ranqia-workspace.*.private-key.pem)"
 ```
+
+`OPENAI_API_KEY` is the only optional one: without it [`/issue`](issues.md) is
+switched off and everything else runs unchanged. To draft with a different model,
+set `ISSUE_MODEL` to any [pydantic-ai] model string — the matching provider key
+has to be set too.
 
 !!! danger "Set the key from the file, with the quotes"
 
@@ -149,6 +183,10 @@ Actions**.
     uv sync
     uv run python -m bridge
     ```
+
+    `.env.example` lists every variable, including `OPENAI_API_KEY` and the
+    optional `ISSUE_MODEL`. `GITHUB_APP_PRIVATE_KEY` accepts either the PEM
+    inline or a **path** to the `.pem`, which is far easier locally.
 
     GitHub still needs a public URL to deliver webhooks to, so expose the port
     with a tunnel like [cloudflared] or [ngrok] and point the App's webhook there
@@ -183,6 +221,9 @@ role, adds and removes members to match who can reach the repo on GitHub, and se
 the channel's permissions so only that role can see it. `/sync roles` also runs
 automatically on every boot.
 
+Do `/map user` before you rely on [`/issue`](issues.md): it's the same mapping
+the agent resolves a first name through when someone says *"assign it to Ana"*.
+
 ## Where it keeps state
 
 There's no database and no disk to set up: the `#bot-config` channel the bot
@@ -195,3 +236,4 @@ at a glance. You never have to manage it. If you're curious why it works this wa
 [Fly.io]: https://fly.io/
 [cloudflared]: https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/
 [ngrok]: https://ngrok.com/
+[pydantic-ai]: https://ai.pydantic.dev/models/
