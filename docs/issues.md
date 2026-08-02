@@ -33,7 +33,7 @@ sequenceDiagram
   loop grounding
     A->>GH: search code · read files · recent commits
     A->>GH: similar issues — is this a duplicate?
-    A-->>D: 🔎 working… (tool calls, live)
+    A-->>D: 🔎 working… (tool calls and what they found, live)
   end
   A-->>D: draft card + Submit / Edit / Discard
   You->>D: "scope it to the parser only"
@@ -116,6 +116,40 @@ on, and an issue that paraphrases a hunch isn't.
 It may **read any repository in the org**, not just the one the issue gets filed
 against — following a bug from a client into its service is often the whole
 job. Where it gets *filed* is restricted to the candidate repos.
+
+### Watching it work
+
+A draft takes tens of seconds, and the status message is the only window into
+it. Each tool call shows the arguments it was made with, and gains what it
+found once it answers:
+
+```text
+🔎 working…
+search_code(LiveMessages publish)
+  -> 5 results: bridge/live.py, bridge/render.py, +3 more
+read_file(bridge/live.py, repo=ranqialabs/workspace)
+  -> 1119 chars: """One edited-in-place message per entity
+repo_labels(ranqialabs/workspace)
+  -> 4 results: bug, enhancement, chore, +1 more
+similar_issues(tool args, repo=ranqialabs/workspace)
+```
+
+The leading argument is the one that identifies the call: the query it's
+searching for, or the file it's reading. The rest are named. Values are
+clipped, and only the last few calls are kept, so a long run doesn't turn the
+thread into a log.
+
+The result line is the useful half: a search that found the file and one that
+found nothing look identical while only the calls are shown, and they mean very
+different things about where the draft is heading. A tool that failed says so
+in place of its result.
+
+!!! note "Why results are matched by id"
+
+    Tools run concurrently, so the answer that lands first isn't always the call
+    that was made first. Each result is paired with its call by the tool call id
+    rather than by position. Otherwise a slow `read_file` would show up under
+    whichever search happened to be next in the list.
 
 !!! info "Why `teammates` exists"
 

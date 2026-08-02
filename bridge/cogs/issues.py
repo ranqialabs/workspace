@@ -38,6 +38,11 @@ _MAX_SPAN = 100  # a message link reads to the end of the conversation, up to th
 _MAX_SESSIONS = 3  # concurrent drafts; each holds images + agent history in RAM
 _STEP_LINES = 6  # tool calls shown while the agent works
 _EXPIRED = "This draft expired — start a new `/issue`."
+# What the status message says while each kind of run is in flight. The same
+# string opens the message and heads its progress lines, so a revision doesn't
+# announce itself as a first draft the moment the first tool call lands.
+_DRAFTING = "🔎 working…"
+_REVISING = "✍️ revising…"
 # Every draft thread is named from this, so the name is enough to recognise one
 # after a restart — no fetch, and no state we'd have to have kept.
 _THREAD_PREFIX = "issue"
@@ -390,8 +395,8 @@ class Issues(commands.Cog):
         The old card is left where it is: the thread is the record of how the
         issue got its shape, and editing it away loses that.
         """
-        status = await thread.send("✍️ revising…")
-        open_draft.workspace.report_to(status)
+        status = await thread.send(_REVISING)
+        open_draft.workspace.report_to(status, _REVISING)
         try:
             revised = await open_draft.session.refine(
                 feedback, self._candidates(thread)
@@ -517,6 +522,25 @@ class Issues(commands.Cog):
         )
 
 
+@dataclass
+class _Step:
+    """One tool call in the live status, and its answer once it lands."""
+
+    call_id: str  # what pairs a result with its call; never rendered
+    call: str
+    result: str | None = None
+
+    def render(self) -> str:
+        """One line while it's running, two once it has answered.
+
+        Plain ASCII inside the code fence: a decorative glyph falls back to a
+        different font per client and the columns stop lining up.
+        """
+        if self.result is None:
+            return self.call
+        return f"{self.call}\n  -> {self.result}"
+
+
 class DraftWorkspace:
     """What one draft's agent may ask of Discord — `agent.Workspace`.
 
@@ -531,33 +555,57 @@ class DraftWorkspace:
         self._store = store
         self._guild = guild
         self._status = status
+        self._header = _DRAFTING
         # Only the tail is ever drawn, so only the tail is kept.
-        self._steps: deque[str] = deque(maxlen=_STEP_LINES)
+        self._steps: deque[_Step] = deque(maxlen=_STEP_LINES)
         self._lock = asyncio.Lock()
 
-    def report_to(self, status: discord.Message) -> None:
-        """Draw progress somewhere else — a refine writes to a new message."""
+    def report_to(self, status: discord.Message, header: str) -> None:
+        """Draw progress somewhere else: a refine writes to a new message.
+
+        The header comes along because a revision is not a first draft: the
+        status says what this run is doing, and the tool lines below it are the
+        same either way.
+        """
         self._status = status
+        self._header = header
         self._steps.clear()
 
     def teammates(self) -> dict[str, str]:
         return self._store.teammates(self._guild)
 
-    async def on_step(self, step: str) -> None:
-        """Show the agent's last few tool calls in the status message.
+    async def on_step(self, call_id: str, step: str) -> None:
+        """Show the agent's last few tool calls in the status message."""
+        self._steps.append(_Step(call_id, step))
+        await self._draw()
 
-        A step that arrives while an edit is in flight is dropped rather than
-        queued: Discord rate-limits edits, and a busy agent would otherwise stack
-        up frames that are stale by the time they render. The next step redraws
-        the full tail.
+    async def on_result(self, call_id: str, result: str) -> None:
+        """Attach what came back to the call it answers.
+
+        By id, not by position: tools run concurrently, so the answer that lands
+        first isn't the call that was made first. A result whose call has already
+        scrolled off the tail is dropped: there is nothing left to attach it to.
         """
-        self._steps.append(step)
+        for step in self._steps:
+            if step.call_id == call_id:
+                step.result = result
+                break
+        await self._draw()
+
+    async def _draw(self) -> None:
+        """Redraw the tail of the run into the status message.
+
+        A frame that arrives while an edit is in flight is dropped rather than
+        queued: Discord rate-limits edits, and a busy agent would otherwise stack
+        up frames that are stale by the time they render. The next one redraws
+        the full tail anyway.
+        """
         if self._lock.locked():
             return
         async with self._lock:
-            body = "\n".join(f"· {s}" for s in self._steps)
+            body = "\n".join(step.render() for step in self._steps)
             try:
-                await self._status.edit(content=f"🔎 working…\n```\n{body}\n```")
+                await self._status.edit(content=f"{self._header}\n```\n{body}\n```")
             except discord.HTTPException:
                 pass  # a dropped progress edit is not worth failing the run over
 

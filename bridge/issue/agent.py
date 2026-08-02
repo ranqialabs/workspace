@@ -15,6 +15,7 @@ the same way whichever tool it came from.
 
 import base64
 import functools
+import logging
 from collections.abc import AsyncIterable, Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
 from typing import Protocol
@@ -27,10 +28,11 @@ from pydantic_ai import (
     AgentStreamEvent,
     BinaryContent,
     FunctionToolCallEvent,
+    FunctionToolResultEvent,
     ModelMessage,
     ModelRetry,
     RunContext,
-    ToolCallPart,
+    ToolReturnPart,
     UserContent,
 )
 from pydantic_ai.capabilities import ProcessEventStream
@@ -38,7 +40,10 @@ from pydantic_ai.exceptions import ModelAPIError, UsageLimitExceeded
 
 from bridge.issue.context import Transcript
 from bridge.issue.draft import IssueDraft
+from bridge.issue.progress import describe_call, describe_result
 from bridge.repo import split_repo
+
+log = logging.getLogger(__name__)
 
 _MAX_FILE_CHARS = 6_000
 _MAX_RESULTS = 15
@@ -107,8 +112,12 @@ class Workspace(Protocol):
         """Mapped GitHub logins to the names people call each other by."""
         ...
 
-    async def on_step(self, step: str) -> None:
+    async def on_step(self, call_id: str, step: str) -> None:
         """Report a tool call to wherever this run is being watched."""
+        ...
+
+    async def on_result(self, call_id: str, result: str) -> None:
+        """Report what the call with this id gave back."""
         ...
 
 
@@ -121,7 +130,10 @@ class _Unattached:
     def teammates(self) -> dict[str, str]:
         return {}
 
-    async def on_step(self, step: str) -> None:
+    async def on_step(self, call_id: str, step: str) -> None:
+        pass
+
+    async def on_result(self, call_id: str, result: str) -> None:
         pass
 
 
@@ -168,13 +180,6 @@ def _reports_failure[**P, T](
     return decorate
 
 
-def _describe(part: ToolCallPart) -> str:
-    """A tool call as a line a human can follow."""
-    args = part.args if isinstance(part.args, dict) else {}
-    detail = args.get("path") or args.get("query") or args.get("repo") or ""
-    return f"{part.tool_name}({detail})" if detail else part.tool_name
-
-
 def _leaves(exc: BaseException) -> list[BaseException]:
     """Flatten an ExceptionGroup; streaming wraps the real cause in one."""
     if isinstance(exc, BaseExceptionGroup):
@@ -214,10 +219,33 @@ def explain(exc: BaseException) -> str:
 async def _report_steps(
     ctx: RunContext[Deps], events: AsyncIterable[AgentStreamEvent]
 ) -> None:
-    """Forward each tool call to the run's progress callback."""
+    """Forward each tool call, and what it gave back, to the progress callback.
+
+    Rendering a progress line must never be what kills a draft: a malformed
+    argument or an odd return shape costs one uninformative line, not the run.
+    """
     async for event in events:
         if isinstance(event, FunctionToolCallEvent):
-            await ctx.deps.workspace.on_step(_describe(event.part))
+            await ctx.deps.workspace.on_step(
+                event.tool_call_id, _safely(describe_call, event.part)
+            )
+        elif isinstance(event, FunctionToolResultEvent) and isinstance(
+            event.part, ToolReturnPart
+        ):
+            # A RetryPromptPart is the model being corrected, not a tool answering;
+            # the retried call reports itself when it comes round again.
+            await ctx.deps.workspace.on_result(
+                event.tool_call_id, _safely(describe_result, event.part)
+            )
+
+
+def _safely[T](render: Callable[[T], str], part: T) -> str:
+    """`render(part)`, or a placeholder if it somehow couldn't be rendered."""
+    try:
+        return render(part)
+    except Exception:  # noqa: BLE001 - a progress line is not worth a failed run
+        log.debug("could not render a progress line", exc_info=True)
+        return getattr(part, "tool_name", "?")
 
 
 def build(model: str) -> Agent[Deps, IssueDraft]:
