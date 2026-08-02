@@ -477,6 +477,25 @@ def build(model: str) -> Agent[Deps, Reply]:
     return agent
 
 
+def _with_conversation(preamble: str, transcript: Transcript) -> list[UserContent]:
+    """A prompt's wording, then the conversation it is about and its images.
+
+    The assembly rather than the wording: every entry point ends the same way —
+    the transcript last, its images after it, and a line saying where they came
+    from — and only the framing above it differs. Kept in one place so a change
+    to how images are attached reaches every prompt at once.
+    """
+    parts: list[UserContent] = [
+        f"{preamble}\n\nThe conversation, oldest message first:\n\n{transcript.text}"
+    ]
+    parts.extend(
+        BinaryContent(data=data, media_type=kind) for data, kind in transcript.images
+    )
+    if transcript.images:
+        parts.append("The images above were shared in that conversation.")
+    return parts
+
+
 def _prompt(
     transcript: Transcript,
     candidates: list[str],
@@ -512,17 +531,7 @@ def _prompt(
 
     # Joined rather than each part carrying its own trailing blank line — the
     # separator belongs between the sections, not baked into each one.
-    preamble = "\n\n".join([who, asked, repo_line])
-    parts: list[UserContent] = [
-        f"{preamble}\n\n"
-        f"Discord conversation, oldest message first:\n\n{transcript.text}"
-    ]
-    parts.extend(
-        BinaryContent(data=data, media_type=kind) for data, kind in transcript.images
-    )
-    if transcript.images:
-        parts.append("The images above were shared in that conversation.")
-    return parts
+    return _with_conversation("\n\n".join([who, asked, repo_line]), transcript)
 
 
 def asked_prompt(
@@ -548,7 +557,7 @@ def asked_prompt(
         if pointed_at
         else "Below are the last few messages of the channel, for orientation only."
     )
-    parts: list[UserContent] = [
+    preamble = (
         f"You are talking to {requester} in Discord. In anything they ask you, "
         '"me" and "I" mean them.\n\n'
         f"What they said to you:\n{asked}\n\n"
@@ -556,15 +565,9 @@ def asked_prompt(
         "anything is unclear, or they refer to something you can't see, call "
         "`read_conversation` to read further back before answering. Prefer reading "
         "more over guessing.\n\n"
-        f"If this turns into an issue, it can only be filed against: {listed}.\n\n"
-        f"The conversation, oldest message first:\n\n{seed.text}"
-    ]
-    parts.extend(
-        BinaryContent(data=data, media_type=kind) for data, kind in seed.images
+        f"If this turns into an issue, it can only be filed against: {listed}."
     )
-    if seed.images:
-        parts.append("The images above were shared in that conversation.")
-    return parts
+    return _with_conversation(preamble, seed)
 
 
 class Session:
@@ -601,7 +604,7 @@ class Session:
     async def stream(
         self,
         prompt: str | Sequence[UserContent],
-        on_answer: Callable[[str], Awaitable[None]],
+        on_answer: Callable[[str], Awaitable[None]] | None = None,
     ) -> Reply:
         """Run, handing the answer so far to `on_answer` as it is written.
 
@@ -616,32 +619,27 @@ class Session:
 
         Each snapshot is the whole answer so far, not a delta — which is what a
         Discord edit wants anyway, since an edit replaces the message.
+
+        `on_answer` is optional: a caller with nowhere to paint the answer as it
+        arrives still runs through here, so there is one run path rather than two
+        that have to be kept in step.
         """
         async with self._agent.run_stream(
             prompt, deps=self._deps, message_history=self._history or None
         ) as result:
             async for snapshot in result.stream_output():
-                if isinstance(snapshot, str):
+                if on_answer is not None and isinstance(snapshot, str):
                     await on_answer(snapshot)
             # Completes the stream, applies the output validators, and is what
             # puts the final message into the history.
             output = await result.get_output()
             self._history = list(result.all_messages())
-        if isinstance(output, IssueDraft):
-            self.draft = output
-        return output
-
-    async def _run(self, prompt: str | Sequence[UserContent]) -> Reply:
-        result = await self._agent.run(
-            prompt, deps=self._deps, message_history=self._history or None
-        )
-        self._history = list(result.all_messages())
         # Only a draft replaces the draft. A run that answered a question has no
         # draft in it, and taking its prose as one would wipe what the requester
         # is still reviewing.
-        if isinstance(result.output, IssueDraft):
-            self.draft = result.output
-        return result.output
+        if isinstance(output, IssueDraft):
+            self.draft = output
+        return output
 
     async def start(
         self,
@@ -652,7 +650,9 @@ class Session:
     ) -> Reply:
         """First pass: what the requester asked for, grounded in the conversation."""
         self._deps.candidates = candidates
-        return await self._run(_prompt(transcript, candidates, prompt, self.requester))
+        return await self.stream(
+            _prompt(transcript, candidates, prompt, self.requester)
+        )
 
     def candidates(self, candidates: list[str]) -> None:
         """Set what repos an issue from this session could be filed against.

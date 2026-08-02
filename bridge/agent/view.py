@@ -8,6 +8,7 @@ the custom_id against `template` and rebuilds the item from the match.
 The handlers live on the cog (see `Actions`); this module is only the widgets.
 """
 
+import re
 from typing import Protocol, runtime_checkable
 
 import discord
@@ -16,6 +17,27 @@ from discord.ext import commands
 from bridge.agent.draft import IssueDraft
 
 _DENIED = "Only whoever ran `/issue` can act on this draft."
+
+# How a button's custom_id is spelled. Written by `_DraftButton.__init__`, read
+# back by `owner_of` — one definition, so the format can't be changed in one
+# place and silently missed in the other.
+_TEMPLATE = r"issue:(?P<action>\w+):(?P<author>\d+)"
+_OWNER = re.compile(_TEMPLATE)
+
+
+def owner_of(card: discord.Message) -> int | None:
+    """Who may steer the draft on `card`, read off its own buttons.
+
+    The requester's id already rides in every button's custom_id so a click
+    survives a restart; that makes the card the record of who owns the draft,
+    and there is no second place for it to disagree with.
+    """
+    for row in card.components:
+        for item in getattr(row, "children", ()):
+            custom_id = getattr(item, "custom_id", None) or ""
+            if (m := _OWNER.match(custom_id)) is not None:
+                return int(m["author"])
+    return None
 
 
 @runtime_checkable
@@ -47,7 +69,7 @@ def _actions(interaction: discord.Interaction) -> Actions | None:
 
 class _DraftButton(
     discord.ui.DynamicItem[discord.ui.Button],
-    template=r"issue:(?P<action>\w+):(?P<author>\d+)",
+    template=_TEMPLATE,
 ):
     """One button under a draft. Subclasses set the class attributes and `act`.
 

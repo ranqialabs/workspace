@@ -19,7 +19,10 @@ import discord
 
 log = logging.getLogger(__name__)
 
-EDIT_EVERY = 1.2  # seconds between edits; ~4 per 5s, inside Discord's bucket
+# Seconds between edits; ~4 per 5s, inside Discord's bucket. Shared with
+# `workspace`, which paces its progress card by the same floor: the card and the
+# answer streaming under it spend one channel's edit budget between them.
+EDIT_EVERY = 1.2
 _MAX_MESSAGE = 2000  # Discord's own ceiling on message content
 _CUT = "\n-# ...(truncated)"
 

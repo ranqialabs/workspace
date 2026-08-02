@@ -91,9 +91,9 @@ class Mentions(commands.Cog):
             threads.PREFIX
         ):
             return
-        if not _asked(message, me):
+        if not (asked := _asked(message, me)):
             return  # a bare mention with nothing in it isn't a question
-        await self._answer(message, _asked(message, me))
+        await self._answer(message, asked)
 
     async def _answer(self, message: discord.Message, asked: str) -> None:
         """Read, run, and stream the answer back under the mention."""

@@ -29,10 +29,6 @@ from pydantic_ai import ToolCallPart, ToolReturnPart
 from bridge.render import GREY
 
 _MAX_ARG = 180  # chars of any single argument value
-_MAX_EXCERPT = 700  # chars of a returned file or blob, for a headline's detail
-_MAX_ROWS = 8  # collection entries listed before "+N more"
-_MAX_ROW = 90  # chars of any one listed row
-_MAX_NAME = 256  # Discord's ceiling on an embed title and on a field name
 _MAX_LINE = 90  # chars of one call's line; wider wraps on a narrow client
 _MAX_LINES = 12  # lines kept on the card before the oldest fold into a count
 _MAX_BODY = 4096  # Discord's own ceiling on an embed description
@@ -45,10 +41,6 @@ _EMPTY = (None, "", [], {})
 # arguments a reader scans for come first. `query` before `repo` because "what
 # am I searching for" beats "where".
 _LEAD = ("query", "path", "repo", "ref", "name", "login", "number", "url")
-
-# Which field names a returned row: `path` for a search hit, `title` for an
-# issue, `message` for a commit, `name` for a directory entry or a teammate.
-_ROW_LABEL = ("path", "title", "message", "name", "login")
 
 # What each tool is doing, in words and a glyph, since the reader is following a
 # draft and not reading our function names. One entry per tool rather than a
@@ -162,80 +154,45 @@ def _rows(content: object) -> list[object] | None:
     return list(cast(Sequence[object], content))
 
 
-def _row(item: object) -> str:
-    """One returned row, as the field a person would scan.
-
-    Rows come back keyed by tool: a search hit has `path`, an issue has `title`,
-    a directory entry has `name`. So the row is identified by which of those
-    keys it has rather than by asking which tool produced it. A hit also carries
-    where it lives, which is half of what makes it useful.
-    """
-    if not isinstance(item, dict):
-        return _scalar(item, _MAX_ROW)
-    row = cast(dict[str, object], item)
-    labelled = (row[k] for k in _ROW_LABEL if row.get(k) not in _EMPTY)
-    fallback = (v for v in row.values() if v not in _EMPTY)
-    # A shape we don't know falls back to the first value it has.
-    label = _scalar(next(labelled, next(fallback, "")), _MAX_ROW)
-    if (number := row.get("number")) not in _EMPTY:
-        label = f"#{number} {label}"
-    elif (sha := row.get("sha")) not in _EMPTY:
-        label = f"{sha} {label}"
-    elif (repo := row.get("repo")) not in _EMPTY and "path" in row:
-        label = f"{_scalar(repo, 40)} · {label}"
-    return label
-
-
-def _listing(rows: list[object]) -> str:
-    """A returned collection, as lines under a count."""
-    shown = [f"- {_row(item)}" for item in rows[:_MAX_ROWS]]
-    if (more := len(rows) - len(shown)) > 0:
-        shown.append(f"- +{more} more")
-    return "\n".join(shown)
-
-
-def _failure(content: object) -> str | None:
-    """The refusal in a successful-looking answer, if there is one.
+def _failed(content: object) -> bool:
+    """Whether a successful-looking answer is actually a refusal.
 
     Tools report a failed GitHub call as an `error` row rather than raising, so
     a successful outcome can still be something the reader has to see.
     """
     if isinstance(content, list) and len(content) == 1:
         first: object = content[0]
-        if isinstance(first, dict) and (failure := first.get("error")):
-            return str(failure)
-    return None
+        return isinstance(first, dict) and bool(first.get("error"))
+    return False
 
 
-def result_summary(part: ToolReturnPart) -> tuple[str, str | None, bool]:
-    """What a tool gave back: a headline, the detail under it, and whether it's ok.
+def result_summary(part: ToolReturnPart) -> tuple[str, bool]:
+    """What a tool gave back: a headline, and whether it went well.
 
-    Split rather than one blob because the two land in different places on the
-    card — the headline next to the call, the detail in its own block — and the
-    flag picks the colour.
+    The magnitude of the answer, not the answer — a line has room for "1,204
+    chars" or "6 results", which is enough to see the agent is looking in the
+    right place. The flag picks the glyph in front of it.
     """
     content = part.content
     if part.outcome != "success":
-        return part.outcome, _scalar(content, _MAX_EXCERPT), False
+        return part.outcome, False
 
-    if (failure := _failure(content)) is not None:
-        return "failed", _clip(failure, _MAX_EXCERPT), False
+    if _failed(content):
+        return "failed", False
 
     if isinstance(content, str):
         text = content.strip()
         if not text:
-            return "empty", None, True
-        # read_file returns the file itself; its length is the useful summary,
-        # and the head of it is what tells the reader what the agent just saw.
-        return f"{len(text):,} chars", _clip(text, _MAX_EXCERPT), True
+            return "empty", True
+        # read_file returns the file itself; its length is the useful summary.
+        return f"{len(text):,} chars", True
 
     rows = _rows(content)
     if rows is None:
-        return "done", _scalar(content, _MAX_EXCERPT), True
+        return "done", True
     if not rows:
-        return "nothing found", None, True
-    counted = f"{len(rows)} result{'s' if len(rows) != 1 else ''}"
-    return counted, _listing(rows), True
+        return "nothing found", True
+    return f"{len(rows)} result{'s' if len(rows) != 1 else ''}", True
 
 
 def line(part: ToolCallPart, result: ToolReturnPart | None) -> str:
@@ -249,7 +206,7 @@ def line(part: ToolCallPart, result: ToolReturnPart | None) -> str:
     subject = _subject(part, _ordered(parse_args(part.args)))
     if result is None:
         return f"{_RUNNING} {_flat(subject, _MAX_LINE)}"
-    headline, _, ok = result_summary(result)
+    headline, ok = result_summary(result)
     mark = _icon(part.tool_name) if ok else "⚠️"
     # The headline is the point of the line, so the subject yields to it when the
     # two together won't fit.

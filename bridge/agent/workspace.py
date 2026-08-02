@@ -20,16 +20,10 @@ import discord
 from pydantic_ai import ToolCallPart, ToolReturnPart
 
 from bridge.agent import progress
+from bridge.agent.stream import EDIT_EVERY
 from bridge.store import Store
 
 log = logging.getLogger(__name__)
-
-# Seconds between edits of the card. Discord buckets message edits per channel at
-# roughly 5 per 5s and discord.py queues instead of raising, so overrunning
-# doesn't fail loudly — it makes every later edit late, including the answer
-# streaming underneath. Kept in step with `stream.EDIT_EVERY` on purpose: the two
-# share one channel's budget.
-DRAW_EVERY = 1.2
 
 
 @dataclass
@@ -76,8 +70,14 @@ class Workspace:
         return self._store.teammates(self._guild)
 
     async def earlier(self, limit: int) -> str:
-        """Where `read_conversation` reads from. Subclasses say where that is."""
-        return ""
+        """Where `read_conversation` reads from. Subclasses say where that is.
+
+        Raises rather than returning "": an empty answer is indistinguishable
+        from "there is nothing earlier", so a subclass that forgot to override
+        this would have the agent conclude the conversation started at the
+        request — silently, and only visible as a worse answer.
+        """
+        raise NotImplementedError
 
     async def on_step(self, part: ToolCallPart) -> None:
         """Note a call that has just gone out, and show it."""
@@ -108,7 +108,7 @@ class Workspace:
         Called with the lock held.
         """
         now = time.monotonic()
-        if not force and now - self._last_drawn < DRAW_EVERY:
+        if not force and now - self._last_drawn < EDIT_EVERY:
             return
         self._last_drawn = now
         embed = progress.card([progress.line(s.part, s.result) for s in self._steps])

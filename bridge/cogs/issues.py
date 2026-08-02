@@ -10,7 +10,6 @@ shape, but only the requester can act on it.
 
 import contextlib
 import logging
-import re
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -47,23 +46,6 @@ _REVISING = "💭 thinking..."
 # Messages back we look for a thread's draft card. Deep enough to see past a
 # conversation that ran on after the draft, shallow enough to be one fetch.
 _CARD_SCAN = 50
-# The owner id every draft button carries, matching `agent/view.py`'s template.
-_OWNER = re.compile(r"issue:\w+:(?P<author>\d+)")
-
-
-def _owner_of(card: discord.Message) -> int | None:
-    """Who may steer the draft on `card`, read off its own buttons.
-
-    The requester's id already rides in every button's custom_id so a click
-    survives a restart (see `agent/view.py`); that makes the card the record of
-    who owns the draft, and there is no second place for it to disagree with.
-    """
-    for row in card.components:
-        for item in getattr(row, "children", ()):
-            custom_id = getattr(item, "custom_id", None) or ""
-            if (m := _OWNER.match(custom_id)) is not None:
-                return int(m["author"])
-    return None
 
 
 @dataclass
@@ -98,7 +80,7 @@ class Issues(commands.Cog):
             self.draft_from_message.name, type=self.draft_from_message.type
         )
 
-    def _candidates(self, channel: object) -> list[str]:
+    def candidates_for(self, channel: object) -> list[str]:
         """The repos a channel could be about; the agent may pick no other.
 
         Falls back to every mapped repo, so an unmapped channel still drafts as
@@ -121,7 +103,7 @@ class Issues(commands.Cog):
         Ordered so the channel's own repos come first, since that is usually the
         one being asked for.
         """
-        repos = self._candidates(interaction.channel) if interaction.channel else []
+        repos = self.candidates_for(interaction.channel) if interaction.channel else []
         return [
             app_commands.Choice(name=repo, value=repo)
             for repo in repos
@@ -268,7 +250,7 @@ class Issues(commands.Cog):
             )
             return
 
-        candidates = [repo] if repo else self._candidates(channel)
+        candidates = [repo] if repo else self.candidates_for(channel)
         if not candidates:
             await interaction.followup.send(
                 "No repo is mapped to this channel yet — run `/map repo` first.",
@@ -318,7 +300,7 @@ class Issues(commands.Cog):
 
         await threads.rename(thread, reply.title)
 
-        await self._show(thread, reply, interaction.user.id, transcript.jump_url)
+        await self.show(thread, reply, interaction.user.id, transcript.jump_url)
 
     async def _settle(
         self,
@@ -341,26 +323,7 @@ class Issues(commands.Cog):
         with contextlib.suppress(discord.HTTPException):
             await opening.delete()
 
-    def candidates_for(self, channel: object) -> list[str]:
-        """The repos a channel could be about — what the mention cog asks."""
-        return self._candidates(channel)
-
     async def show(
-        self,
-        target: discord.Message | discord.abc.Messageable,
-        draft: IssueDraft,
-        author_id: int,
-        source_url: str | None = None,
-    ) -> None:
-        """Put a draft up for review, wherever it was produced.
-
-        Public because a mention can produce a draft too, and a draft has to be
-        reviewable the same way however it got here — the same card, the same
-        buttons, the same Submit as the only path to GitHub.
-        """
-        await self._show(target, draft, author_id, source_url)
-
-    async def _show(
         self,
         target: discord.Message | discord.abc.Messageable,
         draft: IssueDraft,
@@ -372,6 +335,10 @@ class Issues(commands.Cog):
         A message means replace it (an inline edit keeps the card where the
         reader already is); a channel means post one. Either way the card is also
         the draft's storage once the session is gone, read back off its embed.
+
+        Public because a mention can produce a draft too, and a draft has to be
+        reviewable the same way however it got here — the same card, the same
+        buttons, the same Submit as the only path to GitHub.
         """
         content = (
             f"Drafted from [this conversation](<{source_url}>)." if source_url else None
@@ -443,7 +410,7 @@ class Issues(commands.Cog):
         open_draft.workspace.restart(thread)
         live = stream.Live(opening)
         try:
-            open_draft.session.candidates(self._candidates(thread))
+            open_draft.session.candidates(self.candidates_for(thread))
             reply = await open_draft.session.stream(
                 open_draft.session.saying(feedback), live.feed
             )
@@ -457,7 +424,7 @@ class Issues(commands.Cog):
             # the card below says everything it would have.
             with contextlib.suppress(discord.HTTPException):
                 await opening.delete()
-            await self._show(thread, reply, open_draft.session.owner_id)
+            await self.show(thread, reply, open_draft.session.owner_id)
             return
         await live.finish(reply)
 
@@ -476,7 +443,7 @@ class Issues(commands.Cog):
         card = await self._card(thread)
         if card is None:
             return  # no draft card: not a thread of ours to answer in
-        owner_id = _owner_of(card)
+        owner_id = view.owner_of(card)
         if owner_id is None or message.author.id != owner_id:
             return
         assert thread.guild is not None
@@ -501,7 +468,7 @@ class Issues(commands.Cog):
         )
         live = stream.Live(opening)
         try:
-            session.candidates(self._candidates(thread))
+            session.candidates(self.candidates_for(thread))
             reply = await session.stream(session.resuming(message.content), live.feed)
         except Exception as exc:  # noqa: BLE001 — a failed reply mustn't kill the cog
             log.exception("resumed reply failed in thread %s", thread.id)
@@ -514,7 +481,7 @@ class Issues(commands.Cog):
         if isinstance(reply, IssueDraft):
             with contextlib.suppress(discord.HTTPException):
                 await opening.delete()
-            await self._show(thread, reply, owner_id)
+            await self.show(thread, reply, owner_id)
             return
         await live.finish(reply)
 
@@ -544,7 +511,7 @@ class Issues(commands.Cog):
         draft = draft.model_copy(update={"title": title, "body": body, "questions": []})
         if (session := self._session_for(interaction)) is not None:
             session.draft = draft
-        await self._show(message, draft, interaction.user.id)
+        await self.show(message, draft, interaction.user.id)
 
     async def submit(self, interaction: discord.Interaction) -> None:
         message = interaction.message
