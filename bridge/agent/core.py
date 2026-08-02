@@ -15,20 +15,21 @@ The tools wrap githubkit rather than the GitHub MCP server. MCP would mean a PAT
 tool definitions in context; these reuse the app auth the bot already has.
 Each returns a hand-trimmed dict — returning githubkit's parsed models would put
 the context bloat we just avoided straight back in. A GitHub call that fails
-comes back as an `error` row (`_reports_failure`), so the model reads a refusal
-the same way whichever tool it came from.
+raises `ToolFailed` (`_reports_failure`), so the model reads a refusal the same
+way whichever tool it came from, in the channel pydantic-ai has for exactly that.
 """
 
 import base64
 import functools
 import logging
+import math
 from collections.abc import AsyncIterable, Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
 from typing import Protocol
 
 import httpx
 from githubkit import GitHub
-from githubkit.exception import GitHubException
+from githubkit.exception import GitHubException, RateLimitExceeded
 from pydantic_ai import (
     Agent,
     AgentStreamEvent,
@@ -40,6 +41,7 @@ from pydantic_ai import (
     RunContext,
     TextOutput,
     ToolCallPart,
+    ToolFailed,
     ToolOutput,
     ToolReturnPart,
     UserContent,
@@ -67,6 +69,12 @@ write one.
 Ground what you say in the actual code before you say it. Find the files and
 symbols people are talking about and read them; cite `path/to/file.py:line` so
 the next person can check you. Saying you're not sure beats guessing.
+
+`search_code` finds things; it cannot prove one isn't there. It reads an index
+that does not cover every private repo, so a repo nobody indexed answers exactly
+like a repo without the code. Never conclude something is missing because a
+search came back empty — go read the file or directory it would be in and say
+which you did. A string you already know from this repo needs no search at all.
 
 You may read any repository in the org, not just the one an issue would be filed
 against — follow a bug across a client and its service if that is where it leads.
@@ -203,31 +211,54 @@ class Deps:
 
 def _reports_failure[**P, T](
     doing: str,
-) -> Callable[
-    [Callable[P, Awaitable[T]]], Callable[P, Awaitable[T | list[dict[str, str]]]]
-]:
-    """Hand a failed GitHub call back to the model instead of raising it.
+) -> Callable[[Callable[P, Awaitable[T]]], Callable[P, Awaitable[T]]]:
+    """Hand a failed GitHub call to the model as a failed result, not a raise.
 
-    One error shape for every tool: a model that reads `error` from one tool can
-    read it from all of them, and a new tool gets the handling by saying what it
-    was doing rather than by copying a `try` block.
+    One error shape for every tool: a new tool gets the handling by saying what it
+    was doing rather than by copying a `try` block. `ToolFailed` rather than a row
+    the model has to notice — the call is over and it failed, which is a thing
+    pydantic-ai can say natively; it also spends none of the retry budget, since
+    a spent quota is not something rephrasing the arguments would fix.
+
+    A rate limit says when it lifts, so it gets said out loud. githubkit already
+    slept that long and retried once before the error reached us, so the quota is
+    genuinely gone rather than momentarily busy — code search allows only ten
+    calls a minute, and the model's instinct on a bare failure is to rephrase and
+    search again, which spends what little is left. Telling it the wait is what
+    stops that.
     """
 
-    def decorate(
-        fn: Callable[P, Awaitable[T]],
-    ) -> Callable[P, Awaitable[T | list[dict[str, str]]]]:
+    def decorate(fn: Callable[P, Awaitable[T]]) -> Callable[P, Awaitable[T]]:
         @functools.wraps(fn)
-        async def wrapped(
-            *args: P.args, **kwargs: P.kwargs
-        ) -> T | list[dict[str, str]]:
+        async def wrapped(*args: P.args, **kwargs: P.kwargs) -> T:
             try:
                 return await fn(*args, **kwargs)
+            except RateLimitExceeded as exc:
+                raise ToolFailed(f"{doing} failed: {_rate_limited(exc)}") from exc
             except GitHubException as exc:
-                return [{"error": f"{doing} failed: {exc}"}]
+                raise ToolFailed(f"{doing} failed: {exc}") from exc
 
         return wrapped
 
     return decorate
+
+
+def _rate_limited(exc: RateLimitExceeded) -> str:
+    """A spent quota, as the wait it costs and what to do meanwhile.
+
+    Rounded up to the second: the model is deciding whether to wait, not timing
+    anything, and "0.4s" would read as free. A non-positive wait means the reset
+    passed while we were failing, so there is nothing to promise and the sentence
+    just stops.
+    """
+    seconds = math.ceil(exc.retry_after.total_seconds())
+    if seconds <= 0:
+        return "GitHub's rate limit is spent. Do not repeat this search."
+    return (
+        f"GitHub's rate limit is spent for another {seconds}s. Do not repeat this "
+        "search — answer from what you have already read, or say what you could "
+        "not check."
+    )
 
 
 def _leaves(exc: BaseException) -> list[BaseException]:
@@ -349,18 +380,34 @@ def build(model: str) -> Agent[Deps, Reply]:
     @agent.tool
     @_reports_failure("search")
     async def search_code(ctx: RunContext[Deps], query: str) -> list[dict[str, str]]:
-        """Find code across the org by keyword.
+        """Find code across the org by keyword. Finds things; never proves absence.
 
         This is an index, not a grep: it only sees each repo's default branch,
         skips files over 384KB, is rate-limited to ~10 calls/minute, and does not
         do regex. Use it to locate a symbol or string, then read_file to confirm.
+
+        A hit is trustworthy. No hits is not: this index does not cover every
+        private repo, and an unindexed one answers exactly like an empty one. To
+        show something is absent, list_dir and read_file the place it would be.
         """
         resp = await ctx.deps.github.rest.search.async_code(
             q=f"{query} org:{ctx.deps.org}", per_page=_MAX_RESULTS
         )
-        return [
+        found = [
             {"repo": item.repository.full_name, "path": item.path}
             for item in resp.parsed_data.items
+        ]
+        # Said here, not just in the docstring: an empty list is the one answer a
+        # model will happily read as proof, and the warning has to arrive with it.
+        return found or [
+            {
+                "no_results": (
+                    "Nothing matched — but this index skips repos it has not "
+                    "crawled, and private repos are the usual ones missing. This "
+                    "is not evidence the code is absent. Check by reading the "
+                    "repo directly with list_dir and read_file."
+                )
+            }
         ]
 
     @agent.tool
@@ -373,12 +420,14 @@ def build(model: str) -> Agent[Deps, Reply]:
             resp = await ctx.deps.github.rest.repos.async_get_content(
                 owner, name, path, **({"ref": ref} if ref else {})
             )
+        except RateLimitExceeded as exc:
+            raise ToolFailed(f"could not read {path}: {_rate_limited(exc)}") from exc
         except GitHubException as exc:
-            return f"could not read {path}: {exc}"
+            raise ToolFailed(f"could not read {path}: {exc}") from exc
         data = resp.parsed_data
         content = getattr(data, "content", None)
         if content is None:  # a directory, or a symlink/submodule
-            return f"{path} is not a file; use list_dir"
+            raise ToolFailed(f"{path} is not a file; use list_dir")
         text = base64.b64decode(content).decode("utf-8", "replace")
         if len(text) > _MAX_FILE_CHARS:
             return (
@@ -396,7 +445,7 @@ def build(model: str) -> Agent[Deps, Reply]:
         resp = await ctx.deps.github.rest.repos.async_get_content(owner, name, path)
         data = resp.parsed_data
         if not isinstance(data, list):
-            return [{"error": f"{path} is a file; use read_file"}]
+            raise ToolFailed(f"{path} is a file; use read_file")
         return [{"name": e.name, "type": e.type} for e in data]
 
     @agent.tool
@@ -451,7 +500,7 @@ def build(model: str) -> Agent[Deps, Reply]:
         """
         mapped = ctx.deps.workspace.teammates()
         if not mapped:
-            return [{"error": "nobody is mapped yet; `/map user` links a login"}]
+            raise ToolFailed("nobody is mapped yet; `/map user` links a login")
         return [{"login": login, "name": name} for login, name in mapped.items()]
 
     @agent.tool
