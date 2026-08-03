@@ -11,7 +11,7 @@ import discord
 from pydantic import BaseModel, Field, ValidationError
 
 from bridge import live
-from bridge.render import BLUE, GREEN, GREY
+from bridge.render import BLUE, GREEN, GREY, decode
 
 PREVIEW_LIMIT = 1500  # body chars shown in the preview; GitHub gets the full text
 
@@ -123,7 +123,7 @@ def card_submitted(message: discord.Message | None) -> bool:
 
 def _payload(embed: discord.Embed) -> dict | None:
     """The hidden field dict stamped into `embed`'s footer, if it has one."""
-    payload = live.decode(embed.footer.text)
+    payload = decode(embed.footer.text)
     if payload is None:
         return None
     try:

@@ -58,18 +58,22 @@ when someone clicks Submit on an [`/issue`](agent.md) draft:
     just can't submit a draft from Discord.
 
 **Events.** Subscribe to **Issues**, **Pull request**, **Pull request review**,
-**Workflow run**, and **Deployment status** — the ones the bridge listens for. The
-App has a single webhook (below) that delivers all of them for every repo it's
-installed on.
+**Workflow run**, **Check run**, and **Deployment status** — the ones the bridge
+listens for. The App has a single webhook (below) that delivers all of them for
+every repo it's installed on.
 
-!!! warning "Workflow run, not Check suite"
+!!! warning "Workflow run and Check run, not Check suite"
 
-    **Workflow run** is what names the workflow that finished (`docs`, `checks`,
-    `fly deploy`). A check suite is keyed by the *app* that ran it, and every
-    Actions workflow reports as the same app — so a push running three workflows
-    would arrive as three events all claiming the same name. Workflow run also
-    times each run, which is what puts `in 24s` on the card. It needs
-    **Actions → Read**; subscribing without that permission delivers nothing.
+    **Workflow run** names the workflow that finished (`docs`, `checks`, `fly
+    deploy`) and times it, which is what puts `in 24s` on the card. **Check run**
+    names the job inside it (`prek`, `bot`), giving the card's `workflow / job`
+    lines their second half — subscribe to both or every line shows one half.
+
+    A check *suite* is keyed by the app that ran it, and every Actions workflow
+    reports as the same app, so a push running three workflows would arrive as
+    three events all claiming the same name. Both events need **Actions → Read**
+    (Check run also needs **Checks → Read**); subscribing without the permission
+    delivers nothing, which shows up as a workflow silently missing from a card.
 
 **Install it.** Under **Where can this app be installed**, choose *Only on this
 account*, save, then open **Install App** and install it on the org.

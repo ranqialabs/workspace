@@ -16,7 +16,19 @@ import datetime as dt
 
 import discord
 
-from bridge.render import BLUE, FAILED, GREEN, PASSED, RED, RUNNING
+from bridge.render import (
+    BLUE,
+    FAILED,
+    GREEN,
+    PASSED,
+    RED,
+    RUNNING,
+    decode,
+    encode,
+    headlined,
+    merge_step_name,
+    step_key,
+)
 
 _TTL = dt.timedelta(seconds=3600)  # edit in place only this long after posting
 _SCAN_LIMIT = 50  # messages back to search for an entity's live message
@@ -24,22 +36,6 @@ _SCAN_LIMIT = 50  # messages back to search for an entity's live message
 # within a couple of minutes; past this the next step starts a fresh card rather
 # than reopening one you've already scrolled past and read as finished.
 _MERGE_WINDOW = dt.timedelta(minutes=10)
-
-_SENTINEL = "⁣"  # zero-width; marks the start of the encoded key in the footer
-_SHIFT = 0xE0000  # tag/PUA plane — codepoints here render as nothing
-
-
-def encode(payload: str) -> str:
-    """`payload` as codepoints that render as nothing, behind a sentinel."""
-    return _SENTINEL + "".join(chr(_SHIFT + ord(c)) for c in payload)
-
-
-def decode(footer_text: str | None) -> str | None:
-    """The hidden payload in a footer, or None if there isn't one."""
-    if not footer_text or _SENTINEL not in footer_text:
-        return None
-    encoded = footer_text.split(_SENTINEL, 1)[1]
-    return "".join(chr(ord(c) - _SHIFT) for c in encoded)
 
 
 def stamp(embed: discord.Embed, payload: str) -> discord.Embed:
@@ -52,15 +48,19 @@ def stamp(embed: discord.Embed, payload: str) -> discord.Embed:
 def merge_into(into: discord.Embed, previous: discord.Embed) -> discord.Embed:
     """Fold `previous`'s steps into `into`, oldest first and without duplicating.
 
-    A field name identifies a step, so one reporting again (queued, then deployed)
+    A step's key identifies it, so one reporting again (queued, then deployed)
     overwrites its own line and keeps its place. `into` holds the newest step, so
-    its fields win on a clash.
+    its fields win on a clash — except its headline, which it keeps only if it
+    brought one, since not every event knows what the commit was called.
     """
-    fresh = {field.name: field for field in into.fields}
+    if headlined(previous) and not headlined(into):
+        into.title, into.description = previous.title, previous.description
+    fresh = {step_key(f.name or ""): f for f in into.fields}
     into.clear_fields()
     for field in previous.fields:
-        newer = fresh.pop(field.name, field)
-        into.add_field(name=newer.name, value=newer.value, inline=newer.inline)
+        newer = fresh.pop(step_key(field.name or ""), field)
+        name = merge_step_name(newer.name or "", field.name or "")
+        into.add_field(name=name, value=newer.value, inline=newer.inline)
     for field in fresh.values():  # steps not on the previous card, in arrival order
         into.add_field(name=field.name, value=field.value, inline=field.inline)
     _reverdict(into)

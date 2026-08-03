@@ -183,7 +183,8 @@ message still makes sense. New issues and PRs-ready also ping the repo's
 | `pull_request` (`review_requested`) | a review is requested | who wants whom to review — pings the reviewer |
 | `pull_request` (`closed`) | a PR is merged or closed | 🟣 merged / 🔴 closed, who did it — pings the author |
 | `pull_request_review` (`submitted`) | a review is submitted | reviewer, verdict (✅ approved / 🔴 changes / 💬 comment) + body — pings the PR author |
-| `workflow_run` (`completed`) | a workflow on the default branch finishes | a line on the commit's [pipeline card](#pipeline-card): the workflow's name, ✅ passed / ❌ failed, and how long it took |
+| `workflow_run` (`completed`) | a workflow on the default branch finishes | a line on the commit's [pipeline card](#pipeline-card), titled with the commit's subject: the workflow's name, ✅ passed / ❌ failed, and how long it took |
+| `check_run` (`completed`) | a job within that workflow finishes | the job's name on the same line, so it reads `workflow / job` the way GitHub names a check |
 | `deployment_status` | a deploy changes state | a line on the same card: 🚀 the environment deployed to, 🕒 deploying → ✅ deployed / ❌ failed, linking the live URL and the logs |
 
 Where each message *looks like* is defined in `bridge/render.py` — one pure
@@ -215,24 +216,29 @@ So they all write to **one card per commit**, keyed on the repo and the sha, wit
 a line per step naming it and how long it took:
 
 > ✅ **pipeline · workspace**
-> **780ea4c on main**
-> by Adeildo
+> **fix: an image stays in view when the thread keeps talking**
+> `780ea4c` by @adeildo
 >
-> **checks** — ✅ [passed](#) in 14s
-> **docs** — ✅ [passed](#) in 24s
-> **fly deploy** — ✅ [passed](#) in 44s
-> **🚀 deploy: github-pages** — ✅ deploy to `github-pages` — [deployed](#) ([logs](#)), by `docs`
+> **checks / prek** — ✅ [passed](#) in 14s
+> **docs / deploy** — ✅ [passed](#) in 24s
+> **fly deploy / bot** — ✅ [passed](#) in 44s
+> **🚀 deploy: github-pages** — ✅ [deployed](#) ([logs](#))
+
+The card leads with the commit's subject, so the channel says what shipped rather
+than only which sha did. Each line is named `workflow / job`, the way GitHub names
+a check — the workflow comes from `workflow_run` and the job from `check_run`, two
+webhooks that arrive in either order and are matched by the run id they share.
 
 Each new step **edits** the card rather than posting under it, for up to ten
 minutes after it appeared — long enough for a push's workflows to land, short
 enough that a card you've already scrolled past and read as finished doesn't
-reopen. Steps are identified by name, so a deploy going queued → deployed
-replaces its own line, and re-running one workflow updates just that line and
-notes `attempt 2`.
+reopen. A deploy going queued → deployed replaces its own line, and re-running one
+workflow updates just that line and notes `attempt 2`.
 
 The card's colour is the whole run's verdict, not the last step's: one failure
 turns it red and keeps it red however many steps pass afterwards — unless the
 re-run of that very step succeeds, which clears it. Only real verdicts get a
 line; cancelled, skipped and stale runs say nothing about the code and are
-ignored. The commit author is plain text, since a workflow run carries the git
-author's name rather than a GitHub login to mention.
+ignored. The commit author is @mentioned when the run names the GitHub login that
+triggered it, and falls back to the git author's name as plain text when it
+doesn't.
