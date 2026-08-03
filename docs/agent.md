@@ -165,8 +165,14 @@ you can check, and one that paraphrases a hunch isn't.
 | `list_dir` | get oriented before reading |
 | `recent_commits` | did this regress? who touched it last? |
 | `similar_issues` | is this already filed? |
+| `list_issues` | the board, filtered by assignee, creator, mentioned or label |
 | `repo_labels` | the labels this repo actually has |
 | `teammates` | mapped GitHub logins, and the names people call them by |
+
+A question about people — *"tem alguma issue pra mim?"*, *"o que está livre pra
+pegar?"* — is a filter, so `list_issues` asks GitHub for that slice rather than
+listing a page and sifting it by eye. A listing that didn't fit says so and can be
+paged, so a partial board never gets reported as the whole one.
 
 It may **read any repository in the org**, not just the one the issue gets filed
 against — following a bug from a client into its service is often the whole

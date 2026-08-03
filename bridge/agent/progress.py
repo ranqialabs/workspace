@@ -49,6 +49,11 @@ _LEAD = (
     "ref",
     "head",
     "base",
+    # Ahead of `repo`: on a filtered listing, what it was filtered by is the news.
+    "assignee",
+    "creator",
+    "mentioned",
+    "labels",
     "repo",
     "name",
     "login",

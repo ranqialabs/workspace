@@ -10,7 +10,9 @@ second identity, and 47 tool definitions in context.
 
 import base64
 
-from pydantic_ai import FunctionToolset, RunContext, ToolFailed
+from githubkit.exception import RequestFailed
+from githubkit.utils import UNSET
+from pydantic_ai import FunctionToolset, RunContext, ToolFailed, ToolReturn
 
 from bridge.agent.tools._shared import (
     MAX_ANNOTATION_CHARS,
@@ -20,13 +22,15 @@ from bridge.agent.tools._shared import (
     MAX_RESULTS,
     MAX_REVIEWS,
     Deps,
+    Sort,
     State,
     author_name,
     body,
     changed_file,
     clipped,
     commit_row,
-    labels,
+    held_back,
+    label_names,
     login,
     logins,
     reports_failure,
@@ -51,6 +55,10 @@ number; `list_issues` and `list_pull_requests` find the number when they only
 described it. Answering from what the conversation says a PR contains, when you
 could have read the PR, is how you end up confidently wrong.
 
+A question about people — "tem issue pra mim?", "o que está livre pra pegar?" —
+is a filter, not a listing to sift by eye. Describing a subset of a listing you
+never asked GitHub for states as fact something you only assumed.
+
 For diagnosing something broken: `check_runs` on a branch or sha says what CI
 thinks, `check_failures` gives that run's actual error messages, and
 `compare_refs` says what is in one ref and not another. A regression usually has
@@ -61,6 +69,26 @@ the sha.
 """
 
 
+def _applied(given: dict[str, str | None]) -> str:
+    """The filters that were actually sent, as `key=value` text."""
+    return ", ".join(f"{key}={value}" for key, value in given.items() if value)
+
+
+def _nothing_matched(state: str, given: dict[str, str | None], page: int) -> str:
+    """An empty listing, said as the filters that emptied it — a bare empty list
+    reads as "this repo has no issues"."""
+    filters = _applied(given)
+    if not filters and page <= 1:
+        return f"This repo has no {state} issues."
+    where = f" on page {page}" if page > 1 else ""
+    narrowed = f" matching {filters}" if filters else ""
+    return (
+        f"No {state} issues{narrowed}{where} — a filtered result, not an empty "
+        "board. Drop a filter and look again; a login comes from `teammates` and a "
+        "label from `repo_labels`."
+    )
+
+
 def toolset() -> FunctionToolset[Deps]:
     """The GitHub reading tools, as one registerable group."""
     tools = FunctionToolset[Deps](instructions=INSTRUCTIONS)
@@ -69,7 +97,9 @@ def toolset() -> FunctionToolset[Deps]:
 
     @tools.tool
     @reports_failure
-    async def search_code(ctx: RunContext[Deps], query: str) -> list[dict[str, str]]:
+    async def search_code(
+        ctx: RunContext[Deps], query: str
+    ) -> ToolReturn[list[dict[str, str]]]:
         """Find code across the org by keyword. Finds things; never proves absence.
 
         This is an index, not a grep: it only sees each repo's default branch,
@@ -89,15 +119,16 @@ def toolset() -> FunctionToolset[Deps]:
         ]
         # The warning has to arrive with the empty list, not only in the docstring:
         # no hits is the one answer a model will happily read as proof.
-        return found or [
-            {
-                "no_results": (
-                    "Nothing matched. This index skips repos it has not crawled, "
-                    "so this is not evidence the code is absent. Check by reading "
-                    "the repo directly with list_dir and read_file."
-                )
-            }
-        ]
+        return ToolReturn(
+            found,
+            content=None
+            if found
+            else (
+                "Nothing matched. This index skips repos it has not crawled, so "
+                "this is not evidence the code is absent. Check by reading the "
+                "repo directly with list_dir and read_file."
+            ),
+        )
 
     @tools.tool
     @reports_failure
@@ -209,55 +240,123 @@ def toolset() -> FunctionToolset[Deps]:
     @reports_failure
     async def similar_issues(
         ctx: RunContext[Deps], repo: str, query: str
-    ) -> list[dict[str, object]]:
-        """Search a repo's existing issues, to catch duplicates before drafting."""
+    ) -> ToolReturn[list[dict[str, object]]]:
+        """Search a repo's existing issues, to catch duplicates before drafting.
+
+        Words, not a listing: `list_issues` is what filters a board by state or by
+        who holds what.
+        """
         owner, name = ctx.deps.repo(repo)
         resp = await ctx.deps.github.rest.search.async_issues_and_pull_requests(
             q=f"{query} repo:{owner}/{name} is:issue", per_page=MAX_RESULTS
         )
-        return [
+        found = resp.parsed_data
+        rows: list[dict[str, object]] = [
             {
                 "number": item.number,
                 "title": item.title,
                 "state": item.state,
                 "url": item.html_url,
             }
-            for item in resp.parsed_data.items
+            for item in found.items
         ]
+        # This search reaches only indexed issues, so no hits is weak evidence — the
+        # same trap `search_code` warns about. `total_count` is exact, unlike a
+        # listing's `rel="next"`.
+        caveat = None
+        if not rows:
+            caveat = (
+                f"No indexed issue in {name} matched. That is not proof there is no "
+                "duplicate; a recently filed one may not be indexed yet."
+            )
+        elif found.total_count > len(rows):
+            caveat = (
+                f"{found.total_count} issues matched and the {len(rows)} closest are "
+                "here. Narrow the query if none of them is the duplicate."
+            )
+        return ToolReturn(rows, content=caveat)
 
     @tools.tool
     @reports_failure
     async def list_issues(
-        ctx: RunContext[Deps], repo: str, state: State = "open"
-    ) -> list[dict[str, object]]:
-        """A repo's issues, newest first. `state` is `open`, `closed`, or `all`.
+        ctx: RunContext[Deps],
+        repo: str,
+        state: State = "open",
+        assignee: str | None = None,
+        creator: str | None = None,
+        mentioned: str | None = None,
+        labels: str | None = None,
+        sort: Sort = "created",
+        page: int = 1,
+    ) -> ToolReturn[list[dict[str, object]]]:
+        """A repo's issues. A page holds 15, so filter rather than list-then-sift.
 
-        Use this to see what is already on the board. To search by words rather
-        than list by state, use `similar_issues`; to read one issue in full, use
-        `get_issue`.
+        - `assignee`: a login from `teammates`, `"none"` for what nobody has taken,
+          `"*"` for what somebody has.
+        - `creator`: who opened it. `mentioned`: who is @-ed in it.
+        - `labels`: comma-separated and ANDed, each matching `repo_labels`.
+        - `sort`: `created`, `updated`, or `comments`.
+
+        Say who holds an issue from the row's `assignees`, not from the filter you
+        passed. `similar_issues` searches by words; `get_issue` reads one in full.
         """
         owner, name = ctx.deps.repo(repo)
-        # Over-fetched because `async_list_for_repo` returns PRs as well (GitHub
-        # models a PR as an issue): filtering a page of 15 on a PR-heavy repo can
-        # leave two or three rows, and the model has no way to ask for more.
-        resp = await ctx.deps.github.rest.issues.async_list_for_repo(
-            owner, name, state=state, per_page=MAX_RESULTS * 2
-        )
+        page = max(page, 1)
+        given = {
+            "assignee": assignee,
+            "creator": creator,
+            "mentioned": mentioned,
+            "labels": labels,
+        }
+        try:
+            resp = await ctx.deps.github.rest.issues.async_list_for_repo(
+                owner,
+                name,
+                state=state,
+                sort=sort,
+                per_page=MAX_RESULTS,
+                page=page,
+                # UNSET, not None, which would filter on a literal null.
+                assignee=assignee or UNSET,
+                creator=creator or UNSET,
+                mentioned=mentioned or UNSET,
+                labels=labels or UNSET,
+            )
+        except RequestFailed as exc:
+            # A login nobody has is a 422, not an empty list, and githubkit's own
+            # message for it is the response repr.
+            if exc.response.status_code != 422:
+                raise
+            raise ToolFailed(
+                f"GitHub rejected these filters: {_applied(given) or state}. "
+                "`assignee`, `creator` and `mentioned` take a login from "
+                '`teammates`, not a name; only "none" and "*" are special.'
+            ) from exc
         # Truthiness, not `is None`: githubkit leaves an absent field as `UNSET`,
         # which is not None, so an identity test drops every real issue too.
         issues = [item for item in resp.parsed_data if not item.pull_request]
-        return [
+        rows: list[dict[str, object]] = [
             {
                 "number": item.number,
                 "title": item.title,
                 "state": item.state,
                 "author": login(item.user),
-                "labels": labels(item.labels),
+                "assignees": logins(item.assignees),
+                "labels": label_names(item.labels),
                 "comments": item.comments,
+                "updated_at": stamp(item.updated_at),
                 "url": item.html_url,
             }
-            for item in issues[:MAX_RESULTS]
+            for item in issues
         ]
+        # Silence is what gets a partial board quoted as the whole one, and an empty
+        # list read as an empty board.
+        caveat = (
+            _nothing_matched(state, given, page)
+            if not rows
+            else held_back(resp, "issues", page)
+        )
+        return ToolReturn(rows, content=caveat)
 
     @tools.tool
     @reports_failure
@@ -275,7 +374,7 @@ def toolset() -> FunctionToolset[Deps]:
             "state_reason": issue.state_reason,
             "author": login(issue.user),
             "assignees": logins(issue.assignees),
-            "labels": labels(issue.labels),
+            "labels": label_names(issue.labels),
             "comments": issue.comments,
             "created_at": stamp(issue.created_at),
             "closed_at": stamp(issue.closed_at),
@@ -288,18 +387,21 @@ def toolset() -> FunctionToolset[Deps]:
     @tools.tool
     @reports_failure
     async def list_pull_requests(
-        ctx: RunContext[Deps], repo: str, state: State = "open"
-    ) -> list[dict[str, object]]:
+        ctx: RunContext[Deps], repo: str, state: State = "open", page: int = 1
+    ) -> ToolReturn[list[dict[str, object]]]:
         """A repo's pull requests, newest first. `state` is `open`, `closed`, `all`.
 
         For "what's in review", or to find the number of a PR someone described but
-        didn't cite. `get_pull_request` then reads one in full.
+        didn't cite. `get_pull_request` then reads one in full. This endpoint takes
+        no author or assignee filter: to find whose PR one is, read `author` on the
+        rows.
         """
         owner, name = ctx.deps.repo(repo)
+        page = max(page, 1)
         resp = await ctx.deps.github.rest.pulls.async_list(
-            owner, name, state=state, per_page=MAX_RESULTS
+            owner, name, state=state, per_page=MAX_RESULTS, page=page
         )
-        return [
+        rows: list[dict[str, object]] = [
             {
                 "number": pr.number,
                 "title": pr.title,
@@ -308,11 +410,12 @@ def toolset() -> FunctionToolset[Deps]:
                 "author": login(pr.user),
                 "head": pr.head.ref,
                 "base": pr.base.ref,
-                "labels": labels(pr.labels),
+                "labels": label_names(pr.labels),
                 "url": pr.html_url,
             }
             for pr in resp.parsed_data
         ]
+        return ToolReturn(rows, content=held_back(resp, "pull requests", page))
 
     @tools.tool
     @reports_failure
@@ -340,7 +443,7 @@ def toolset() -> FunctionToolset[Deps]:
             "author": login(pr.user),
             "assignees": logins(pr.assignees),
             "reviewers": logins(pr.requested_reviewers),
-            "labels": labels(pr.labels),
+            "labels": label_names(pr.labels),
             "head": pr.head.ref,
             "base": pr.base.ref,
             "commits": pr.commits,

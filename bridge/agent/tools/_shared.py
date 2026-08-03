@@ -5,6 +5,12 @@ a toolset can be built and exercised without constructing an agent.
 
 githubkit's parsed models are exhaustive by design; every tool returns a
 hand-built dict instead, and these are the pieces those dicts are made of.
+
+A listing with something to say *about* its answer — nothing matched and why, or
+rows were held back — returns `ToolReturn(return_value=rows, content=<caveat>)`.
+The caveat reaches the model as its own message and the rows stay nothing but
+results, so whoever counts them (`progress.py`) needs no correction. `held_back`
+builds the paging half of that.
 """
 
 import datetime as dt
@@ -32,6 +38,9 @@ MAX_ANNOTATION_CHARS = 500
 
 type State = Literal["open", "closed", "all"]
 """`state` as GitHub spells it; a Literal so the schema rejects anything else."""
+
+type Sort = Literal["created", "updated", "comments"]
+"""`sort` as GitHub spells it, for the same reason `State` is a Literal."""
 
 
 class Workspace(Protocol):
@@ -146,6 +155,21 @@ def rate_limited(exc: RateLimitExceeded) -> str:
     )
 
 
+def held_back(resp: object, noun: str, page: int) -> str | None:
+    """What to tell the model when GitHub kept rows past this page, else None.
+
+    Read from GitHub's own `rel="next"` rather than guessed from a full page,
+    which false-positives on a page that happens to end exactly at the limit.
+    """
+    link = getattr(resp, "headers", {}).get("link", "")
+    if 'rel="next"' not in link:
+        return None
+    return (
+        f"GitHub has more {noun} past this page. Ask for page {page + 1} or narrow "
+        "the filters; this is not the whole list."
+    )
+
+
 def clipped(text: str, limit: int) -> str:
     """`text` within `limit`, marking the cut so the model knows it is partial."""
     if len(text) <= limit:
@@ -174,7 +198,7 @@ def logins(users: object) -> list[str]:
     return [name for user in users if (name := login(user))]
 
 
-def labels(items: Sequence[object]) -> list[str]:
+def label_names(items: Sequence[object]) -> list[str]:
     """Label names. GitHub types a label as a bare string or an object with a name."""
     named = [i if isinstance(i, str) else getattr(i, "name", None) for i in items]
     return [name for name in named if isinstance(name, str) and name]
