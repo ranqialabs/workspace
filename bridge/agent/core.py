@@ -21,7 +21,6 @@ import httpx
 from pydantic_ai import (
     Agent,
     AgentStreamEvent,
-    BinaryContent,
     FunctionToolCallEvent,
     FunctionToolResultEvent,
     ModelMessage,
@@ -246,9 +245,7 @@ def _with_conversation(preamble: str, transcript: Transcript) -> list[UserConten
         if transcript.text.strip()
         else preamble
     ]
-    parts.extend(
-        BinaryContent(data=data, media_type=kind) for data, kind in transcript.images
-    )
+    parts.extend(transcript.images)
     if transcript.images:
         parts.append("The images above were shared in that conversation.")
     return parts

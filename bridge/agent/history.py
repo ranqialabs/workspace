@@ -10,15 +10,18 @@ holds the mappings, a preview card holds its own draft) cover conversations too:
 the channel is the truth, and there is nothing to keep in step because there is
 only one copy.
 
-What comes back is prose turns only: what people said, and what we said. Tool
-calls are deliberately left out — they belong to the run that made them, and a
-rebuilt history that mentioned a call without its result would be a history no
-provider accepts. The cost is that a rebuilt run may re-read a file it read
-before; the gain is that the history is always exactly what the thread shows.
+What comes back is the conversation itself: what people said, the pictures they
+said it with, and what we said back. Tool calls are deliberately left out — they
+belong to the run that made them, and a rebuilt history that mentioned a call
+without its result would be a history no provider accepts. The cost is that a
+rebuilt run may re-read a file it read before; the gain is that the history is
+always exactly what the thread shows.
 
 No LLM and no Discord writes here, same as `context` — this module is readable
 and reasonable about without either.
 """
+
+import asyncio
 
 import discord
 from pydantic_ai import (
@@ -26,10 +29,11 @@ from pydantic_ai import (
     ModelRequest,
     ModelResponse,
     TextPart,
+    UserContent,
     UserPromptPart,
 )
 
-from bridge.agent.context import speaker
+from bridge.agent.context import images_of, speaker
 from bridge.store import Store
 
 _MAX_TURNS = 60  # turns rebuilt; a long thread costs tokens on every reply
@@ -70,18 +74,14 @@ async def rebuild(
     """
     collected: list[discord.Message] = []
     async for message in channel.history(limit=min(limit * 2, 200)):
-        if _ours(message, bot_user_id):
-            if _is_status(message):
-                continue
-        elif message.author.bot:
-            continue  # another bot's noise is not part of the conversation
-        if not message.content.strip():
+        # Our scaffolding, another bot's noise, an empty message: not turns.
+        if _skippable(message, bot_user_id):
             continue
         collected.append(message)
         if len(collected) >= limit:
             break
     collected.reverse()  # history() is newest-first; a history reads oldest-first
-    return _turns(collected, store, bot_user_id=bot_user_id)
+    return await _turns(collected, store, bot_user_id=bot_user_id)
 
 
 async def rebuild_chain(
@@ -114,7 +114,7 @@ async def rebuild_chain(
             continue  # walk past our scaffolding; the chain runs through it
         walked.append(parent)
     walked.reverse()  # walked backwards from the reply; a history reads forwards
-    return _turns(walked, store, bot_user_id=bot_user_id)
+    return await _turns(walked, store, bot_user_id=bot_user_id)
 
 
 async def replied_to(message: discord.Message) -> discord.Message | None:
@@ -131,18 +131,34 @@ async def replied_to(message: discord.Message) -> discord.Message | None:
 
 
 def _skippable(message: discord.Message, bot_user_id: int) -> bool:
-    """Whether this message is scaffolding or noise rather than a turn."""
+    """Whether this message is scaffolding or noise rather than a turn.
+
+    A picture with no caption has no content but plenty to say, so "said
+    nothing" has to mean empty of words *and* of attachments. Judged on the
+    attachment list rather than on the bytes, so deciding stays free: the
+    download happens once we know the message is a turn we're keeping.
+    """
+    said_nothing = not message.content.strip() and not message.attachments
     if _ours(message, bot_user_id):
-        return _is_status(message) or not message.content.strip()
-    return message.author.bot or not message.content.strip()
+        return _is_status(message) or said_nothing
+    return message.author.bot or said_nothing
 
 
-def _turns(
+async def _turns(
     collected: list[discord.Message], store: Store, *, bot_user_id: int
 ) -> list[ModelMessage]:
-    """Messages, oldest first, as alternating request/response turns."""
+    """Messages, oldest first, as alternating request/response turns.
+
+    A person's turn carries their pictures alongside their words: a thread that
+    opened with a screenshot goes on answering questions about it, and a history
+    that dropped it would leave the agent guessing at what everyone else can
+    still scroll up and see.
+    """
+    # A rebuild runs before the model is called at all, so downloading these one
+    # after another would sit in front of every reply in the thread.
+    fetched = await asyncio.gather(*(images_of(m) for m in collected))
     turns: list[ModelMessage] = []
-    for message in collected:
+    for message, images in zip(collected, fetched, strict=True):
         if _ours(message, bot_user_id):
             # An answer over the ceiling was sent as several messages but was one
             # thing said, so rejoin it rather than hand back pieces cut mid-word.
@@ -154,14 +170,11 @@ def _turns(
             )
             continue
         login = store.login_for(message.author.id)
-        body = _capped(message.content)
-        turns.append(
-            ModelRequest(
-                parts=[
-                    UserPromptPart(content=f"{speaker(message.author, login)}: {body}")
-                ]
-            )
-        )
+        said: list[UserContent] = [
+            f"{speaker(message.author, login)}: {_capped(message.content)}",
+            *images,
+        ]
+        turns.append(ModelRequest(parts=[UserPromptPart(content=said)]))
     return turns
 
 

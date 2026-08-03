@@ -12,6 +12,7 @@ import re
 from dataclasses import dataclass, field
 
 import discord
+from pydantic_ai import BinaryContent
 
 from bridge.store import Store
 
@@ -28,7 +29,7 @@ class Transcript:
     """A conversation, flattened for the model."""
 
     text: str
-    images: list[tuple[bytes, str]] = field(default_factory=list)  # (data, media_type)
+    images: list[BinaryContent] = field(default_factory=list)
     jump_url: str | None = None  # the anchor message, linked from the issue body
 
     def is_empty(self) -> bool:
@@ -64,18 +65,37 @@ def speaker(user: discord.User | discord.Member, login: str | None) -> str:
     return f"{user.display_name} (@{login})" if login else user.display_name
 
 
+async def images_of(message: discord.Message) -> list[BinaryContent]:
+    """Image attachments of `message`, ready to hand the model, oversized ones dropped.
+
+    One definition of what counts as a picture and of how it reaches the model,
+    so the same attachment arrives the same way whether it came in the seed
+    conversation or in a turn of a thread we rebuilt.
+    """
+    picked = [
+        a
+        for a in message.attachments
+        if (a.content_type or "").startswith("image/") and a.size <= _MAX_IMAGE
+    ]
+    # Each read is a CDN round trip, so several pictures on one message would
+    # otherwise download one after another.
+    data = await asyncio.gather(*(a.read() for a in picked))
+    return [
+        BinaryContent(data=raw, media_type=(a.content_type or "").split(";")[0])
+        for a, raw in zip(picked, data, strict=True)
+    ]
+
+
 async def _attachments(
     message: discord.Message,
-) -> tuple[list[str], list[tuple[bytes, str]]]:
-    """Text attachments inlined, image attachments as bytes."""
+) -> tuple[list[str], list[BinaryContent]]:
+    """Text attachments inlined, image attachments as content the model can see."""
     notes: list[str] = []
-    images: list[tuple[bytes, str]] = []
+    images = await images_of(message)
     for a in message.attachments:
         kind = a.content_type or ""
         if kind.startswith("image/"):
-            if a.size <= _MAX_IMAGE:
-                images.append((await a.read(), kind.split(";")[0]))
-            else:
+            if a.size > _MAX_IMAGE:
                 notes.append(f"[image too large to read: {a.filename}]")
         elif kind.startswith("text/") or kind.startswith("application/json"):
             text = (await a.read()).decode("utf-8", "replace")
@@ -176,7 +196,7 @@ async def collect(
     fetched = await asyncio.gather(*(_attachments(m) for m in collected))
 
     lines: list[str] = []
-    images: list[tuple[bytes, str]] = []
+    images: list[BinaryContent] = []
     for message, (notes, imgs) in zip(collected, fetched, strict=True):
         images.extend(imgs)
         body = "\n".join(filter(None, [message.content, *notes]))
