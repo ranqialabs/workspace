@@ -17,6 +17,10 @@ PREVIEW_LIMIT = 1500  # body chars shown in the preview; GitHub gets the full te
 
 _CONFIDENCE_COLOR = {"high": GREEN, "medium": BLUE, "low": GREY}
 
+# Marks a card whose issue already exists, in the hidden payload beside the
+# model's fields. Written by `preview`, read by `card_submitted`.
+_SUBMITTED = "submitted"
+
 
 class IssueDraft(BaseModel):
     """What the agent proposes. Nothing here is trusted: `repo` is checked
@@ -37,8 +41,10 @@ def preview(
 ) -> discord.Embed:
     """The draft as a reviewable card.
 
-    `submitted` only changes the footer: the card stays in the thread after the
-    issue is created, so it has to stop claiming the issue is still a proposal.
+    `submitted` says the issue already exists. The card stays in the thread after
+    that, so it has to stop claiming the issue is still a proposal — and the flag
+    rides in the hidden payload too, so the check that refuses a second Submit
+    still works when the card is all that's left of the draft.
     """
     body = draft.body[:PREVIEW_LIMIT]
     if len(draft.body) > PREVIEW_LIMIT:
@@ -75,7 +81,12 @@ def preview(
     # model rides along invisibly instead of being re-read from its own prose.
     # Everything but the body, which is unbounded and would burst the footer —
     # it comes back from the description.
-    return live.stamp(embed, draft.model_dump_json(exclude={"body"}))
+    fields = draft.model_dump(mode="json", exclude={"body"})
+    if submitted:
+        # Beside the model's fields rather than in it: IssueDraft is what the agent
+        # proposes, and whether an issue exists is not up to the agent.
+        fields[_SUBMITTED] = True
+    return live.stamp(embed, json.dumps(fields))
 
 
 def from_embed(embed: discord.Embed) -> IssueDraft | None:
@@ -88,6 +99,30 @@ def from_embed(embed: discord.Embed) -> IssueDraft | None:
     The body comes from the visible preview, so one longer than `PREVIEW_LIMIT`
     comes back truncated; every other field is exact.
     """
+    fields = _payload(embed)
+    if fields is None:
+        return None
+    fields["body"] = (embed.description or "").removesuffix("\n\n...")
+    try:
+        return IssueDraft.model_validate(fields)
+    except ValidationError:
+        return None
+
+
+def card_submitted(message: discord.Message | None) -> bool:
+    """Whether the card on `message` says its issue already exists.
+
+    Read off the card rather than from memory, so it still answers after a
+    restart — the buttons survive one, so the check that stops a second Submit
+    has to survive it too.
+    """
+    if message is None or not message.embeds:
+        return False
+    return bool((_payload(message.embeds[0]) or {}).get(_SUBMITTED))
+
+
+def _payload(embed: discord.Embed) -> dict | None:
+    """The hidden field dict stamped into `embed`'s footer, if it has one."""
     payload = live.decode(embed.footer.text)
     if payload is None:
         return None
@@ -95,8 +130,4 @@ def from_embed(embed: discord.Embed) -> IssueDraft | None:
         fields = json.loads(payload)
     except json.JSONDecodeError:
         return None
-    fields["body"] = (embed.description or "").removesuffix("\n\n...")
-    try:
-        return IssueDraft.model_validate(fields)
-    except ValidationError:
-        return None
+    return fields if isinstance(fields, dict) else None

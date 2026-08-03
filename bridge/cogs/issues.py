@@ -23,7 +23,7 @@ from bridge import render
 from bridge.cogs.notifications import Notifications
 from bridge.agent import context, core, history, stream, threads, view, workspace
 from bridge.agent.core import Deps, Session
-from bridge.agent.draft import IssueDraft, from_embed, preview
+from bridge.agent.draft import IssueDraft, card_submitted, from_embed, preview
 from bridge.render import GREEN, RED
 from bridge.repo import short_name, split_repo
 
@@ -348,6 +348,11 @@ class Issues(commands.Cog):
         if isinstance(target, discord.Message):
             await target.edit(content=content, embed=embed, view=buttons)
             return
+        # A revision leaves the old card in the thread so the draft's history stays
+        # readable, but only the newest one is a proposal — so at most one card in a
+        # thread keeps live buttons, and there is no stale Submit to open a second
+        # issue from a draft that has been superseded.
+        await self._retire(target)
         await target.send(content=content, embed=embed, view=buttons)
 
     def _assignee_note(self, draft: IssueDraft) -> str | None:
@@ -504,6 +509,12 @@ class Issues(commands.Cog):
         message = interaction.message
         if message is None:
             return
+        # The modal may have been open across the submit — a window the button guard
+        # can't see, and re-showing the card here would put live buttons back on an
+        # issue that already exists.
+        if card_submitted(message):
+            await interaction.followup.send(view.ALREADY_SUBMITTED, ephemeral=True)
+            return
         draft = self.draft_for(interaction)
         if draft is None:
             await interaction.followup.send(_EXPIRED, ephemeral=True)
@@ -516,6 +527,11 @@ class Issues(commands.Cog):
     async def submit(self, interaction: discord.Interaction) -> None:
         message = interaction.message
         if message is None:
+            return
+        # Belt and braces: the button already refused, but this is the call that
+        # reaches GitHub, so it checks for itself. One draft, at most one issue.
+        if card_submitted(message):
+            await interaction.followup.send(view.ALREADY_SUBMITTED, ephemeral=True)
             return
         draft = self.draft_for(interaction)
         if draft is None:
@@ -583,6 +599,20 @@ class Issues(commands.Cog):
         """
         self._sessions.pop(message.channel.id, None)
         await message.edit(content=content, embed=embed, view=None)
+
+    async def _retire(self, channel: discord.abc.Messageable) -> None:
+        """Take the buttons off the newest draft card in `channel`, if it has one.
+
+        Best effort: the card we can't edit is worth less than the draft going up,
+        so a failure here doesn't stop the new card from posting.
+        """
+        if not isinstance(channel, discord.Thread):
+            return
+        card = await self._card(channel)
+        if card is None:
+            return
+        with contextlib.suppress(discord.HTTPException):
+            await card.edit(view=None)
 
     async def _archive(self, channel: discord.abc.Messageable) -> None:
         """An archived thread is what stops `on_message` treating a draft as live."""

@@ -14,9 +14,14 @@ from typing import Protocol, runtime_checkable
 import discord
 from discord.ext import commands
 
-from bridge.agent.draft import IssueDraft
+from bridge.agent.draft import IssueDraft, card_submitted
 
 _DENIED = "Only whoever ran `/issue` can act on this draft."
+# Public because the cog refuses on the same grounds where it would call GitHub,
+# and both refusals should read the same.
+ALREADY_SUBMITTED = (
+    "This draft was already submitted — its issue exists. Start a new `/issue`."
+)
 
 # How a button's custom_id is spelled. Written by `_DraftButton.__init__`, read
 # back by `owner_of` — one definition, so the format can't be changed in one
@@ -80,6 +85,8 @@ class _DraftButton(
     prefix: str
     label: str
     style: discord.ButtonStyle
+    #: Whether this button still means anything once the issue exists.
+    after_submit = False
 
     def __init_subclass__(cls, **kwargs) -> None:
         kwargs.setdefault("template", rf"issue:{cls.prefix}:(?P<author>\d+)")
@@ -102,6 +109,12 @@ class _DraftButton(
     async def callback(self, interaction: discord.Interaction) -> None:
         if interaction.user.id != self.author_id:
             await interaction.response.send_message(_DENIED, ephemeral=True)
+            return
+        # Read off the clicked card, which is the only thing that knows: these
+        # buttons are rebuilt from their custom_id, so they outlive any state we
+        # hold — including across a restart.
+        if not self.after_submit and card_submitted(interaction.message):
+            await interaction.response.send_message(ALREADY_SUBMITTED, ephemeral=True)
             return
         await self.act(interaction)
 
@@ -134,6 +147,9 @@ class EditButton(_DraftButton):
 
 class CancelButton(_DraftButton):
     prefix, label, style = "cancel", "Discard", discord.ButtonStyle.danger
+    # Clearing a card that is no longer a proposal is still worth doing; the issue
+    # stays either way.
+    after_submit = True
 
     async def act(self, interaction: discord.Interaction) -> None:
         await interaction.response.defer()
