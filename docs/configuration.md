@@ -44,7 +44,9 @@ when someone clicks Submit on an [`/issue`](agent.md) draft:
 | Repository | **Issues** → Read **and write** | to hear about issues, and to create one from a draft |
 | Repository | **Contents** → Read | `/issue` reads the code to ground a draft in it |
 | Repository | **Pull requests** → Read | to hear about PRs and reviews |
-| Repository | **Checks** → Read | to hear the main branch's CI result |
+| Repository | **Actions** → Read | to hear which workflow finished on the main branch |
+| Repository | **Checks** → Read | the agent reads a failing run's own error messages |
+| Repository | **Deployments** → Read | to hear a deploy start and finish |
 | Repository | **Metadata** → Read | mandatory; GitHub adds it for you |
 | Organization | **Members** → Read | `/sync roles` reads who can access each repo |
 
@@ -56,10 +58,18 @@ when someone clicks Submit on an [`/issue`](agent.md) draft:
     just can't submit a draft from Discord.
 
 **Events.** Subscribe to **Issues**, **Pull request**, **Pull request review**,
-**Check suite**, and **Deployment status** — the ones the bridge listens for. The
+**Workflow run**, and **Deployment status** — the ones the bridge listens for. The
 App has a single webhook (below) that delivers all of them for every repo it's
-installed on. (Deployment status carries external-CI results like Vercel; skip it
-if you don't deploy from GitHub.)
+installed on.
+
+!!! warning "Workflow run, not Check suite"
+
+    **Workflow run** is what names the workflow that finished (`docs`, `checks`,
+    `fly deploy`). A check suite is keyed by the *app* that ran it, and every
+    Actions workflow reports as the same app — so a push running three workflows
+    would arrive as three events all claiming the same name. Workflow run also
+    times each run, which is what puts `in 24s` on the card. It needs
+    **Actions → Read**; subscribing without that permission delivers nothing.
 
 **Install it.** Under **Where can this app be installed**, choose *Only on this
 account*, save, then open **Install App** and install it on the org.

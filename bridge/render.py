@@ -30,6 +30,9 @@ class Rendered(NamedTuple):
     embed: discord.Embed | None
     # entity id; if set, edit the live message in place instead of posting anew
     key: str | None = None
+    # when set, this card is one line of a running summary: the live message keeps
+    # every field it already had, and this render only adds/replaces its own.
+    merge: bool = False
 
 
 def _ping(*mentions: str | None) -> str | None:
@@ -234,54 +237,139 @@ def _pull_request_review(payload: dict, m: Mentions) -> Rendered | None:
     return Rendered(content=_ping(pr_author), embed=embed)
 
 
-# --- checks ---
+# --- the pipeline card (workflows + deploys for one commit) ---
+#
+# A push runs every matching workflow and each deploy it triggers, so one commit
+# produces a handful of events within a minute of each other. Rather than a
+# message each, they all render the same keyed card, one field per step, and
+# live.py merges each new field into the card already in the channel.
+#
+# ponytail: we read `workflow_run`, not `check_suite`. A check suite is keyed by
+# the *app* that ran it, and all our workflows are GitHub Actions — so three
+# suites would arrive claiming the same name and collapse into one line.
+
+# live.py reads a merged card's verdict back off these, so they live beside the
+# code that writes them.
+PASSED, FAILED, RUNNING = "✅", "❌", "🕒"
+STEP_ICONS: dict[bool | None, str] = {True: PASSED, False: FAILED, None: RUNNING}
 
 
-def _check_suite(payload: dict, _m: Mentions) -> Rendered | None:
-    if payload.get("action") != "completed":
-        return None
-    suite, gh_repo = payload["check_suite"], payload["repository"]
-    # Only the main line matters; ignore branch/PR check suites.
-    if suite.get("head_branch") != gh_repo.get("default_branch"):
-        return None
-    conclusion = suite.get("conclusion")
-    if conclusion == "success":
-        icon, word, color = "✅", "passed", GREEN
-    elif conclusion == "failure":
-        icon, word, color = "❌", "failed", RED
-    else:  # neutral/cancelled/skipped — not worth a line
-        return None
-    sha = suite.get("head_sha", "")
-    # ponytail: a check suite carries the git commit author (a name, not a GitHub
-    # login), so we can't reliably @mention — show the name as text.
-    name = (suite.get("head_commit") or {}).get("author", {}).get("name") or "someone"
+def pipeline_key(repo_full_name: str, sha: str) -> str:
+    """The live-message key for a commit's card. Every step on the same commit
+    must use this, or each one posts its own message again."""
+    return f"pipeline:{repo_full_name}:{sha}"
+
+
+def _pipeline_card(
+    gh_repo: dict,
+    *,
+    sha: str,
+    step: str,
+    detail: str,
+    ok: bool | None,
+    when: str | None,
+    by: str | None = None,
+) -> Rendered:
+    """One step's line on its commit's card.
+
+    `step` is the field name, and so the step's identity when merged — which is
+    why the icon goes in `detail`: reporting twice (queued, then deployed) has to
+    land on the same name to replace its own line. `ok=None` means still running,
+    which leaves the card's colour to the steps that have finished.
+    """
+    icon = STEP_ICONS[ok]
     embed = _embed(
         gh_repo,
-        author=f"{icon} CI · {gh_repo['name']}",
-        title=f"main checks {word} — {sha[:7]}",
+        author=f"{icon} pipeline · {gh_repo['name']}",
+        title=f"{sha[:7]} on {gh_repo.get('default_branch') or 'main'}",
         url=f"{gh_repo['html_url']}/commit/{sha}",
-        description=f"by {name}",
-        color=color,
-        when=(suite.get("head_commit") or {}).get("timestamp"),
+        description=f"by {by}" if by else None,
+        color=BLUE if ok is None else GREEN if ok else RED,
+        when=when,
     )
-    return Rendered(content=None, embed=embed)
+    embed.add_field(name=step, value=f"{icon} {detail}", inline=False)
+    return Rendered(
+        content=None,
+        embed=embed,
+        key=pipeline_key(gh_repo["full_name"], sha),
+        merge=True,
+    )
 
 
-# --- deployments (external CI: Vercel, etc.) ---
+# Anything absent is skipped: cancelled, skipped, stale, neutral and
+# action_required say nothing about the code and don't earn a line.
+_RUN_CONCLUSIONS: dict[str, tuple[str, bool]] = {
+    "success": ("passed", True),
+    "failure": ("failed", False),
+    "timed_out": ("timed out", False),
+    "startup_failure": ("failed to start", False),
+}
 
-# One live message per deployment: pending → success/failure edits it in place.
-_DEPLOY_STATES = {
-    "pending": ("🕒", "deploying", BLUE),
-    "in_progress": ("🕒", "deploying", BLUE),
-    "queued": ("🕒", "queued", BLUE),
-    "success": ("✅", "deployed", GREEN),
-    "failure": ("❌", "deploy failed", RED),
-    "error": ("❌", "deploy failed", RED),
+
+def _took(started: str | None, ended: str | None) -> str | None:
+    """How long a run took, as `44s` or `3m 12s`. None if GitHub didn't say."""
+    start, end = discord.utils.parse_time(started), discord.utils.parse_time(ended)
+    if start is None or end is None:
+        return None
+    seconds = round((end - start).total_seconds())
+    if seconds < 0:
+        return None
+    minutes, seconds = divmod(seconds, 60)
+    return f"{minutes}m {seconds}s" if minutes else f"{seconds}s"
+
+
+def _workflow_run(payload: dict, _m: Mentions) -> Rendered | None:
+    """One workflow's line on its commit's card, named after the workflow file
+    (`docs`, `checks`) and linked to the run — where a failure is diagnosed."""
+    if payload.get("action") != "completed":
+        return None
+    run, gh_repo = payload["workflow_run"], payload["repository"]
+    # Only the main line matters; ignore branch/PR runs.
+    if run.get("head_branch") != gh_repo.get("default_branch"):
+        return None
+    verdict = _RUN_CONCLUSIONS.get(run.get("conclusion") or "")
+    if verdict is None:
+        return None
+    word, ok = verdict
+    detail = f"[{word}]({run.get('html_url') or gh_repo['html_url']})"
+    if took := _took(run.get("run_started_at"), run.get("updated_at")):
+        detail += f" in {took}"
+    # Same workflow twice on one commit means someone retried it, not that CI ran
+    # twice — say so.
+    if (attempt := run.get("run_attempt") or 1) > 1:
+        detail += f", attempt {attempt}"
+    # ponytail: a workflow run carries the git commit author (a name, not a GitHub
+    # login), so we can't reliably @mention — show the name as text.
+    name = (run.get("head_commit") or {}).get("author", {}).get("name") or "someone"
+    return _pipeline_card(
+        gh_repo,
+        sha=run.get("head_sha", ""),
+        step=run.get("name") or "workflow",
+        detail=detail,
+        ok=ok,
+        when=(run.get("head_commit") or {}).get("timestamp"),
+        by=name,
+    )
+
+
+# --- deployments (GitHub Pages, Fly, Vercel, ...) ---
+
+# state -> (what to call it, did it finish well). None means still running, which
+# is not the same as failed: it leaves the card's colour to the finished steps.
+# GitHub's seventh state, `inactive`, is absent because it never arrives: GitHub
+# fires no webhook for it. Anything unlisted is skipped rather than guessed at.
+_DEPLOY_STATES: dict[str, tuple[str, bool | None]] = {
+    "pending": ("deploying", None),
+    "in_progress": ("deploying", None),
+    "queued": ("queued", None),
+    "success": ("deployed", True),
+    "failure": ("deploy failed", False),
+    "error": ("deploy failed", False),
 }
 
 
 def _deployment_status(payload: dict, _m: Mentions) -> Rendered | None:
-    """The `deployment_status` event — cleaner env URL; keyed by deployment id.
+    """The `deployment_status` event — a deploy step on its commit's card.
 
     (We ignore the raw `status` event, which would double-report the same deploy.)
     """
@@ -294,20 +382,35 @@ def _deployment_status(payload: dict, _m: Mentions) -> Rendered | None:
     styled = _DEPLOY_STATES.get(state)
     if styled is None:
         return None
-    icon, word, color = styled
-    env = deployment.get("environment") or "deploy"
+    word, ok = styled
     sha = deployment.get("sha", "")
-    embed = _embed(
+    env = deployment.get("environment") or "deploy"
+    where = f"`{env}`"
+    if (origin := deployment.get("original_environment")) and origin != env:
+        where += f" (from `{origin}`)"
+    if (ref := deployment.get("ref")) and ref != sha:
+        where += f" at `{ref}`"
+    # log_url is current, target_url its deprecated predecessor; the run that
+    # triggered the deploy beats both, being the job you'd actually go read.
+    run = payload.get("workflow_run") or {}
+    live = ds.get("environment_url")
+    log_url = run.get("html_url") or ds.get("log_url") or ds.get("target_url")
+    detail = f"deploy to {where} — " + (f"[{word}]({live})" if live else word)
+    if log_url:
+        detail += f" ([logs]({log_url}))"
+    if triggered_by := run.get("name"):
+        detail += f", by `{triggered_by}`"
+    if note := ds.get("description"):
+        detail += f"\n{note}"
+    return _pipeline_card(
         gh_repo,
-        author=f"{icon} {env} · {gh_repo['name']}",
-        title=f"{word} — {sha[:7]}",
-        url=ds.get("environment_url") or ds.get("target_url") or gh_repo["html_url"],
-        description=ds.get("description"),
-        color=color,
+        sha=sha,
+        # "deploy" in the name so this doesn't read as one more test suite.
+        step=f"🚀 deploy: {env}",
+        detail=detail,
+        ok=ok,
         when=ds.get("updated_at"),
     )
-    key = f"deploy:{gh_repo['full_name']}:{deployment.get('id')}"
-    return Rendered(content=None, embed=embed, key=key)
 
 
 # --- dispatch ---
@@ -318,7 +421,7 @@ RENDERERS: dict[str, Renderer] = {
     "issues": _issue,
     "pull_request": _pull_request,
     "pull_request_review": _pull_request_review,
-    "check_suite": _check_suite,
+    "workflow_run": _workflow_run,
     "deployment_status": _deployment_status,
 }
 

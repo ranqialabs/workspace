@@ -183,20 +183,20 @@ message still makes sense. New issues and PRs-ready also ping the repo's
 | `pull_request` (`review_requested`) | a review is requested | who wants whom to review — pings the reviewer |
 | `pull_request` (`closed`) | a PR is merged or closed | 🟣 merged / 🔴 closed, who did it — pings the author |
 | `pull_request_review` (`submitted`) | a review is submitted | reviewer, verdict (✅ approved / 🔴 changes / 💬 comment) + body — pings the PR author |
-| `check_suite` (`completed`) | the default branch's CI finishes | ✅ passed / ❌ failed, commit sha and author |
-| `deployment_status` | an external deploy (Vercel, ...) changes state | 🕒 deploying → ✅ deployed / ❌ failed, with the deploy URL |
+| `workflow_run` (`completed`) | a workflow on the default branch finishes | a line on the commit's [pipeline card](#pipeline-card): the workflow's name, ✅ passed / ❌ failed, and how long it took |
+| `deployment_status` | a deploy changes state | a line on the same card: 🚀 the environment deployed to, 🕒 deploying → ✅ deployed / ❌ failed, linking the live URL and the logs |
 
 Where each message *looks like* is defined in `bridge/render.py` — one pure
 function per event — so restyling or adding an event is a self-contained change.
 
 !!! info "Live messages — edited, not repeated"
 
-    An issue and a deploy each keep **one live message** that the bridge *edits*
-    in place as state changes (an issue gets assigned then closed; a deploy goes
-    pending → done) — instead of stacking a new message per change. It only edits
-    while that message is still recent (under an hour) and still the last thing in
-    the channel; once it's buried or stale, the next change posts fresh. PRs,
-    reviews and CI always post a new message.
+    An issue and a commit's pipeline each keep **one live message** that the
+    bridge *edits* in place as state changes (an issue gets assigned then closed;
+    a deploy goes pending → done) — instead of stacking a new message per change.
+    It only edits while that message is still recent (under an hour) and still the
+    last thing in the channel; once it's buried or stale, the next change posts
+    fresh. PRs and reviews always post a new message.
 
 !!! info "An issue submitted from Discord posts once, not twice"
 
@@ -205,10 +205,34 @@ function per event — so restyling or adding an event is a self-contained chang
     webhook, which arrives a moment later. Both use the same live-message key, so
     the webhook **edits** that card instead of posting a second one.
 
-!!! info "One line per push, not per workflow"
+#### One card per commit, not one message per check { #pipeline-card }
 
-    `check_suite` is GitHub's *aggregate* of every workflow on a commit, so the
-    bridge posts one result per push to the default branch — not one per
-    workflow. Only success and failure are announced; cancelled and neutral runs
-    are skipped. The commit author is shown as plain text (a check suite carries
-    the git author name, not a GitHub login to mention).
+A push runs every workflow that matches it, plus any deploy they trigger, and
+each one finishing is its own webhook. Posting a message apiece buried the
+channel in near-identical lines that didn't even say *which* check had passed.
+
+So they all write to **one card per commit**, keyed on the repo and the sha, with
+a line per step naming it and how long it took:
+
+> ✅ **pipeline · workspace**
+> **780ea4c on main**
+> by Adeildo
+>
+> **checks** — ✅ [passed](#) in 14s
+> **docs** — ✅ [passed](#) in 24s
+> **fly deploy** — ✅ [passed](#) in 44s
+> **🚀 deploy: github-pages** — ✅ deploy to `github-pages` — [deployed](#) ([logs](#)), by `docs`
+
+Each new step **edits** the card rather than posting under it, for up to ten
+minutes after it appeared — long enough for a push's workflows to land, short
+enough that a card you've already scrolled past and read as finished doesn't
+reopen. Steps are identified by name, so a deploy going queued → deployed
+replaces its own line, and re-running one workflow updates just that line and
+notes `attempt 2`.
+
+The card's colour is the whole run's verdict, not the last step's: one failure
+turns it red and keeps it red however many steps pass afterwards — unless the
+re-run of that very step succeeds, which clears it. Only real verdicts get a
+line; cancelled, skipped and stale runs say nothing about the code and are
+ignored. The commit author is plain text, since a workflow run carries the git
+author's name rather than a GitHub login to mention.

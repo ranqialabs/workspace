@@ -54,12 +54,17 @@ class Notifications(commands.Cog):
         if not isinstance(channel, discord.TextChannel):
             return
 
-        # Every render carries an embed; keyed ones (issue/deploy) get edited in place.
+        # Every render carries an embed; keyed ones (issue, a commit's pipeline) get
+        # edited in place — merging ones adding a line rather than replacing the card.
         if rendered.embed is None:
             return
         if rendered.key is not None:
             await self.bot.live.publish(
-                channel, rendered.key, rendered.content, rendered.embed
+                channel,
+                rendered.key,
+                rendered.content,
+                rendered.embed,
+                merge=rendered.merge,
             )
         else:
             await channel.send(content=rendered.content, embed=rendered.embed)
