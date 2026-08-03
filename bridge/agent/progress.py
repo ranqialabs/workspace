@@ -27,10 +27,15 @@ import pydantic_core
 from pydantic_ai import ToolCallPart, ToolReturnPart
 
 from bridge.render import GREY
+from bridge.repo import short_name
 
 _MAX_ARG = 180  # chars of any single argument value
-_MAX_LINE = 90  # chars of one call's line; wider wraps on a narrow client
+# Chars of one call's line. An embed is as wide as its widest line, and this one
+# now carries a repo tag as well as a subject and a headline, so it buys the room
+# rather than clipping the subject to fit; past ~120 a narrow client wraps.
+_MAX_LINE = 118
 _MAX_HEADLINE = 60  # chars of a failure's reason, which earns more room than a count
+_MAX_REPO = 24  # chars of the repo tag; past this it is eating the subject's room
 _MAX_LINES = 12  # lines kept on the card before the oldest fold into a count
 _MAX_BODY = 4096  # Discord's own ceiling on an embed description
 
@@ -39,8 +44,9 @@ _MAX_BODY = 4096  # Discord's own ceiling on an embed description
 _EMPTY = (None, "", [], {})
 
 # Ordered by how much each identifies a call, not by the tools' signatures: the
-# arguments a reader scans for come first. `query` before `repo` because "what
-# am I searching for" beats "where".
+# arguments a reader scans for come first. `repo` is absent on purpose — it is
+# lifted out into its own slot at the front of the line by `_where`, and leaving
+# it here too would spend the subject on a name already shown.
 _LEAD = (
     "query",
     "path",
@@ -49,12 +55,11 @@ _LEAD = (
     "ref",
     "head",
     "base",
-    # Ahead of `repo`: on a filtered listing, what it was filtered by is the news.
+    # On a filtered listing, what it was filtered by is the news.
     "assignee",
     "creator",
     "mentioned",
     "labels",
-    "repo",
     "name",
     "login",
     "url",
@@ -147,16 +152,36 @@ def parse_args(raw: str | dict[str, Any] | None) -> dict[str, Any]:
 
 
 def _ordered(args: dict[str, Any]) -> list[tuple[str, Any]]:
-    """Arguments with the identifying ones first, empties dropped.
+    """Arguments with the identifying ones first, empties and `repo` dropped.
 
     An omitted optional (`ref=None`, `path=""`) is noise: it says nothing the
-    tool name didn't already say, and the card has a budget.
+    tool name didn't already say, and the card has a budget. `repo` goes for the
+    opposite reason — `_where` already shows it, in front, where it lines up.
     """
-    present = [(k, v) for k, v in args.items() if v not in _EMPTY]
+    present = [(k, v) for k, v in args.items() if k != "repo" and v not in _EMPTY]
     return sorted(
         present,
         key=lambda kv: (_LEAD.index(kv[0]) if kv[0] in _LEAD else len(_LEAD), kv[0]),
     )
+
+
+def _where(args: dict[str, Any]) -> str:
+    """Which repo this call is against, or "" for one that isn't against any.
+
+    The card's one job is to show the agent looking in the right place, and a
+    line reading `listing lib` names neither the repo nor anything that implies
+    it — across a run that reads a client and its service, consecutive lines are
+    indistinguishable, and `lib/` looks the same in both.
+
+    Just the name, not `owner/name`: every repo the app can read is the one org's,
+    so the owner would repeat on every line and only crowd the subject. A tool
+    with no `repo` argument (`search_code` spans the org, `teammates` isn't GitHub
+    at all) gets nothing rather than a guessed name — the caller renders it.
+    """
+    repo = args.get("repo")
+    if not isinstance(repo, str) or not repo.strip():
+        return ""
+    return _flat(short_name(repo.strip()), _MAX_REPO)
 
 
 def _subject(part: ToolCallPart, ordered: list[tuple[str, Any]]) -> str:
@@ -168,9 +193,10 @@ def _subject(part: ToolCallPart, ordered: list[tuple[str, Any]]) -> str:
     verb in front of it.
     """
     if not ordered:
-        # No readable arguments: the verb alone dangles ("reading"), so name the
-        # tool instead and let the raw arguments below say the rest.
-        return part.tool_name
+        # Nothing to name it by, so the verb stands alone. The tools that get here
+        # are the ones that take no arguments — `list_repos`, `teammates` — and
+        # their verbs already read as whole actions ("listing repos").
+        return _verb(part.tool_name)
     key, value = ordered[0]
     subject = _scalar(value)
     if key == "query":
@@ -237,9 +263,16 @@ def line(part: ToolCallPart, result: ToolReturnPart | None) -> str:
     subject (which file, which query) and the magnitude of the answer — enough to
     see the agent is looking in the right place, and no more.
     """
-    subject = _subject(part, _ordered(parse_args(part.args)))
+    args = parse_args(part.args)
+    repo = _where(args)
+    subject = _subject(part, _ordered(args))
+    # Bold so the eye can run down the column of repos, and measured by the name
+    # rather than the markup: `**` costs the budget four chars that nobody sees,
+    # which would clip a tagged line shorter than an untagged one for no reason.
+    where = f"**{repo}** " if repo else ""
+    shown = len(repo) + 1 if repo else 0
     if result is None:
-        return f"{_RUNNING} {_flat(subject, _MAX_LINE)}"
+        return f"{_RUNNING} {where}{_flat(subject, _MAX_LINE - shown)}"
     headline, ok = result_summary(result)
     mark = _icon(part.tool_name) if ok else "⚠️"
     # A reason needs more room than "6 results" does, and on a failed call it is
@@ -247,9 +280,11 @@ def line(part: ToolCallPart, result: ToolReturnPart | None) -> str:
     # the line, which the subject's floor of 24 would otherwise allow.
     headline = _flat(headline, min(40 if ok else _MAX_HEADLINE, _MAX_LINE - 28))
     # The headline is the point of the line, so the subject yields to it when the
-    # two together won't fit.
-    room = _MAX_LINE - len(headline) - 4
-    return f"{mark} {_flat(subject, max(room, 24))}  `{headline}`"
+    # two together won't fit. The repo is never what yields: it is the half of the
+    # line the reader is scanning for, and clipping it is what this card was
+    # failing at.
+    room = _MAX_LINE - len(headline) - shown - 4
+    return f"{mark} {where}{_flat(subject, max(room, 24))}  `{headline}`"
 
 
 def card(lines: Sequence[str]) -> discord.Embed:
