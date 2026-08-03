@@ -35,6 +35,8 @@ MAX_COMMITS = 10  # enough history to spot a regression
 # Annotation messages are one-liners; a lint run with 15 of them should not spend
 # a body's worth of budget on each.
 MAX_ANNOTATION_CHARS = 500
+# A repo description is a tagline, and a listing carries 15 of them.
+MAX_SUMMARY_CHARS = 200
 
 type State = Literal["open", "closed", "all"]
 """`state` as GitHub spells it; a Literal so the schema rejects anything else."""
@@ -155,18 +157,24 @@ def rate_limited(exc: RateLimitExceeded) -> str:
     )
 
 
-def held_back(resp: object, noun: str, page: int) -> str | None:
+def held_back(
+    resp: object, noun: str, page: int, *, narrowable: bool = True
+) -> str | None:
     """What to tell the model when GitHub kept rows past this page, else None.
 
     Read from GitHub's own `rel="next"` rather than guessed from a full page,
     which false-positives on a page that happens to end exactly at the limit.
+
+    `narrowable` is False for a listing that takes no filters, so the advice
+    doesn't offer a way out the caller hasn't got.
     """
     link = getattr(resp, "headers", {}).get("link", "")
     if 'rel="next"' not in link:
         return None
+    narrow = " or narrow the filters" if narrowable else ""
     return (
-        f"GitHub has more {noun} past this page. Ask for page {page + 1} or narrow "
-        "the filters; this is not the whole list."
+        f"GitHub has more {noun} past this page. Ask for page {page + 1}{narrow}; "
+        "this is not the whole list."
     )
 
 

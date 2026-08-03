@@ -21,6 +21,7 @@ from bridge.agent.tools._shared import (
     MAX_FILES,
     MAX_RESULTS,
     MAX_REVIEWS,
+    MAX_SUMMARY_CHARS,
     Deps,
     Sort,
     State,
@@ -46,8 +47,13 @@ the next person can check you. Saying you're not sure beats guessing.
 result is not absence: read the file or directory it would be in and say which
 you did. A string you already know from this repo needs no search at all.
 
-You may read any repository in the org, not just the one an issue would be filed
-against — follow a bug across a client and its service if that is where it leads.
+You may read any repository the app was granted, not just the one an issue would
+be filed against — follow a bug across a client and its service if that is where
+it leads. `list_repos` is what you have; never guess at it. Asked whether you can
+see some repo, or asked about one you have not read, call `list_repos` before
+answering — a failed search or a name you don't recognise is not evidence a repo
+is absent, and saying it is absent when it isn't sends people looking for a repo
+that was there all along.
 
 When someone cites a PR or an issue — "#12", "PR 40", "aquela PR do webhook" —
 go read it before you answer about it. `get_issue` and `get_pull_request` take a
@@ -93,6 +99,50 @@ def toolset() -> FunctionToolset[Deps]:
     """The GitHub reading tools, as one registerable group."""
     tools = FunctionToolset[Deps](instructions=INSTRUCTIONS)
 
+    # --- repos ---
+
+    @tools.tool
+    @reports_failure
+    async def list_repos(
+        ctx: RunContext[Deps], page: int = 1
+    ) -> ToolReturn[list[dict[str, object]]]:
+        """Every repo you can read. The one tool that settles "do you have access
+        to X" — a repo absent here is one you genuinely cannot read.
+
+        Asks the installation what it can reach, so this is access, not existence:
+        a repo missing from it either does not exist or was never granted. A repo
+        present in it is readable even when `search_code` finds nothing inside,
+        since that index skips repos it has not crawled.
+
+        Read it before saying a repo is missing, and before guessing at a name —
+        what people call a repo in conversation is often not its name on GitHub.
+        """
+        page = max(page, 1)
+        # The installation endpoint, not `repos.async_list_for_org`: the question
+        # is what this app may read, and the org listing answers what exists —
+        # which is how you promise a repo you then cannot open.
+        apps = ctx.deps.github.rest.apps
+        resp = await apps.async_list_repos_accessible_to_installation(
+            per_page=MAX_RESULTS, page=page
+        )
+        rows: list[dict[str, object]] = [
+            {
+                "repo": repo.full_name,
+                "description": body(repo.description, MAX_SUMMARY_CHARS),
+                "private": repo.private,
+                "archived": repo.archived,
+                "default_branch": repo.default_branch,
+                "pushed_at": stamp(repo.pushed_at),
+            }
+            for repo in resp.parsed_data.repositories
+        ]
+        # Only paging is worth a caveat here: an empty answer means the app has no
+        # repos at all, which the rows already say, and this is the one listing
+        # whose silence the model is meant to trust.
+        return ToolReturn(
+            rows, content=held_back(resp, "repos", page, narrowable=False)
+        )
+
     # --- code ---
 
     @tools.tool
@@ -125,8 +175,9 @@ def toolset() -> FunctionToolset[Deps]:
             if found
             else (
                 "Nothing matched. This index skips repos it has not crawled, so "
-                "this is not evidence the code is absent. Check by reading the "
-                "repo directly with list_dir and read_file."
+                "this is not evidence the code is absent, and it is not evidence a "
+                "repo does not exist — `list_repos` answers that. Check by reading "
+                "the repo directly with list_dir and read_file."
             ),
         )
 

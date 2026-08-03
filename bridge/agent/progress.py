@@ -68,6 +68,7 @@ _TOOLS = {
     "read_file": ("📄", "reading"),
     "search_code": ("🔎", "searching code"),
     "list_dir": ("📁", "listing"),
+    "list_repos": ("📚", "listing repos"),
     "similar_issues": ("🔗", "checking for duplicates"),
     "repo_labels": ("🏷️", "reading labels"),
     "teammates": ("👥", "looking up teammates"),

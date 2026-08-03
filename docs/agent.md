@@ -160,6 +160,7 @@ you can check, and one that paraphrases a hunch isn't.
 | Tool | What it's for |
 | :--- | :------------ |
 | `read_conversation` | read further back in this channel, when what you meant isn't in what it was given |
+| `list_repos` | which repos it can actually read — the only tool that settles "do you have access to X" |
 | `search_code` | find a symbol or string across the org |
 | `read_file` | read a file, optionally at a branch, tag or commit |
 | `list_dir` | get oriented before reading |
@@ -174,9 +175,17 @@ pegar?"* — is a filter, so `list_issues` asks GitHub for that slice rather tha
 listing a page and sifting it by eye. A listing that didn't fit says so and can be
 paged, so a partial board never gets reported as the whole one.
 
-It may **read any repository in the org**, not just the one the issue gets filed
-against — following a bug from a client into its service is often the whole
-job. Where it gets *filed* is restricted to the candidate repos.
+It may **read any repository the app was granted**, not just the one the issue
+gets filed against — following a bug from a client into its service is often the
+whole job. Where it gets *filed* is restricted to the candidate repos.
+
+That grant is a fact it can check rather than assume. `list_repos` asks the
+installation what it can reach, which is the difference between *"that repo
+doesn't exist"* and *"nothing I searched found it"* — asked whether it can see
+some repo, it reads the list instead of inferring absence from an empty search.
+An unindexed private repo answers a search exactly like an empty one, so
+inferring is how it used to send people looking for a repo that was there all
+along.
 
 ### Watching it work
 
