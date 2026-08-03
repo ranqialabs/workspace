@@ -1,4 +1,4 @@
-"""What a run may ask of Discord, and how it reports back — `core.Workspace`.
+"""What a run may ask of Discord, and how it reports back — `tools.Workspace`.
 
 One class rather than one per entry point, because the reporting side is the same
 wherever a run came from: a card that accumulates a line per tool call, edited in

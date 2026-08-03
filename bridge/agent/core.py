@@ -5,31 +5,19 @@ a question, or an `IssueDraft`, when they asked for an issue. Anything that isn'
 a draft leaves the current draft alone — a question about the code must not
 rewrite the issue someone is still reviewing.
 
-Read-only by construction: nothing here can write to GitHub. Submitting is the
-cog's job, behind a human click — so a confused model can waste tokens but never
-open an issue. `propose_issue` is an output, not an action: it ends the run with
-a draft for a human to look at, and reaches GitHub only if they press Submit.
+Read-only by construction: nothing the agent can call writes anywhere. Submitting
+is the cog's job, behind a human click — so a confused model can waste tokens but
+never open an issue. `propose_issue` is an output, not an action: it ends the run
+with a draft for a human to look at, and reaches GitHub only if they press Submit.
 
-The tools wrap githubkit rather than the GitHub MCP server. MCP would mean a PAT
-(its remote server won't take an installation token), a second identity, and 47
-tool definitions in context; these reuse the app auth the bot already has.
-Each returns a hand-trimmed dict — returning githubkit's parsed models would put
-the context bloat we just avoided straight back in. A GitHub call that fails
-raises `ToolFailed` (`_reports_failure`), so the model reads a refusal the same
-way whichever tool it came from, in the channel pydantic-ai has for exactly that.
+The tools live in `bridge.agent.tools`; this module is the output contract, the
+prompts, and the `Session` that holds a conversation's history between turns.
 """
 
-import base64
-import functools
 import logging
-import math
 from collections.abc import AsyncIterable, Awaitable, Callable, Sequence
-from dataclasses import dataclass, field
-from typing import Protocol
 
 import httpx
-from githubkit import GitHub
-from githubkit.exception import GitHubException, RateLimitExceeded
 from pydantic_ai import (
     Agent,
     AgentStreamEvent,
@@ -40,8 +28,6 @@ from pydantic_ai import (
     ModelRetry,
     RunContext,
     TextOutput,
-    ToolCallPart,
-    ToolFailed,
     ToolOutput,
     ToolReturnPart,
     UserContent,
@@ -49,35 +35,28 @@ from pydantic_ai import (
 from pydantic_ai.capabilities import ProcessEventStream
 from pydantic_ai.exceptions import ModelAPIError, UsageLimitExceeded
 
+from bridge.agent import tools
 from bridge.agent.context import Transcript
 from bridge.agent.draft import IssueDraft
-from bridge.repo import split_repo
+from bridge.agent.tools import Deps
 
 log = logging.getLogger(__name__)
 
-_MAX_FILE_CHARS = 6_000
-_MAX_RESULTS = 15
 _MAX_ERROR_CHARS = 400  # provider messages can carry a whole request dump
 # Errors from these come straight out of the stream, untranslated by pydantic-ai.
 _PROVIDER_SDKS = frozenset({"openai", "anthropic", "google", "groq", "mistralai"})
+
+type Reply = IssueDraft | str
+"""How a run ended: a draft to review, or an answer to read.
+
+Narrow it with `isinstance(reply, IssueDraft)` — a `str` is the agent talking,
+and carries no draft, so it must never overwrite one.
+"""
 
 INSTRUCTIONS = """\
 You are a developer on this team, talking to your colleagues in Discord. You read
 the code, you answer questions about it, and when someone asks for an issue you
 write one.
-
-Ground what you say in the actual code before you say it. Find the files and
-symbols people are talking about and read them; cite `path/to/file.py:line` so
-the next person can check you. Saying you're not sure beats guessing.
-
-`search_code` finds things; it cannot prove one isn't there. It reads an index
-that does not cover every private repo, so a repo nobody indexed answers exactly
-like a repo without the code. Never conclude something is missing because a
-search came back empty — go read the file or directory it would be in and say
-which you did. A string you already know from this repo needs no search at all.
-
-You may read any repository in the org, not just the one an issue would be filed
-against — follow a bug across a client and its service if that is where it leads.
 
 Every run ends one of two ways, and you choose:
 
@@ -135,130 +114,33 @@ Rules:
 """
 
 
-class Workspace(Protocol):
-    """What the agent may ask the Discord side — implemented by the issues cog.
+async def _report_steps(
+    ctx: RunContext[Deps], events: AsyncIterable[AgentStreamEvent]
+) -> None:
+    """Forward each tool call, and what it gave back, to the watching workspace.
 
-    Everything here is read at call time, not snapshotted into `Deps`: a
-    `/map user` run while a draft is open has to reach the next revision.
+    Reporting progress must never be what kills a draft: a malformed argument, an
+    odd return shape, or a Discord hiccup costs one card, not the run. The guard
+    is here rather than in the workspace so every implementation of the protocol
+    gets it.
     """
-
-    def teammates(self) -> dict[str, str]:
-        """Mapped GitHub logins to the names people call each other by."""
-        ...
-
-    async def earlier(self, limit: int) -> str:
-        """The `limit` messages before the ones the agent was already given.
-
-        Reading further back is the agent's call, not ours: a mention arrives with
-        a small seed, and only the agent knows whether "isso" needs five messages
-        of context or fifty. Scoped to the channel the request came from.
-        """
-        ...
-
-    async def on_step(self, part: ToolCallPart) -> None:
-        """Report a tool call to wherever this run is being watched.
-
-        The part itself, not a rendered line: how a call should look is the
-        watcher's business, and it needs the arguments to decide.
-        """
-        ...
-
-    async def on_result(self, call_id: str, part: ToolReturnPart) -> None:
-        """Report what the call with this id gave back."""
-        ...
+    async for event in events:
+        if isinstance(event, FunctionToolCallEvent):
+            await _safely(ctx.deps.workspace.on_step(event.part))
+        elif isinstance(event, FunctionToolResultEvent) and isinstance(
+            event.part, ToolReturnPart
+        ):
+            # A RetryPromptPart is the model being corrected, not a tool answering;
+            # the retried call reports itself when it comes round again.
+            await _safely(ctx.deps.workspace.on_result(event.tool_call_id, event.part))
 
 
-class _Unattached:
-    """A workspace that knows nothing — the default when nobody wired one up.
-
-    Lets every tool read `ctx.deps.workspace` without a null check.
-    """
-
-    def teammates(self) -> dict[str, str]:
-        return {}
-
-    async def earlier(self, limit: int) -> str:
-        return ""
-
-    async def on_step(self, part: ToolCallPart) -> None:
-        pass
-
-    async def on_result(self, call_id: str, part: ToolReturnPart) -> None:
-        pass
-
-
-type Reply = IssueDraft | str
-"""How a run ended: a draft to review, or an answer to read.
-
-Narrow it with `isinstance(reply, IssueDraft)` — a `str` is the agent talking,
-and carries no draft, so it must never overwrite one.
-"""
-
-
-@dataclass
-class Deps:
-    """Per-run state: the app-authed client, the org, and the repos on offer.
-
-    `workspace` is how the run reaches Discord — carried here rather than in a
-    global so each run reports to its own thread.
-    """
-
-    github: GitHub
-    org: str
-    candidates: list[str] = field(default_factory=list)
-    workspace: Workspace = field(default_factory=_Unattached)
-
-
-def _reports_failure[**P, T](
-    doing: str,
-) -> Callable[[Callable[P, Awaitable[T]]], Callable[P, Awaitable[T]]]:
-    """Hand a failed GitHub call to the model as a failed result, not a raise.
-
-    One error shape for every tool: a new tool gets the handling by saying what it
-    was doing rather than by copying a `try` block. `ToolFailed` rather than a row
-    the model has to notice — the call is over and it failed, which is a thing
-    pydantic-ai can say natively; it also spends none of the retry budget, since
-    a spent quota is not something rephrasing the arguments would fix.
-
-    A rate limit says when it lifts, so it gets said out loud. githubkit already
-    slept that long and retried once before the error reached us, so the quota is
-    genuinely gone rather than momentarily busy — code search allows only ten
-    calls a minute, and the model's instinct on a bare failure is to rephrase and
-    search again, which spends what little is left. Telling it the wait is what
-    stops that.
-    """
-
-    def decorate(fn: Callable[P, Awaitable[T]]) -> Callable[P, Awaitable[T]]:
-        @functools.wraps(fn)
-        async def wrapped(*args: P.args, **kwargs: P.kwargs) -> T:
-            try:
-                return await fn(*args, **kwargs)
-            except RateLimitExceeded as exc:
-                raise ToolFailed(f"{doing} failed: {_rate_limited(exc)}") from exc
-            except GitHubException as exc:
-                raise ToolFailed(f"{doing} failed: {exc}") from exc
-
-        return wrapped
-
-    return decorate
-
-
-def _rate_limited(exc: RateLimitExceeded) -> str:
-    """A spent quota, as the wait it costs and what to do meanwhile.
-
-    Rounded up to the second: the model is deciding whether to wait, not timing
-    anything, and "0.4s" would read as free. A non-positive wait means the reset
-    passed while we were failing, so there is nothing to promise and the sentence
-    just stops.
-    """
-    seconds = math.ceil(exc.retry_after.total_seconds())
-    if seconds <= 0:
-        return "GitHub's rate limit is spent. Do not repeat this search."
-    return (
-        f"GitHub's rate limit is spent for another {seconds}s. Do not repeat this "
-        "search — answer from what you have already read, or say what you could "
-        "not check."
-    )
+async def _safely(reporting: Awaitable[None]) -> None:
+    """Run a progress report, swallowing whatever it raises."""
+    try:
+        await reporting
+    except Exception:  # noqa: BLE001 - progress is not worth a failed run
+        log.debug("could not report progress", exc_info=True)
 
 
 def _leaves(exc: BaseException) -> list[BaseException]:
@@ -297,35 +179,6 @@ def explain(exc: BaseException) -> str:
     return "Something went wrong reaching the model."
 
 
-async def _report_steps(
-    ctx: RunContext[Deps], events: AsyncIterable[AgentStreamEvent]
-) -> None:
-    """Forward each tool call, and what it gave back, to the watching workspace.
-
-    Reporting progress must never be what kills a draft: a malformed argument, an
-    odd return shape, or a Discord hiccup costs one card, not the run. The guard
-    is here rather than in the workspace so every implementation of the protocol
-    gets it.
-    """
-    async for event in events:
-        if isinstance(event, FunctionToolCallEvent):
-            await _safely(ctx.deps.workspace.on_step(event.part))
-        elif isinstance(event, FunctionToolResultEvent) and isinstance(
-            event.part, ToolReturnPart
-        ):
-            # A RetryPromptPart is the model being corrected, not a tool answering;
-            # the retried call reports itself when it comes round again.
-            await _safely(ctx.deps.workspace.on_result(event.tool_call_id, event.part))
-
-
-async def _safely(reporting: Awaitable[None]) -> None:
-    """Run a progress report, swallowing whatever it raises."""
-    try:
-        await reporting
-    except Exception:  # noqa: BLE001 - progress is not worth a failed run
-        log.debug("could not report progress", exc_info=True)
-
-
 def _answer(text: str) -> str:
     """The prose branch of the output: what the agent says, unchanged.
 
@@ -357,6 +210,7 @@ def build(model: str) -> Agent[Deps, Reply]:
             ),
         ],
         instructions=INSTRUCTIONS,
+        toolsets=tools.build(),
         retries=2,
         capabilities=[ProcessEventStream(_report_steps)],
     )
@@ -373,155 +227,6 @@ def build(model: str) -> Agent[Deps, Reply]:
                 + ", ".join(f"`{c}`" for c in candidates)
             )
         return reply
-
-    def _repo(ctx: RunContext[Deps], repo: str) -> tuple[str, str]:
-        return split_repo(repo, ctx.deps.org)
-
-    @agent.tool
-    @_reports_failure("search")
-    async def search_code(ctx: RunContext[Deps], query: str) -> list[dict[str, str]]:
-        """Find code across the org by keyword. Finds things; never proves absence.
-
-        This is an index, not a grep: it only sees each repo's default branch,
-        skips files over 384KB, is rate-limited to ~10 calls/minute, and does not
-        do regex. Use it to locate a symbol or string, then read_file to confirm.
-
-        A hit is trustworthy. No hits is not: this index does not cover every
-        private repo, and an unindexed one answers exactly like an empty one. To
-        show something is absent, list_dir and read_file the place it would be.
-        """
-        resp = await ctx.deps.github.rest.search.async_code(
-            q=f"{query} org:{ctx.deps.org}", per_page=_MAX_RESULTS
-        )
-        found = [
-            {"repo": item.repository.full_name, "path": item.path}
-            for item in resp.parsed_data.items
-        ]
-        # Said here, not just in the docstring: an empty list is the one answer a
-        # model will happily read as proof, and the warning has to arrive with it.
-        return found or [
-            {
-                "no_results": (
-                    "Nothing matched — but this index skips repos it has not "
-                    "crawled, and private repos are the usual ones missing. This "
-                    "is not evidence the code is absent. Check by reading the "
-                    "repo directly with list_dir and read_file."
-                )
-            }
-        ]
-
-    @agent.tool
-    async def read_file(
-        ctx: RunContext[Deps], repo: str, path: str, ref: str | None = None
-    ) -> str:
-        """Read a file from a repo, optionally at a branch, tag, or commit."""
-        owner, name = _repo(ctx, repo)
-        try:
-            resp = await ctx.deps.github.rest.repos.async_get_content(
-                owner, name, path, **({"ref": ref} if ref else {})
-            )
-        except RateLimitExceeded as exc:
-            raise ToolFailed(f"could not read {path}: {_rate_limited(exc)}") from exc
-        except GitHubException as exc:
-            raise ToolFailed(f"could not read {path}: {exc}") from exc
-        data = resp.parsed_data
-        content = getattr(data, "content", None)
-        if content is None:  # a directory, or a symlink/submodule
-            raise ToolFailed(f"{path} is not a file; use list_dir")
-        text = base64.b64decode(content).decode("utf-8", "replace")
-        if len(text) > _MAX_FILE_CHARS:
-            return (
-                text[:_MAX_FILE_CHARS] + f"\n...[truncated at {_MAX_FILE_CHARS} chars]"
-            )
-        return text
-
-    @agent.tool
-    @_reports_failure("listing the directory")
-    async def list_dir(
-        ctx: RunContext[Deps], repo: str, path: str = ""
-    ) -> list[dict[str, str]]:
-        """List a directory, to get oriented before reading files."""
-        owner, name = _repo(ctx, repo)
-        resp = await ctx.deps.github.rest.repos.async_get_content(owner, name, path)
-        data = resp.parsed_data
-        if not isinstance(data, list):
-            raise ToolFailed(f"{path} is a file; use read_file")
-        return [{"name": e.name, "type": e.type} for e in data]
-
-    @agent.tool
-    @_reports_failure("searching issues")
-    async def similar_issues(
-        ctx: RunContext[Deps], repo: str, query: str
-    ) -> list[dict[str, object]]:
-        """Search a repo's existing issues, to catch duplicates before drafting."""
-        owner, name = _repo(ctx, repo)
-        resp = await ctx.deps.github.rest.search.async_issues_and_pull_requests(
-            q=f"{query} repo:{owner}/{name} is:issue", per_page=_MAX_RESULTS
-        )
-        return [
-            {
-                "number": item.number,
-                "title": item.title,
-                "state": item.state,
-                "url": item.html_url,
-            }
-            for item in resp.parsed_data.items
-        ]
-
-    @agent.tool
-    @_reports_failure("reading the repo's labels")
-    async def repo_labels(ctx: RunContext[Deps], repo: str) -> list[str]:
-        """The labels this repo actually has. Don't propose any others."""
-        owner, name = _repo(ctx, repo)
-        resp = await ctx.deps.github.rest.issues.async_list_labels_for_repo(
-            owner, name, per_page=100
-        )
-        return [label.name for label in resp.parsed_data]
-
-    @agent.tool
-    async def read_conversation(ctx: RunContext[Deps], messages: int = 25) -> str:
-        """Read further back in this Discord channel, before what you were given.
-
-        Use this when you were dropped into the middle of a conversation and what
-        someone means by "this" or "isso" is in messages you can't see. Ask for
-        more if the first read still doesn't settle it. Reads only the channel the
-        request came from, and only messages already there.
-        """
-        earlier = await ctx.deps.workspace.earlier(max(1, min(messages, 100)))
-        return earlier or "(nothing earlier in this channel)"
-
-    @agent.tool
-    def teammates(ctx: RunContext[Deps]) -> list[dict[str, str]]:
-        """Who can be assigned, as `login` and the `name` people call them by.
-
-        The conversation uses first names; GitHub only takes logins. Resolve any
-        name through this list before setting `assignee` — a name that isn't
-        here has no GitHub account we know of.
-        """
-        mapped = ctx.deps.workspace.teammates()
-        if not mapped:
-            raise ToolFailed("nobody is mapped yet; `/map user` links a login")
-        return [{"login": login, "name": name} for login, name in mapped.items()]
-
-    @agent.tool
-    @_reports_failure("listing commits")
-    async def recent_commits(
-        ctx: RunContext[Deps], repo: str, path: str | None = None
-    ) -> list[dict[str, str]]:
-        """Recent commits, optionally only those touching one path — useful for
-        working out whether something regressed and who last touched it."""
-        owner, name = _repo(ctx, repo)
-        resp = await ctx.deps.github.rest.repos.async_list_commits(
-            owner, name, per_page=10, **({"path": path} if path else {})
-        )
-        return [
-            {
-                "sha": c.sha[:8],
-                "message": (c.commit.message or "").split("\n")[0],
-                "author": (c.commit.author.name if c.commit.author else "") or "",
-            }
-            for c in resp.parsed_data
-        ]
 
     return agent
 

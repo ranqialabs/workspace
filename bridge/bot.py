@@ -15,7 +15,8 @@ from bridge.config import Config, Secrets
 from bridge.github_app import installation_client
 from bridge.agent import core as agent_core
 from bridge.agent import view as agent_view
-from bridge.agent.core import Deps, Reply
+from bridge.agent.core import Reply
+from bridge.agent.tools import Deps
 from bridge.live import LiveMessages
 from bridge.webhook import WebhookServer
 

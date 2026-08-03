@@ -22,7 +22,8 @@ from githubkit.exception import GitHubException
 from bridge import render
 from bridge.cogs.notifications import Notifications
 from bridge.agent import context, core, history, stream, threads, view, workspace
-from bridge.agent.core import Deps, Session
+from bridge.agent.core import Session
+from bridge.agent.tools import Deps
 from bridge.agent.draft import IssueDraft, card_submitted, from_embed, preview
 from bridge.render import GREEN, RED
 from bridge.repo import short_name, split_repo

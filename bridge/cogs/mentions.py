@@ -24,7 +24,8 @@ from discord.ext import commands
 
 from bridge.agent import context, core, stream, threads, workspace
 from pydantic_ai import UserContent
-from bridge.agent.core import Deps, Session
+from bridge.agent.core import Session
+from bridge.agent.tools import Deps
 from bridge.agent.draft import IssueDraft
 from bridge.cogs.issues import Issues
 from bridge.store import Store

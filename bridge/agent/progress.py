@@ -40,7 +40,19 @@ _EMPTY = (None, "", [], {})
 # Ordered by how much each identifies a call, not by the tools' signatures: the
 # arguments a reader scans for come first. `query` before `repo` because "what
 # am I searching for" beats "where".
-_LEAD = ("query", "path", "repo", "ref", "name", "login", "number", "url")
+_LEAD = (
+    "query",
+    "path",
+    "number",
+    "sha",
+    "ref",
+    "head",
+    "base",
+    "repo",
+    "name",
+    "login",
+    "url",
+)
 
 # What each tool is doing, in words and a glyph, since the reader is following a
 # draft and not reading our function names. One entry per tool rather than a
@@ -53,19 +65,35 @@ _TOOLS = {
     "similar_issues": ("🔗", "checking for duplicates"),
     "repo_labels": ("🏷️", "reading labels"),
     "teammates": ("👥", "looking up teammates"),
-    "recent_commits": ("🕘", "reading history"),
+    "recent_commits": ("📜", "reading history"),
     "read_conversation": ("💬", "reading back"),
+    "list_issues": ("📋", "listing issues"),
+    "get_issue": ("🐛", "reading issue"),
+    "list_pull_requests": ("🗂️", "listing PRs"),
+    "get_pull_request": ("🔀", "reading PR"),
+    "pull_request_files": ("📑", "reading PR files"),
+    "pull_request_reviews": ("✅", "reading reviews"),
+    "pull_request_comments": ("💭", "reading review notes"),
+    "check_runs": ("🧪", "reading CI"),
+    "check_failures": ("🚨", "reading CI failures"),
+    "get_commit": ("🕘", "reading commit"),
+    "compare_refs": ("↔️", "comparing"),
 }
 
 _RUNNING = "⏳"
 
 
 def _icon(tool: str) -> str:
-    return _TOOLS.get(tool, ("🔧", tool))[0]
+    return _labelled(tool)[0]
 
 
 def _verb(tool: str) -> str:
-    return _TOOLS.get(tool, ("🔧", tool))[1]
+    return _labelled(tool)[1]
+
+
+def _labelled(tool: str) -> tuple[str, str]:
+    """A tool's glyph and verb, falling back to its own name."""
+    return _TOOLS.get(tool, ("🔧", tool))
 
 
 def _clip(text: str, limit: int) -> str:
@@ -154,18 +182,6 @@ def _rows(content: object) -> list[object] | None:
     return list(cast(Sequence[object], content))
 
 
-def _failed(content: object) -> bool:
-    """Whether a successful-looking answer is actually a refusal.
-
-    Tools report a failed GitHub call as an `error` row rather than raising, so
-    a successful outcome can still be something the reader has to see.
-    """
-    if isinstance(content, list) and len(content) == 1:
-        first: object = content[0]
-        return isinstance(first, dict) and bool(first.get("error"))
-    return False
-
-
 def result_summary(part: ToolReturnPart) -> tuple[str, bool]:
     """What a tool gave back: a headline, and whether it went well.
 
@@ -176,9 +192,6 @@ def result_summary(part: ToolReturnPart) -> tuple[str, bool]:
     content = part.content
     if part.outcome != "success":
         return part.outcome, False
-
-    if _failed(content):
-        return "failed", False
 
     if isinstance(content, str):
         text = content.strip()
