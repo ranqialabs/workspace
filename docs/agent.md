@@ -344,19 +344,22 @@ that produced it is always one click away.
 
 ### House style
 
-The agent is told how this org writes issues, so drafts come out in the shape
-your repo already uses:
+The shape of a draft comes from the repo it's going to. Before drafting, the
+agent reads what that repo published about writing issues —
+`.github/ISSUE_TEMPLATE`, `CLAUDE.md`, `CONTRIBUTING.md` — and follows it, because
+the project chose those fields and a draft that drops them arrives wrong. It
+reads them once per repo in a conversation, and not at all when it's answering a
+question, so a repo that published nothing costs nothing.
 
-- `title` is `type: what changes` — `fix`, `feat`, `chore`, `refactor` — and a
-  reader scanning the list can tell what it is from the title alone.
-- The body opens with one or two sentences stating the problem. No `## Summary`
-  heading above them.
-- `##` sections only when there's something to separate: `## Reproducing`,
-  `## Cause`, `## Expected`, `## Scope`. An empty template section is worse than
-  no section.
-- 1500–2500 characters. A tight issue gets picked up; a long one gets skipped.
-- Cite `path/to/file.py:line` where the work lands, and quote the message that
-  settled something instead of paraphrasing it.
+Only a few things are the agent's own, and they hold either way:
+
+- `title` is `type: what changes` — `fix`, `feat`, `chore`, `refactor` — unless
+  the repo says otherwise, so a reader scanning the list can tell what it is
+  from the title alone.
+- It stays tight. A short issue gets picked up and a long one gets skipped, and
+  an empty template section is worse than no section.
+- It cites `path/to/file.py:line` where the work lands, and quotes the message
+  that settled something instead of paraphrasing it.
 
 ## Limits and failure
 
