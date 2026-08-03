@@ -243,7 +243,9 @@ def toolset() -> FunctionToolset[Deps]:
         resp = await ctx.deps.github.rest.issues.async_list_for_repo(
             owner, name, state=state, per_page=MAX_RESULTS * 2
         )
-        issues = [item for item in resp.parsed_data if item.pull_request is None]
+        # Truthiness, not `is None`: githubkit leaves an absent field as `UNSET`,
+        # which is not None, so an identity test drops every real issue too.
+        issues = [item for item in resp.parsed_data if not item.pull_request]
         return [
             {
                 "number": item.number,
