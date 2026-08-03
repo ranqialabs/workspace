@@ -30,6 +30,7 @@ from bridge.render import GREY
 
 _MAX_ARG = 180  # chars of any single argument value
 _MAX_LINE = 90  # chars of one call's line; wider wraps on a narrow client
+_MAX_HEADLINE = 60  # chars of a failure's reason, which earns more room than a count
 _MAX_LINES = 12  # lines kept on the card before the oldest fold into a count
 _MAX_BODY = 4096  # Discord's own ceiling on an embed description
 
@@ -182,16 +183,30 @@ def _rows(content: object) -> list[object] | None:
     return list(cast(Sequence[object], content))
 
 
+def _why(content: object, outcome: str) -> str:
+    """A failure's reason, as short as the line can hold.
+
+    Tools raise `ToolFailed("<tool> failed: <reason>")`, so the prefix repeats the
+    verb already at the front of the line; only the reason past it is news. Falls
+    back to the outcome when there is no message to read.
+    """
+    text = content.strip() if isinstance(content, str) else ""
+    reason = text.rpartition("failed: ")[2] or text or outcome
+    # The reason goes inside backticks, so its own would end the span early.
+    return reason.replace("`", "")
+
+
 def result_summary(part: ToolReturnPart) -> tuple[str, bool]:
     """What a tool gave back: a headline, and whether it went well.
 
     The magnitude of the answer, not the answer — a line has room for "1,204
     chars" or "6 results", which is enough to see the agent is looking in the
-    right place. The flag picks the glyph in front of it.
+    right place. A failure spends that room on why instead, since "error" alone
+    leaves the reader with nothing to act on. The flag picks the glyph in front.
     """
     content = part.content
     if part.outcome != "success":
-        return part.outcome, False
+        return _why(content, part.outcome), False
 
     if isinstance(content, str):
         text = content.strip()
@@ -221,10 +236,14 @@ def line(part: ToolCallPart, result: ToolReturnPart | None) -> str:
         return f"{_RUNNING} {_flat(subject, _MAX_LINE)}"
     headline, ok = result_summary(result)
     mark = _icon(part.tool_name) if ok else "⚠️"
+    # A reason needs more room than "6 results" does, and on a failed call it is
+    # the more useful half of the line — but never so much that the pair overruns
+    # the line, which the subject's floor of 24 would otherwise allow.
+    headline = _flat(headline, min(40 if ok else _MAX_HEADLINE, _MAX_LINE - 28))
     # The headline is the point of the line, so the subject yields to it when the
     # two together won't fit.
     room = _MAX_LINE - len(headline) - 4
-    return f"{mark} {_flat(subject, max(room, 24))}  `{_flat(headline, 40)}`"
+    return f"{mark} {_flat(subject, max(room, 24))}  `{headline}`"
 
 
 def card(lines: Sequence[str]) -> discord.Embed:
