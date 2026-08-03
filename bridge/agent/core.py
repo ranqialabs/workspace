@@ -239,8 +239,12 @@ def _with_conversation(preamble: str, transcript: Transcript) -> list[UserConten
     from — and only the framing above it differs. Kept in one place so a change
     to how images are attached reaches every prompt at once.
     """
+    # A caller handing over history sends no transcript, and a bare header over
+    # nothing reads as a conversation that failed to load.
     parts: list[UserContent] = [
         f"{preamble}\n\nThe conversation, oldest message first:\n\n{transcript.text}"
+        if transcript.text.strip()
+        else preamble
     ]
     parts.extend(
         BinaryContent(data=data, media_type=kind) for data, kind in transcript.images
@@ -295,6 +299,7 @@ def asked_prompt(
     asked: str,
     requester: str,
     pointed_at: bool,
+    continuing: bool = False,
 ) -> list[UserContent]:
     """The prompt for a request made by mentioning us in a conversation.
 
@@ -303,14 +308,25 @@ def asked_prompt(
     What it does say is how little context it came with, and that reading more is
     the agent's job: without that the model answers confidently off eight
     messages it should have known were not the whole story.
+
+    `continuing` means the exchange came back as history, so the note points at
+    that rather than at a transcript that isn't there.
     """
     listed = ", ".join(f"`{c}`" for c in candidates) or "(none mapped)"
-    context_note = (
-        "They replied to a specific message, so that message and their request "
-        "are below. That reply is them pointing at something."
-        if pointed_at
-        else "Below are the last few messages of the channel, for orientation only."
-    )
+    if continuing:
+        context_note = (
+            "They replied to something you said, so this continues the exchange "
+            "above — what you have already said to each other is that history."
+        )
+    elif pointed_at:
+        context_note = (
+            "They replied to a specific message, so that message and their request "
+            "are below. That reply is them pointing at something."
+        )
+    else:
+        context_note = (
+            "Below are the last few messages of the channel, for orientation only."
+        )
     preamble = (
         f"You are talking to {requester} in Discord. In anything they ask you, "
         '"me" and "I" mean them.\n\n'

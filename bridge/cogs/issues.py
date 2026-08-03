@@ -296,7 +296,8 @@ class Issues(commands.Cog):
         # say instead — usually that it needs more to go on. Say it and let them
         # answer in the thread rather than dropping it for a card we don't have.
         if not isinstance(reply, IssueDraft):
-            await thread.send(stream.clip(reply))
+            for segment in stream.segments(reply):
+                await thread.send(segment)
             return
 
         await threads.rename(thread, reply.title)

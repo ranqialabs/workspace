@@ -22,7 +22,7 @@ from typing import TYPE_CHECKING
 import discord
 from discord.ext import commands
 
-from bridge.agent import context, core, stream, threads, workspace
+from bridge.agent import context, core, history, stream, threads, workspace
 from pydantic_ai import UserContent
 from bridge.agent.core import Session
 from bridge.agent.tools import Deps
@@ -111,6 +111,10 @@ class Mentions(commands.Cog):
 
         placeholder = await message.reply(_THINKING, mention_author=False)
         work = MentionWorkspace(store, message.guild, message.channel, message)
+        # Replying to an answer of ours continues that exchange, so the chain it
+        # hangs off comes back as history. Without one, the seed is all there is.
+        assert self.bot.user is not None
+        past = await history.rebuild_chain(message, store, bot_user_id=self.bot.user.id)
         session = Session(
             self.bot.agent,
             Deps(
@@ -123,10 +127,13 @@ class Mentions(commands.Cog):
                 message.author, store.login_for(message.author.id)
             ),
             owner_id=message.author.id,
+            history=past,
         )
         live = stream.Live(placeholder)
         try:
-            prompt = await self._prompt(message, asked, store, issues)
+            prompt = await self._prompt(
+                message, asked, store, issues, continuing=bool(past)
+            )
             reply = await session.stream(prompt, live.feed)
         except Exception as exc:  # noqa: BLE001 — a failed answer mustn't kill the cog
             log.exception("mention run failed in channel %s", message.channel.id)
@@ -177,15 +184,22 @@ class Mentions(commands.Cog):
         asked: str,
         store: Store,
         issues: Issues,
+        *,
+        continuing: bool,
     ) -> list[UserContent]:
         """What the agent starts with: the request, and a little context.
 
         A reply is a deliberate pointer, so it gets the message it points at and
         nothing else. Without one there is nothing to point at, so the last few
         messages stand in until the agent reads further back itself.
+
+        `continuing` means the chain already came back as history, so a seed here
+        would be the same text twice.
         """
-        replied = await _replied_to(message)
-        if replied is not None:
+        replied = await history.replied_to(message)
+        if continuing:
+            seed = context.Transcript(text="", jump_url=message.jump_url)
+        elif replied is not None:
             seed = await context.collect(
                 message.channel, store, limit=2, anchor=replied
             )
@@ -199,6 +213,7 @@ class Mentions(commands.Cog):
                 message.author, store.login_for(message.author.id)
             ),
             pointed_at=replied is not None,
+            continuing=continuing,
         )
 
 
@@ -212,18 +227,6 @@ def _asked(message: discord.Message, me: discord.ClientUser) -> str:
     for form in (f"<@{me.id}>", f"<@!{me.id}>"):
         text = text.replace(form, " ")
     return " ".join(text.split())
-
-
-async def _replied_to(message: discord.Message) -> discord.Message | None:
-    """The message this one replies to, if it replies to one we can read."""
-    ref = message.reference
-    if ref is None or ref.message_id is None:
-        return None
-    if isinstance(ref.resolved, discord.Message):
-        return ref.resolved  # already in the payload; no fetch needed
-    with contextlib.suppress(discord.HTTPException):
-        return await message.channel.fetch_message(ref.message_id)
-    return None
 
 
 async def setup(bot: "BridgeBot") -> None:
