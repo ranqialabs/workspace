@@ -1,22 +1,12 @@
 """What every toolset needs: the run's state, and the shapes an answer comes back in.
 
-`Deps` lives here rather than in `core` because the toolsets are what read it, so
-a toolset can be built and exercised without constructing an agent.
+Every tool returns a hand-built dict rather than a parsed model, and these are the
+pieces those dicts are made of.
 
-githubkit's parsed models are exhaustive by design, and a GraphQL selection set
-can be made fat by accident; every tool returns a hand-built dict instead, and
-these are the pieces those dicts are made of.
-
-A listing with something to say *about* its answer — nothing matched and why, or
-rows were held back — returns `ToolReturn(return_value=rows, content=<caveat>)`.
-The caveat reaches the model as its own message and the rows stay nothing but
-results, so whoever counts them (`progress.py`) needs no correction. `held_back`
-builds the paging half of that for GitHub, `more_pages` for Linear, which pages
-by cursor instead of by number.
-
-Where a helper has a twin — `stamp`/`when`, `reports_failure`/
-`reports_linear_failure` — the two live side by side, because what differs
-between the systems is exactly what a reader needs to see.
+A listing with something to say *about* its answer returns
+`ToolReturn(return_value=rows, content=<caveat>)`. The caveat reaches the model as
+its own message and the rows stay nothing but results, so whoever counts them
+(`progress.py`) needs no correction.
 """
 
 import datetime as dt
@@ -54,29 +44,19 @@ type Sort = Literal["created", "updated", "comments"]
 
 
 class Reader(Protocol):
-    """What a tool may ask Linear. Satisfied by `bridge.linear.Linear`.
-
-    A protocol rather than the class itself so this module doesn't import a
-    client to type one, and so the unconfigured stand-in below is the same kind of
-    thing — the relationship `Workspace` and `Unattached` already have.
-    """
+    """What a tool may ask Linear. Satisfied by `bridge.linear.Linear`."""
 
     async def query(
         self, document: str, variables: dict[str, Any] | None = None
-    ) -> dict[str, Any]:
-        """Run a GraphQL query and return its `data`."""
-        ...
+    ) -> dict[str, Any]: ...
 
 
 class Unconfigured:
     """A Linear client for a workspace that has none.
 
-    Linear is optional in a way the model is not: without it the bridge is the
-    bridge as it shipped, and GitHub keeps working. So a missing client is a null
-    object rather than a `None` every tool has to test, and rather than switching
-    the agent off the way a missing model does. Every query says the same thing,
-    in the words the model needs: that this workspace has no Linear, not that the
-    query was wrong.
+    A null object rather than a `None` every tool tests: Linear is optional, and
+    the message has to tell the model this workspace has no Linear rather than
+    that its query was wrong.
     """
 
     async def query(
@@ -102,8 +82,8 @@ class Workspace(Protocol):
     async def earlier(self, limit: int) -> str:
         """The `limit` messages before the ones the agent was already given.
 
-        Scoped to the channel the request came from. How far back to read is the
-        agent's call: only it knows whether "isso" needs five messages or fifty.
+        How far back to read is the agent's call: only it knows whether "isso"
+        needs five messages or fifty.
         """
         ...
 
@@ -115,16 +95,11 @@ class Workspace(Protocol):
         """
         ...
 
-    async def on_result(self, call_id: str, part: ToolReturnPart) -> None:
-        """Report what the call with this id gave back."""
-        ...
+    async def on_result(self, call_id: str, part: ToolReturnPart) -> None: ...
 
 
 class Unattached:
-    """A workspace that knows nothing — the default when nobody wired one up.
-
-    Lets every tool read `ctx.deps.workspace` without a null check.
-    """
+    """A workspace that knows nothing, so every tool can skip the null check."""
 
     def people(self) -> list[dict[str, str]]:
         return []
@@ -143,11 +118,8 @@ class Unattached:
 class Deps:
     """Per-run state: the app-authed clients, the org, and the repos on offer.
 
-    `workspace` is how the run reaches Discord — carried here rather than in a
-    global so each run reports to its own thread.
-
-    `linear` defaults to the unconfigured stand-in, so a workspace without Linear
-    is a sentence the model reads rather than a null every tool has to test.
+    `workspace` is carried here rather than in a global so each run reports to its
+    own thread.
     """
 
     github: GitHub
@@ -166,14 +138,10 @@ def reports_failure[**P, T](
 ) -> Callable[P, Awaitable[T]]:
     """Hand a failed GitHub call to the model as a `ToolFailed`, not a raise.
 
-    Named from the function it wraps, so a new tool gets the handling by wearing
-    the decorator and cannot drift from its own name. `ToolFailed` rather than a
-    row the model has to notice: the call is over, and it spends none of the retry
-    budget, since rephrasing the arguments does not refill a quota.
+    `ToolFailed` spends none of the retry budget, since rephrasing the arguments
+    does not refill a quota.
     """
 
-    # Read once here: a `Callable` carries no `__name__`, and the decorator is
-    # applied to plain functions, which do.
     doing = getattr(fn, "__name__", "the call")
 
     @functools.wraps(fn)
@@ -193,15 +161,9 @@ def reports_linear_failure[**P, T](
 ) -> Callable[P, Awaitable[T]]:
     """Hand a failed Linear call to the model as a `ToolFailed`, not a raise.
 
-    The Linear twin of `reports_failure`, and a separate decorator rather than one
-    widened to both: what counts as a failure differs — a GraphQL error arrives
-    with HTTP 200, so it is a raised `LinearQueryFailed` rather than a status — and
-    a single decorator catching both clients would let a GitHub tool wear the wrong
-    one without complaint.
-
-    Kept beside its twin because they must produce the same
-    `"<tool> failed: <reason>"` shape, which `progress._why` reads by splitting on
-    `"failed: "`. Adjacent is what keeps that contract visible.
+    Separate from `reports_failure` so a GitHub tool cannot wear the wrong catch.
+    Both must produce the same `"<tool> failed: <reason>"` shape, which
+    `progress._why` reads by splitting on `"failed: "`.
     """
 
     doing = getattr(fn, "__name__", "the call")
@@ -230,8 +192,8 @@ def reports_linear_failure[**P, T](
 def rate_limited(exc: RateLimitExceeded) -> str:
     """A spent quota, as the wait it costs and what to do meanwhile.
 
-    Rounded up to the second, since "0.4s" would read as free. A non-positive wait
-    means the reset passed while we were failing, so there is nothing to promise.
+    Rounded up, since "0.4s" would read as free; a non-positive wait means the
+    reset already passed, so there is nothing to promise.
     """
     seconds = math.ceil(exc.retry_after.total_seconds())
     if seconds <= 0:
@@ -248,11 +210,9 @@ def held_back(
 ) -> str | None:
     """What to tell the model when GitHub kept rows past this page, else None.
 
-    Read from GitHub's own `rel="next"` rather than guessed from a full page,
-    which false-positives on a page that happens to end exactly at the limit.
-
-    `narrowable` is False for a listing that takes no filters, so the advice
-    doesn't offer a way out the caller hasn't got.
+    Read from `rel="next"` rather than guessed from a full page, which
+    false-positives on a page ending exactly at the limit. `narrowable` is False
+    for a listing that takes no filters.
     """
     link = getattr(resp, "headers", {}).get("link", "")
     if 'rel="next"' not in link:
@@ -267,14 +227,9 @@ def held_back(
 def more_pages(page_info: object, noun: str, *, narrowable: bool = True) -> str | None:
     """What to tell the model when Linear kept rows past this page, else None.
 
-    Read from Linear's own `pageInfo.hasNextPage` rather than guessed from a full
-    page, which false-positives on a page ending exactly at the limit — the same
-    reason `held_back` reads GitHub's `rel="next"`.
-
-    Hands back the cursor, because Linear pages by cursor rather than by number:
-    there is no "page 2" to ask for, only "after this one". That is the one place
-    the two systems' tools differ in shape, so the caveat spells the argument out
-    rather than leaving the model to carry the habit over from GitHub.
+    Hands back the cursor rather than a page number: Linear pages by cursor, so
+    the caveat spells `after=` out instead of letting the model carry GitHub's
+    "page 2" habit over.
     """
     info = page_info if isinstance(page_info, dict) else {}
     if not info.get("hasNextPage"):
@@ -290,8 +245,8 @@ def more_pages(page_info: object, noun: str, *, narrowable: bool = True) -> str 
 def applied(given: dict[str, str | None]) -> str:
     """The filters that were actually sent, as `key=value` text.
 
-    Shared because both sides need it to say what emptied a listing, and an empty
-    answer that can't name its own filters is the one a model reads as absence.
+    An empty answer that can't name its own filters is the one a model reads as
+    absence.
     """
     return ", ".join(f"{key}={value}" for key, value in given.items() if value)
 
@@ -307,7 +262,7 @@ def body(text: object, limit: int = MAX_BODY_CHARS) -> str:
     """A PR or issue body, trimmed and marked where it was cut.
 
     Takes `object` because githubkit types an optional field as `Unset | str |
-    None`: absent, null and empty all mean "nothing to read" here.
+    None`, all three of which mean "nothing to read".
     """
     return clipped(text.strip() if isinstance(text, str) else "", limit)
 
@@ -338,18 +293,14 @@ def stamp(when: object) -> str | None:
 def when(value: object) -> str | None:
     """A Linear timestamp, as the ISO text it already is, or None.
 
-    Linear answers in JSON, so a timestamp arrives as a string rather than the
-    `datetime` `stamp` exists for — and passing one to `stamp` returns None for
-    every date in the workspace, silently.
+    Not `stamp`: Linear answers in JSON, so a timestamp arrives as a string, and
+    `stamp` would silently return None for every date in the workspace.
     """
     return value if isinstance(value, str) and value else None
 
 
 def changed_file(file: object) -> dict[str, object]:
-    """One entry in a list of changed files, as PRs and commits both report them.
-
-    The same four fields either way, so a reader of one has learned the other.
-    """
+    """One changed file, the same four fields for PRs and commits both."""
     return {
         "path": getattr(file, "filename", ""),
         "status": getattr(file, "status", ""),
@@ -371,8 +322,7 @@ def author_name(author: object) -> str:
 def commit_row(commit: object) -> dict[str, str]:
     """One commit in a list: short sha, subject, author.
 
-    The same three fields wherever commits are listed, so `recent_commits` and
-    `compare_refs` cannot drift on the sha width.
+    Shared so `recent_commits` and `compare_refs` cannot drift on the sha width.
     """
     inner = getattr(commit, "commit", None)
     return {

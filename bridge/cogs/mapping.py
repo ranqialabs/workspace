@@ -14,7 +14,8 @@ which side only by historical accident. Lines already written to #bot-config
 migrate themselves (see `bridge.store`).
 """
 
-from typing import TYPE_CHECKING, Any, cast
+import time
+from typing import TYPE_CHECKING
 
 import discord
 from discord import app_commands
@@ -22,14 +23,11 @@ from discord.ext import commands
 
 from bridge import access
 from bridge.access import SyncResult
+from bridge.linear import Node, nodes
 from bridge.render import BLURPLE, GREEN
 
 if TYPE_CHECKING:
     from bridge.bot import BridgeBot
-
-type Node = dict[str, Any]
-"""One entry in a GraphQL connection's `nodes`, read by `.get` rather than typed:
-the selection sets live in this module and nothing else reads these dicts."""
 
 # Workspace members, for the `/map linear` picker and its confirmation. A
 # workspace of tens of people fits in one page, so neither needs to paginate.
@@ -41,10 +39,14 @@ query Members {
 }
 """
 
+MAX_CHOICES = 25  # Discord's own cap on an autocomplete response
+_MEMBERS_TTL = 60.0  # seconds a fetched member list stays good for
+
 
 class Mapping(commands.Cog):
     def __init__(self, bot: "BridgeBot") -> None:
         self.bot = bot
+        self._members: tuple[float, list[Node]] | None = None
 
     map = app_commands.Group(
         name="map",
@@ -69,7 +71,7 @@ class Mapping(commands.Cog):
         ):
             if current.lower() in user.login.lower():
                 choices.append(app_commands.Choice(name=user.login, value=user.login))
-            if len(choices) >= 25:
+            if len(choices) >= MAX_CHOICES:
                 break
         return choices
 
@@ -89,9 +91,28 @@ class Mapping(commands.Cog):
                 choices.append(
                     app_commands.Choice(name=repo.full_name, value=repo.full_name)
                 )
-            if len(choices) >= 25:
+            if len(choices) >= MAX_CHOICES:
                 break
         return choices
+
+    async def _workspace_members(self) -> list[Node]:
+        """Every workspace member, cached briefly.
+
+        The picker asks on every keystroke and the confirmation asks again, all for
+        a list of tens that barely moves; without this that is one round trip per
+        character typed.
+        """
+        if self._members and time.monotonic() - self._members[0] < _MEMBERS_TTL:
+            return self._members[1]
+        if self.bot.linear is None:
+            return []
+        try:
+            data = await self.bot.linear.query(_MEMBERS)
+        except Exception:  # noqa: BLE001 - a broken picker beats a raised error
+            return []
+        members = nodes(data.get("users"))
+        self._members = (time.monotonic(), members)
+        return members
 
     async def _linear_choices(
         self, _: discord.Interaction, current: str
@@ -99,19 +120,11 @@ class Mapping(commands.Cog):
         """Workspace members from Linear, matched on the name or the email.
 
         The value is the email, because that is what the mapping is keyed on and
-        what Linear's own filters take; the name is only what makes the list
-        pickable. An autocomplete has three seconds and no way to report an error,
-        so a failure comes back as no choices — the same trade `map_github` makes
-        when its enrichment fails.
+        what Linear's own filters take. An autocomplete has three seconds and no
+        way to report an error, so a failure comes back as no choices.
         """
-        if self.bot.linear is None:
-            return []
-        try:
-            data = await self.bot.linear.query(_MEMBERS)
-        except Exception:  # noqa: BLE001 - a broken picker beats a raised error
-            return []
         choices: list[app_commands.Choice[str]] = []
-        for user in _nodes(data.get("users")):
+        for user in await self._workspace_members():
             name = str(user.get("name") or user.get("displayName") or "")
             email = str(user.get("email") or "")
             if not email:
@@ -121,7 +134,7 @@ class Mapping(commands.Cog):
             choices.append(
                 app_commands.Choice(name=f"{name} · {email}"[:100], value=email)
             )
-            if len(choices) >= 25:
+            if len(choices) >= MAX_CHOICES:
                 break
         return choices
 
@@ -232,22 +245,15 @@ class Mapping(commands.Cog):
     async def _linear_member(self, email: str) -> Node | None:
         """The workspace member with this email, or None if there isn't one.
 
-        None also covers "we couldn't ask" — an unconfigured or unreachable
-        Linear — which the caller tells apart by checking the client itself,
-        because "no such member" and "could not check" are different things to
-        put in front of somebody.
+        None also covers "we couldn't ask", which the caller tells apart by
+        checking the client: "no such member" and "could not check" are different
+        things to put in front of somebody.
         """
-        if self.bot.linear is None:
-            return None
-        try:
-            data = await self.bot.linear.query(_MEMBERS)
-        except Exception:  # noqa: BLE001 - the link is saved either way
-            return None
         wanted = email.casefold()
         return next(
             (
                 user
-                for user in _nodes(data.get("users"))
+                for user in await self._workspace_members()
                 if str(user.get("email") or "").casefold() == wanted
             ),
             None,
@@ -322,23 +328,6 @@ class Mapping(commands.Cog):
                 ],
             )
         return embed
-
-
-def _nodes(connection: object) -> list[Node]:
-    """The `nodes` of a GraphQL connection, or nothing readable.
-
-    Total, because this runs on an autocomplete's three-second budget and inside
-    a confirmation that has already saved the mapping: a shape we did not expect
-    is worth an empty list, not an exception.
-    """
-    if not isinstance(connection, dict):
-        return []
-    nodes: object = connection.get("nodes")
-    if not isinstance(nodes, list):
-        return []
-    return [
-        cast(Node, node) for node in cast(list[object], nodes) if isinstance(node, dict)
-    ]
 
 
 async def setup(bot: "BridgeBot") -> None:

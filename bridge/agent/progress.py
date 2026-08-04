@@ -7,13 +7,10 @@ answer.
 
 So: one line per call, and one card holding all of them. An earlier version gave
 each call its own card and pruned them as the run went; that made the channel
-dance, buried the draft, and spent the channel's edit budget on scaffolding. A
-line keeps the subject and the magnitude of the answer and drops the excerpt.
+dance and buried the draft.
 
 Formatting is pure and total. A progress card is never worth failing a run over,
-so every shape `args` can arrive in (a dict, a JSON string, a half-streamed
-fragment, or something that isn't JSON at all) comes back as text rather than
-an exception.
+so every shape `args` can arrive in comes back as text rather than an exception.
 """
 
 import json
@@ -30,23 +27,16 @@ from bridge.render import GREY
 from bridge.repo import short_name
 
 _MAX_ARG = 180  # chars of any single argument value
-# Chars of one call's line. An embed is as wide as its widest line, and this one
-# now carries a repo tag as well as a subject and a headline, so it buys the room
-# rather than clipping the subject to fit; past ~120 a narrow client wraps.
-_MAX_LINE = 118
+_MAX_LINE = 118  # chars of one call's line; past ~120 a narrow client wraps
 _MAX_HEADLINE = 60  # chars of a failure's reason, which earns more room than a count
 _MAX_REPO = 24  # chars of the repo tag; past this it is eating the subject's room
 _MAX_LINES = 12  # lines kept on the card before the oldest fold into a count
 _MAX_BODY = 4096  # Discord's own ceiling on an embed description
 
-# Values that say nothing: an omitted optional reads the same as one never in
-# the signature, and neither earns a place in a card.
 _EMPTY = (None, "", [], {})
 
-# Ordered by how much each identifies a call, not by the tools' signatures: the
-# arguments a reader scans for come first. `repo` is absent on purpose — it is
-# lifted out into its own slot at the front of the line by `_where`, and leaving
-# it here too would spend the subject on a name already shown.
+# Ordered by how much each identifies a call, not by the tools' signatures.
+# `repo` is absent on purpose: `_where` lifts it into its own slot at the front.
 _LEAD = (
     "query",
     "path",
@@ -73,14 +63,11 @@ _LEAD = (
     "login",
     "url",
 )
-# An opaque cursor is not a subject. It says nothing a reader can act on and would
-# spend the line's budget on base64, so a paged Linear call is named by its filters.
-_HIDDEN = ("repo", "after")
+_HIDDEN = ("repo", "after")  # `after` is an opaque cursor, not a subject
 
 # What each tool is doing, in words and a glyph, since the reader is following a
-# draft and not reading our function names. One entry per tool rather than a
-# dict each, so a tool can't have a verb and lose its icon. A tool we don't list
-# falls back to its name.
+# draft and not reading our function names. A tool we don't list falls back to
+# its name.
 _TOOLS = {
     "read_file": ("📄", "reading"),
     "search_code": ("🔎", "searching code"),
@@ -102,9 +89,8 @@ _TOOLS = {
     "check_failures": ("🚨", "reading CI failures"),
     "get_commit": ("🕘", "reading commit"),
     "compare_refs": ("↔️", "comparing"),
-    # Linear's verbs name the system, because a card that reads both sides would
-    # otherwise say "listing issues" twice for two different boards — the same
-    # confusion `_where` was added to fix for two repos.
+    # Named after the system, so a card reading both sides doesn't say "listing
+    # issues" twice for two different boards.
     "linear_teams": ("🧭", "listing Linear teams"),
     "linear_vocabulary": ("🏷️", "reading Linear statuses"),
     "linear_projects": ("🗺️", "listing Linear projects"),
@@ -158,15 +144,12 @@ def _scalar(value: object, limit: int = _MAX_ARG) -> str:
 def parse_args(raw: str | dict[str, Any] | None) -> dict[str, Any]:
     """Whatever the model sent for a tool's arguments, as a dict.
 
-    `ToolCallPart.args` is a dict or a JSON string depending on the provider,
-    and mid-stream that string is a fragment of one. `allow_partial` reads the
-    keys that have arrived and drops the one still being written, which is what
-    makes a half-streamed call renderable instead of blank.
+    `ToolCallPart.args` is a dict or a JSON string depending on the provider, and
+    mid-stream that string is a fragment of one. `allow_partial` reads the keys
+    that have arrived, which is what makes a half-streamed call renderable.
     """
     if isinstance(raw, dict):
         return raw
-    # Typed `str | dict | None`, but it comes from a provider — anything else is
-    # something we can't read, which is the same answer as unparseable.
     if not raw or not isinstance(raw, str):
         return {}
     try:
@@ -179,10 +162,9 @@ def parse_args(raw: str | dict[str, Any] | None) -> dict[str, Any]:
 def _ordered(args: dict[str, Any]) -> list[tuple[str, Any]]:
     """Arguments with the identifying ones first, empties and `_HIDDEN` dropped.
 
-    An omitted optional (`ref=None`, `path=""`) is noise: it says nothing the
-    tool name didn't already say, and the card has a budget. `repo` goes for the
-    opposite reason — `_where` already shows it, in front, where it lines up —
-    and `after` because a cursor identifies nothing to a reader.
+    An omitted optional (`ref=None`, `path=""`) is noise. `repo` is hidden because
+    `_where` already shows it in front, and `after` because a cursor identifies
+    nothing to a reader.
     """
     present = [(k, v) for k, v in args.items() if k not in _HIDDEN and v not in _EMPTY]
     return sorted(
@@ -194,24 +176,14 @@ def _ordered(args: dict[str, Any]) -> list[tuple[str, Any]]:
 def _where(args: dict[str, Any]) -> str:
     """Which repo this call is against, or "" for one that isn't against any.
 
-    The card's one job is to show the agent looking in the right place, and a
-    line reading `listing lib` names neither the repo nor anything that implies
-    it — across a run that reads a client and its service, consecutive lines are
-    indistinguishable, and `lib/` looks the same in both.
-
     Just the name, not `owner/name`: every repo the app can read is the one org's,
-    so the owner would repeat on every line and only crowd the subject. A tool
-    with no `repo` argument (`search_code` spans the org, `teammates` isn't GitHub
-    at all) gets nothing rather than a guessed name — the caller renders it.
+    so the owner would repeat on every line and crowd the subject.
 
     Deliberately not widened to Linear's `team` or `project`. This slot exists to
-    tell apart the same tool called against different places, and a Linear listing
-    filters by team only sometimes, so the column would be blank on most lines —
-    which gives the eye nothing to run down, the one thing it was for. A project
-    name is prose-shaped besides, and sharing this 24-char slot with a repo name
-    would clip it, which is the bug `_MAX_REPO` records this card once had. The
-    Linear verbs name their system instead (see `_TOOLS`), and that is what keeps
-    two boards' lines apart.
+    tell apart the same tool called against different places; a Linear listing
+    filters by team only sometimes, so the column would be blank on most lines,
+    and a project name would clip in 24 chars. The Linear verbs name their system
+    instead (see `_TOOLS`).
     """
     repo = args.get("repo")
     if not isinstance(repo, str) or not repo.strip():
@@ -222,15 +194,12 @@ def _where(args: dict[str, Any]) -> str:
 def _subject(part: ToolCallPart, ordered: list[tuple[str, Any]]) -> str:
     """The one thing this call is about, for the card's title.
 
-    A title reading `reading bridge/agent/view.py` is the whole story for most
-    calls; the rest of the arguments are below it and don't need to compete. A
-    search term is quoted, since it's prose and would otherwise run into the
+    A search term is quoted, since it's prose and would otherwise run into the
     verb in front of it.
     """
     if not ordered:
-        # Nothing to name it by, so the verb stands alone. The tools that get here
-        # are the ones that take no arguments — `list_repos`, `teammates` — and
-        # their verbs already read as whole actions ("listing repos").
+        # The argument-less tools (`list_repos`, `teammates`) already read as
+        # whole actions, so the verb stands alone.
         return _verb(part.tool_name)
     key, value = ordered[0]
     subject = _scalar(value)
@@ -240,11 +209,7 @@ def _subject(part: ToolCallPart, ordered: list[tuple[str, Any]]) -> str:
 
 
 def _rows(content: object) -> list[object] | None:
-    """The rows of a countable answer, or None if it isn't one.
-
-    Returns the collection rather than a verdict about it, so the caller can
-    both count and sample it without re-establishing what it is.
-    """
+    """The rows of a countable answer, or None if it isn't one."""
     if isinstance(content, str) or not isinstance(content, (list, tuple, set)):
         return None
     return list(cast(Sequence[object], content))
@@ -266,10 +231,8 @@ def _why(content: object, outcome: str) -> str:
 def result_summary(part: ToolReturnPart) -> tuple[str, bool]:
     """What a tool gave back: a headline, and whether it went well.
 
-    The magnitude of the answer, not the answer — a line has room for "1,204
-    chars" or "6 results", which is enough to see the agent is looking in the
-    right place. A failure spends that room on why instead, since "error" alone
-    leaves the reader with nothing to act on. The flag picks the glyph in front.
+    The magnitude of the answer, not the answer. A failure spends that room on
+    why instead, since "error" alone leaves the reader nothing to act on.
     """
     content = part.content
     if part.outcome != "success":
@@ -291,44 +254,29 @@ def result_summary(part: ToolReturnPart) -> tuple[str, bool]:
 
 
 def line(part: ToolCallPart, result: ToolReturnPart | None) -> str:
-    """One call as one line: what it's doing, and what came back.
-
-    A line rather than a card because a run makes a dozen of these and the reader
-    is following a conversation, not auditing it. What survives the squeeze is the
-    subject (which file, which query) and the magnitude of the answer — enough to
-    see the agent is looking in the right place, and no more.
-    """
+    """One call as one line: what it's doing, and what came back."""
     args = parse_args(part.args)
     repo = _where(args)
     subject = _subject(part, _ordered(args))
-    # Bold so the eye can run down the column of repos, and measured by the name
-    # rather than the markup: `**` costs the budget four chars that nobody sees,
-    # which would clip a tagged line shorter than an untagged one for no reason.
+    # Measured by the name rather than the markup, so a tagged line isn't clipped
+    # four chars shorter than an untagged one for markup nobody sees.
     where = f"**{repo}** " if repo else ""
     shown = len(repo) + 1 if repo else 0
     if result is None:
         return f"{_RUNNING} {where}{_flat(subject, _MAX_LINE - shown)}"
     headline, ok = result_summary(result)
     mark = _icon(part.tool_name) if ok else "⚠️"
-    # A reason needs more room than "6 results" does, and on a failed call it is
-    # the more useful half of the line — but never so much that the pair overruns
-    # the line, which the subject's floor of 24 would otherwise allow.
+    # A failure's reason earns more room than "6 results", but never so much that
+    # the pair overruns the line — which the subject's floor of 24 would allow.
     headline = _flat(headline, min(40 if ok else _MAX_HEADLINE, _MAX_LINE - 28))
-    # The headline is the point of the line, so the subject yields to it when the
-    # two together won't fit. The repo is never what yields: it is the half of the
-    # line the reader is scanning for, and clipping it is what this card was
-    # failing at.
+    # The subject yields to the headline; the repo never does, since it is the
+    # half of the line the reader is scanning down.
     room = _MAX_LINE - len(headline) - shown - 4
     return f"{mark} {where}{_flat(subject, max(room, 24))}  `{headline}`"
 
 
 def card(lines: Sequence[str]) -> discord.Embed:
     """Every call this run has made, stacked, as one embed we keep editing.
-
-    One message rather than one per call: the cards used to be posted, pruned and
-    deleted as the run went, which made the channel dance and spent the channel's
-    edit budget on scaffolding. Editing one message costs one request per update
-    and holds still while the reader reads it.
 
     Always grey: the card only exists while the run does, and `collapse` replaces
     it with a summary line rather than recolouring it green.
@@ -344,8 +292,8 @@ def card(lines: Sequence[str]) -> discord.Embed:
 def summarise(calls: list[str], *, elapsed: float | None = None) -> str:
     """One line standing in for a finished run's cards.
 
-    Counted by tool rather than listed: the cards are gone, and what survives
-    them is how much ground the agent covered, not the order it covered it in.
+    Counted by tool rather than listed: what survives the cards is how much ground
+    the agent covered, not the order it covered it in.
     """
     if not calls:
         return "Drafted without looking anything up."

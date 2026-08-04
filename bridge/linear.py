@@ -1,15 +1,13 @@
 """Linear client: read the workspace over GraphQL, as the app itself.
 
-GraphQL over httpx rather than Linear's MCP server, for the same reason
-`bridge.agent.tools.github` wraps githubkit: an MCP server would mean a second
+GraphQL over httpx rather than Linear's MCP server, which would mean a second
 identity to manage and dozens of tool definitions in every request's context.
 
 Authenticates with the `client_credentials` grant, which yields an app-actor
-token — the bot acts as itself in the workspace rather than impersonating whoever
-set it up, and costs no billable seat. Unlike a GitHub App installation token,
-that token comes with no refresh token: Linear's own guidance is to mint lazily
-and mint again when a request comes back 401. So this holds one token, mints it on
-first use, and re-mints exactly once on a 401 before giving up.
+token — the bot acts as itself rather than impersonating whoever set it up, and
+costs no billable seat. That token comes with no refresh token, so per Linear's
+guidance this holds one, mints it on first use, and re-mints exactly once on a
+401 before giving up.
 
 We ask for `read` and nothing else, so the read-only promise holds at the
 credential and not only in which tools happen to exist.
@@ -17,13 +15,16 @@ credential and not only in which tools happen to exist.
 
 import asyncio
 import logging
-from typing import Any
+from typing import Any, cast
 
 import httpx
 
 from bridge.config import Secrets
 
 log = logging.getLogger(__name__)
+
+type Node = dict[str, Any]
+"""One entry in a GraphQL connection's `nodes`, read by `.get` rather than typed."""
 
 TOKEN_URL = "https://api.linear.app/oauth/token"
 API_URL = "https://api.linear.app/graphql"
@@ -38,36 +39,30 @@ class LinearError(Exception):
 
 
 class LinearRateLimited(LinearError):
-    """Linear is rate-limiting us. Retrying now fails the same way.
-
-    Its own type because it is the one failure where the answer is to stop asking
-    rather than to ask differently.
-    """
+    """Linear is rate-limiting us: the answer is to stop asking, not to rephrase."""
 
 
 class LinearQueryFailed(LinearError):
     """The query ran and GraphQL returned errors.
 
     Its own type because a GraphQL error arrives with HTTP 200 and may sit beside
-    partial data — which makes it a bug in our query or a field we may not read,
-    not a transport failure, and it reads differently to whoever sees it.
+    partial data, which makes it a bug in our query rather than a transport
+    failure.
     """
 
 
 class Linear:
-    """One workspace, read over GraphQL, as the app itself.
-
-    Owns its `httpx.AsyncClient` for the process's lifetime: connection reuse is
-    the point, and a client per query would spend a TLS handshake on each.
-    """
+    """One workspace, read over GraphQL, as the app itself."""
 
     def __init__(self, client_id: str, client_secret: str) -> None:
         self._client_id = client_id
         self._client_secret = client_secret
+        # One client for the process: a client per query would spend a TLS
+        # handshake on each.
         self._http = httpx.AsyncClient(timeout=_TIMEOUT)
         self._token: str | None = None
-        # Tool calls run concurrently, so two queries can fail on the same
-        # expired token at once. This is what stops them both minting.
+        # Tool calls run concurrently, so two queries can fail on the same expired
+        # token at once. This is what stops them both minting.
         self._minting = asyncio.Lock()
 
     async def query(
@@ -77,10 +72,8 @@ class Linear:
         token = await self._current()
         resp = await self._send(document, variables, token)
         if resp.status_code == httpx.codes.UNAUTHORIZED:
-            # No refresh token exists, so a 401 means the token expired — Linear's
-            # own documented signal to fetch a new one. Once only: a second 401 on
-            # a token we just minted is the credentials, and retrying that spends
-            # the token endpoint's quota to fail the same way.
+            # A 401 is Linear's documented signal that the token expired. Once
+            # only: a second 401 on a token we just minted is the credentials.
             await self._mint(stale=token)
             resp = await self._send(document, variables, await self._current())
         if resp.status_code == httpx.codes.TOO_MANY_REQUESTS:
@@ -89,11 +82,8 @@ class Linear:
         return _data(resp.json())
 
     async def whoami(self) -> str:
-        """The identity this token acts as, for one log line at boot.
-
-        The cheap proof that the credentials are the ones we think they are: a
-        wrong pair fails here rather than at somebody's first question.
-        """
+        """The identity this token acts as, so a wrong credential pair fails at
+        boot rather than at somebody's first question."""
         data = await self.query("query Viewer { viewer { id name } }")
         viewer = data.get("viewer") or {}
         return f"{viewer.get('name') or 'unknown'} ({viewer.get('id') or '?'})"
@@ -121,14 +111,12 @@ class Linear:
     async def _mint(self, *, stale: str | None) -> None:
         """Fetch a fresh token, unless someone already replaced `stale`.
 
-        `stale` is the token whose 401 sent us here. Whichever caller takes the
-        lock first mints; the second finds the token already changed and uses that
-        rather than minting a second one — two tokens is not wrong, but it burns a
-        request and can turn one 401 into two failures under a rate limit.
+        Whichever caller takes the lock first mints; the second finds the token
+        already changed and uses it, so one 401 doesn't become two failures under
+        a rate limit.
 
-        No `expires_in` clock: the 401 path has to exist and be correct anyway, a
-        second mechanism could disagree with the server about when a token died,
-        and one wasted request per 30 days is nothing.
+        No `expires_in` clock: the 401 path has to be correct anyway, and a second
+        mechanism could disagree with the server about when a token died.
         """
         async with self._minting:
             if stale is not None and self._token != stale:
@@ -152,9 +140,8 @@ class Linear:
 def _data(payload: object) -> dict[str, Any]:
     """A GraphQL response's `data`, raising if it carried errors.
 
-    Checked before `data` is read, and raised even when `data` is present: a
-    GraphQL query can partially succeed, and half an answer returned as a whole
-    one is exactly what the tools' caveats exist to prevent.
+    Raised even when `data` is present: a GraphQL query can partially succeed, and
+    half an answer returned as a whole one is what the tools' caveats prevent.
     """
     if not isinstance(payload, dict):
         raise LinearQueryFailed("Linear's answer was not a GraphQL response.")
@@ -163,8 +150,23 @@ def _data(payload: object) -> dict[str, Any]:
     data: object = payload.get("data")
     if not isinstance(data, dict):
         raise LinearQueryFailed("Linear answered with no data and no errors.")
-    # Keys are field names, so the cast is what GraphQL already guarantees.
     return {str(field): value for field, value in data.items()}
+
+
+def nodes(connection: object) -> list[Node]:
+    """The `nodes` of a GraphQL connection, or nothing readable.
+
+    Total: an unexpected shape is worth an empty listing the caller can explain,
+    not an exception mid-answer.
+    """
+    if not isinstance(connection, dict):
+        return []
+    found: object = connection.get("nodes")
+    if not isinstance(found, list):
+        return []
+    return [
+        cast(Node, node) for node in cast(list[object], found) if isinstance(node, dict)
+    ]
 
 
 def _said(errors: object) -> str:
@@ -182,9 +184,8 @@ def _said(errors: object) -> str:
 async def workspace_client(secrets: Secrets) -> Linear | None:
     """A Linear client, or None when the workspace isn't configured.
 
-    Returns None rather than raising: Linear is optional, and the bridge without
-    it is the bridge as it shipped. `config.load_secrets` has already rejected
-    half a credential pair, so either both are here or neither is.
+    None rather than raising: Linear is optional. `config.load_secrets` has
+    already rejected half a credential pair, so either both are here or neither.
     """
     if secrets.linear_client_id is None or secrets.linear_client_secret is None:
         return None

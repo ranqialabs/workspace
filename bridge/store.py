@@ -6,8 +6,7 @@ round-trips through channel history. On boot we replay the channel to rebuild
 four in-memory dicts; commands append a line and update memory. Later lines win.
 
 A person can be mapped on two sides — `github` and `linear` — and the Discord
-member is the key they meet through: that is what lets one question ("what is
-Fulana working on") reach either system. Neither side implies the other, so a
+member is the key they meet through. Neither side implies the other, so a
 half-mapped person is normal rather than broken.
 
 ponytail: a channel + four dicts. No database, no disk, no cost. Fine for tens
@@ -85,6 +84,8 @@ class Store:
             m = _LINE.match(content) or _LEGACY.match(content)
             if m:
                 kind, key, value = m["kind"], m["key"], int(m["value"])
+                if kind == "identity":
+                    kind = "github"  # the old name; rewritten in place below
                 # Migrate legacy plain lines, and `identity` lines, to the form
                 # `_format_line` writes — in place, so the history stays one
                 # message per mapping instead of growing a copy per rename.
@@ -93,7 +94,7 @@ class Store:
                     await message.edit(content=new)
                 self._apply(kind, key, value)
                 # Keyed by what the line now says, so a re-map finds this message.
-                self._messages[self._canonical(kind), key] = message
+                self._messages[kind, key] = message
             elif self._is_panel(message):
                 self._panel = message
             else:
@@ -106,20 +107,7 @@ class Store:
             and message.embeds[0].footer.text == _PANEL_MARKER
         )
 
-    @staticmethod
-    def _canonical(kind: str) -> str:
-        """The name a kind is stored and written under.
-
-        Only `identity` moves: it was what `github` used to be called. Folding it
-        here rather than at each reader means the migration is one line, and a
-        line read as `identity` is keyed, applied and rewritten as `github` — so
-        a later `/map github` for the same login finds the old message to replace
-        instead of leaving two live lines behind.
-        """
-        return "github" if kind == "identity" else kind
-
     def _apply(self, kind: str, key: str, value: int) -> None:
-        kind = self._canonical(kind)
         if kind == "github":
             self.github[key.casefold()] = value
         elif kind == "linear":
@@ -132,7 +120,6 @@ class Store:
             self.repo_to_role[key] = value
 
     def _forget(self, kind: str, key: str) -> None:
-        kind = self._canonical(kind)
         if kind == "github":
             self.github.pop(key.casefold(), None)
         elif kind == "linear":
@@ -144,31 +131,20 @@ class Store:
         elif kind == "access":
             self.repo_to_role.pop(key, None)
 
-    @classmethod
-    def _format_line(cls, kind: str, key: str, value: int) -> str:
-        """A human-readable, clickable line: `kind [key](url) <mention>`.
+    @staticmethod
+    def _format_line(kind: str, key: str, value: int) -> str:
+        """A human-readable, clickable line: `kind [key](url) <mention>`, read
+        back by `_LINE`.
 
-        The key links to wherever it names — a GitHub user or repo, or a Linear
-        member by the email that identifies them there — and the value is the
-        matching Discord mention (member, channel, or role). Parsed back by
-        `_LINE`.
+        A Linear member gets `mailto:` because a linear.app profile URL needs the
+        workspace slug and the member's uuid, neither of which this line carries.
 
-        A Linear member gets `mailto:` rather than a linear.app profile URL: that
-        URL needs the workspace slug and the member's uuid, neither of which this
-        line carries, and a link the reader can actually use beats one built from
-        a setting nobody wants to configure.
-
-        Every `kind` that names a person must appear in the mention dict. The
-        default is a *role* mention, so a missing kind renders `<@&id>` and
-        `_LINE` reads it back as a role id — the one silent corruption this file
-        allows.
-
-        The GitHub kinds must keep formatting byte-identically, because `load`
-        rewrites any line whose formatted form differs from what the channel
-        says: a cosmetic change here would edit every message in #bot-config on
-        the next boot.
+        Two constraints: every person-kind must appear in the mention dict, since
+        the default is a *role* mention that `_LINE` reads back as a role id; and
+        the existing kinds must keep formatting byte-identically, because `load`
+        rewrites any line that differs and a cosmetic change here would edit every
+        message in #bot-config on the next boot.
         """
-        kind = cls._canonical(kind)
         url = (
             f"mailto:{key}"
             if kind == "linear"
@@ -207,11 +183,9 @@ class Store:
     async def link_linear(self, email: str, discord_id: int) -> None:
         """Link a Linear member, by the email that identifies them there.
 
-        The email rather than their uuid: it is what reads on the line in
-        #bot-config, and it is what Linear's own filters take, so a stored key
-        goes straight into a query. A changed email is one re-run of the command;
-        a stale uuid would fail by returning nothing, which reads as "she has no
-        work".
+        The email rather than their uuid: it is what Linear's own filters take, so
+        a stored key goes straight into a query, and a changed email is one re-run
+        of the command where a stale uuid would silently return nothing.
         """
         await self._persist("linear", email, discord_id)
 
@@ -233,15 +207,8 @@ class Store:
     def discord_id_for(self, github_login: str) -> int | None:
         return self.github.get(github_login.casefold())
 
-    def discord_id_for_linear(self, email: str) -> int | None:
-        return self.linear.get(email.casefold())
-
     def login_for(self, discord_id: int) -> str | None:
-        """The GitHub login linked to a Discord member, if `/map github` ran.
-
-        Scans rather than keeping an inverted dict: the mapping mutates at runtime
-        and there are only ever tens of entries.
-        """
+        """The GitHub login linked to a Discord member, if `/map github` ran."""
         return self._key_for(self.github, discord_id)
 
     def linear_email_for(self, discord_id: int) -> str | None:
@@ -250,8 +217,8 @@ class Store:
 
     @staticmethod
     def _key_for(mapping: dict[str, int], discord_id: int) -> str | None:
-        """The key a Discord member is mapped under, scanning for the same reason
-        `login_for` does: tens of entries, and they move at runtime."""
+        """Scans rather than keeping an inverted dict: tens of entries, and they
+        move at runtime."""
         return next(
             (key for key, mapped in mapping.items() if mapped == discord_id), None
         )
@@ -259,16 +226,9 @@ class Store:
     def people(self, guild: discord.Guild) -> list[dict[str, str]]:
         """Everyone we have any mapping for, as the three names they go by.
 
-        The Discord member is the key: a GitHub login and a Linear email meet
-        only through the person they both belong to, so this walks the members we
-        know and fills in whichever legs exist. Somebody mapped on one side and
-        not the other still appears with the other blank — that gap is itself the
-        answer to "how do I reach her in Linear".
-
-        Names the members rather than handing out bare handles: a first name in a
-        conversation only reaches an account through the name beside it. A member
-        who has left keeps their handles, named by whichever one we have — the
-        mapping still points at real accounts.
+        Somebody mapped on one side and not the other appears with the other
+        blank — that gap is itself the answer to "how do I reach her in Linear".
+        A member who has left keeps their handles, named by whichever one we have.
         """
         members = sorted(set(self.github.values()) | set(self.linear.values()))
         rows: list[dict[str, str]] = []

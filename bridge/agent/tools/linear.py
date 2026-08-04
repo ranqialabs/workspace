@@ -32,6 +32,7 @@ from bridge.agent.tools._shared import (
     reports_linear_failure,
     when,
 )
+from bridge.linear import Node, nodes as _nodes
 
 INSTRUCTIONS = """\
 Linear is where this team keeps the work that is not directly code, and the
@@ -95,10 +96,6 @@ type ProjectState = Literal[
 ]
 """A project's own status type, which Linear keeps separate from an issue's."""
 
-type Node = dict[str, Any]
-"""One entry in a GraphQL connection's `nodes`. Read by `.get`: the selection sets
-are in this module, and every tool hands back a dict it built itself."""
-
 # Rows in one page. Named apart from MAX_RESULTS because it caps a GraphQL `first`
 # argument rather than a REST `per_page`, but deliberately the same number: it is a
 # budget on the model's context, not a property of either API.
@@ -148,22 +145,6 @@ def _not_found(what: str, which: str) -> ToolFailed:
     )
 
 
-def _nodes(connection: object) -> list[Node]:
-    """The `nodes` of a GraphQL connection, or nothing readable.
-
-    Total, like every reader here: a shape we did not expect is worth an empty
-    listing the caller can explain, not an exception mid-answer.
-    """
-    if not isinstance(connection, dict):
-        return []
-    nodes: object = connection.get("nodes")
-    if not isinstance(nodes, list):
-        return []
-    return [
-        cast(Node, node) for node in cast(list[object], nodes) if isinstance(node, dict)
-    ]
-
-
 def _page(connection: object) -> Node:
     """A connection's `pageInfo`, for `more_pages`."""
     if not isinstance(connection, dict):
@@ -173,12 +154,9 @@ def _page(connection: object) -> Node:
 
 
 def _named(value: object, key: str = "name") -> str:
-    """One field off a nested object — a lead's name, a project's name — or "".
-
-    Every one of these is nullable in Linear (an unassigned lead, an issue in no
-    project), and a listing row wants "" rather than a None the model reads as a
-    field it got wrong.
-    """
+    """One field off a nested object, or "" — all of these are nullable in Linear
+    (an unassigned lead, an issue in no project), and a row wants "" over a None
+    the model reads as a field it got wrong."""
     if not isinstance(value, dict):
         return ""
     return str(value.get(key) or "")
@@ -191,33 +169,18 @@ def _names(connection: object, key: str = "name") -> list[str]:
 
 def _person(value: object) -> str:
     """Somebody's display name, as a row should show it."""
-    if not isinstance(value, dict):
-        return ""
-    return str(value.get("displayName") or value.get("name") or "")
+    return _named(value, "displayName") or _named(value)
 
 
 def _more(connection: object) -> bool:
     """Whether a `first: 0` count connection says there is at least one.
 
-    Linear does not expose a count on every connection, so a cheap "are there
-    any" is `hasNextPage` on an empty page. Used where the number matters less
-    than the fact.
+    Linear exposes no count on every connection, so the cheap "are there any" is
+    `hasNextPage` on an empty page.
     """
     return bool(_page(connection).get("hasNextPage"))
 
 
-def _types(status: str, kinds: tuple[str, ...]) -> list[str] | None:
-    """A status alias as the list of state types to filter on, or None for all.
-
-    None rather than an empty list, because the filter dict drops a None key
-    entirely: in Linear `{ null: true }` is a real comparator meaning *is null*, so
-    a null left in a filter is a filter rather than the absence of one.
-    """
-    return None if status == "all" else [status] if status in kinds else None
-
-
-_ISSUE_TYPES = ("backlog", "unstarted", "started", "completed", "canceled")
-_PROJECT_TYPES = ("planned", "started", "paused", "completed", "canceled")
 # What "not finished" means, for the counts that answer "is anyone on this".
 _OPEN = ["backlog", "unstarted", "started"]
 
@@ -225,11 +188,31 @@ _OPEN = ["backlog", "unstarted", "started"]
 def _filter(**given: object) -> dict[str, Any]:
     """A Linear filter, with the absent conditions left out entirely.
 
-    Built in Python rather than spelled in the query, because a GraphQL variable
-    that arrives null is not "no filter": `{ null: true }` is a real comparator, so
-    a null passed through would ask for rows whose field is unset.
+    Built in Python rather than spelled in the query: `{ null: true }` is a real
+    comparator meaning *is null*, so a null passed through would ask for rows whose
+    field is unset rather than for no filter at all.
     """
     return {key: value for key, value in given.items() if value is not None}
+
+
+def _listing(
+    connection: object,
+    rows: list[dict[str, object]],
+    noun: str,
+    given: dict[str, str | None] | None = None,
+    *,
+    narrowable: bool = True,
+) -> ToolReturn[list[dict[str, object]]]:
+    """A listing plus the one thing worth saying about it: more pages, or what
+    emptied it."""
+    return ToolReturn(
+        rows,
+        content=(
+            more_pages(_page(connection), noun, narrowable=narrowable)
+            if rows
+            else _nothing_matched(noun, given or {})
+        ),
+    )
 
 
 _TEAMS = """
@@ -555,7 +538,7 @@ def toolset() -> FunctionToolset[Deps]:
             "filter": _filter(
                 accessibleTeams=_eq_key(team),
                 initiatives=_contains_name(initiative),
-                status=_in_type(_types(state, _PROJECT_TYPES)),
+                status=_in_type(None if state == "all" else [state]),
             ),
         }
         data = await ctx.deps.linear.query(_PROJECTS, variables)
@@ -580,14 +563,7 @@ def toolset() -> FunctionToolset[Deps]:
             }
             for node in _nodes(projects)
         ]
-        return ToolReturn(
-            rows,
-            content=(
-                more_pages(_page(projects), "projects")
-                if rows
-                else _nothing_matched("projects", given)
-            ),
-        )
+        return _listing(projects, rows, "projects", given)
 
     @tools.tool
     @reports_linear_failure
@@ -616,14 +592,7 @@ def toolset() -> FunctionToolset[Deps]:
             }
             for node in _nodes(initiatives)
         ]
-        return ToolReturn(
-            rows,
-            content=(
-                more_pages(_page(initiatives), "initiatives", narrowable=False)
-                if rows
-                else _nothing_matched("initiatives", {})
-            ),
-        )
+        return _listing(initiatives, rows, "initiatives", narrowable=False)
 
     @tools.tool
     @reports_linear_failure
@@ -661,14 +630,7 @@ def toolset() -> FunctionToolset[Deps]:
             for node in _nodes(cycles)
         ]
         given = {"team": team, "current_only": "true" if current_only else None}
-        return ToolReturn(
-            rows,
-            content=(
-                more_pages(_page(cycles), "cycles")
-                if rows
-                else _nothing_matched("cycles", given)
-            ),
-        )
+        return _listing(cycles, rows, "cycles", given)
 
     # --- people ---
 
@@ -715,14 +677,7 @@ def toolset() -> FunctionToolset[Deps]:
             for node in _nodes(members)
             if (email := str(node.get("email") or ""))
         ]
-        return ToolReturn(
-            rows,
-            content=(
-                more_pages(_page(members), "workspace members")
-                if rows
-                else _nothing_matched("workspace members", {"team": team})
-            ),
-        )
+        return _listing(members, rows, "workspace members", {"team": team})
 
     # --- the work ---
 
@@ -777,7 +732,7 @@ def toolset() -> FunctionToolset[Deps]:
                 team=_eq_key(team),
                 project=_contains_name(project),
                 assignee=_assignee(assignee_email),
-                state=_in_type(_types(status, _ISSUE_TYPES)),
+                state=_in_type(None if status == "all" else [status]),
                 labels={"name": {"eq": label}} if label else None,
                 updatedAt={"gt": updated_since} if updated_since else None,
             ),
@@ -785,14 +740,7 @@ def toolset() -> FunctionToolset[Deps]:
         data = await ctx.deps.linear.query(_ISSUES, variables)
         issues = data.get("issues")
         rows = [_issue_row(node) for node in _nodes(issues)]
-        return ToolReturn(
-            rows,
-            content=(
-                more_pages(_page(issues), "issues")
-                if rows
-                else _nothing_matched("issues", given)
-            ),
-        )
+        return _listing(issues, rows, "issues", given)
 
     @tools.tool
     @reports_linear_failure
@@ -879,14 +827,7 @@ def toolset() -> FunctionToolset[Deps]:
             for node in _nodes(documents)
         ]
         given = {"query": query, "project": project}
-        return ToolReturn(
-            rows,
-            content=(
-                more_pages(_page(documents), "documents")
-                if rows
-                else _nothing_matched("documents", given)
-            ),
-        )
+        return _listing(documents, rows, "documents", given)
 
     @tools.tool
     @reports_linear_failure
