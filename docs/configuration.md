@@ -170,10 +170,47 @@ fly secrets set \
   GITHUB_APP_PRIVATE_KEY="$(cat ranqia-workspace.*.private-key.pem)"
 ```
 
-`OPENAI_API_KEY` is the only optional one: without it [the agent](agent.md) is
-switched off and everything else runs unchanged. To run it on a different model,
-set `AGENT_MODEL` to any [pydantic-ai] model string — the matching provider key
-has to be set too.
+Two of these are optional. Without `OPENAI_API_KEY` [the agent](agent.md) is
+switched off and everything else runs unchanged; to run it on a different model, set
+`AGENT_MODEL` to any [pydantic-ai] model string — the matching provider key has to
+be set too. The Linear pair below is the other, and it works the same way.
+
+### Linear (optional)
+
+The agent can [read your Linear workspace](agent.md) — teams, projects,
+initiatives, cycles, people, issues and documents — which needs an OAuth2
+application:
+
+1. Under **Linear → Settings → API → OAuth applications**, create one. Linear
+   recommends a workspace dedicated to managing it, since any admin there can
+   reach it.
+2. Enable **client credentials** on it. That grant issues an *app actor* token, so
+   the bot acts as itself in the workspace rather than as whoever set it up — no
+   billable seat, and an audit trail that names the app.
+3. Ask for the **`read`** scope and nothing else.
+4. Adjust which teams the app can reach on its details page, whenever you like.
+
+```bash
+fly secrets set \
+  LINEAR_CLIENT_ID=... \
+  LINEAR_CLIENT_SECRET=...
+```
+
+Set both or neither — one alone can't mint a token, so the bot logs a warning and
+switches Linear off rather than failing later at somebody's first question. Then
+[`/map linear`](commands.md#map-linear) links each person's Linear account to their
+Discord member.
+
+!!! info "Read-only, and nothing to rotate"
+
+    `read` is the whole scope, so the read-only promise holds at the credential and
+    not only in which tools exist: the agent physically cannot change anything in
+    Linear. The token lasts 30 days and has no refresh token, which is fine — the
+    bot mints one on first use and mints a new one the moment Linear rejects the old
+    one, so there is no rotation schedule to keep.
+
+    On boot the log names the identity it authenticated as. If the credentials are
+    wrong, that line is where you find out, rather than in a failed answer later.
 
 !!! danger "Set the key from the file, with the quotes"
 
@@ -225,18 +262,19 @@ normal Discord mentions.
 
 | Command | What it does |
 | :------ | :----------- |
-| `/map user github_login:‹login› member:@member` | ties a GitHub user to a Discord member (mentions + role sync) |
+| `/map github github_login:‹login› member:@member` | ties a GitHub user to a Discord member (mentions + role sync) |
+| `/map linear linear_user:‹person› member:@member` | ties a Linear member to a Discord member (optional; needs Linear configured) |
 | `/map repo repo:‹owner/name› channel:#channel` | routes a repo's notifications to a channel; group several repos into one channel |
 | `/sync roles` | reconciles access now: per mapped repo, fills its access role and gates the channel |
 
-So the flow is: [link people](commands.md#map-user) with `/map user`,
+So the flow is: [link people](commands.md#map-github) with `/map github`,
 [group repos](commands.md#map-repo) into channels with `/map repo`, and let
 `/sync roles` do the rest — for each mapped repo it creates a `‹repo› devs`
 role, adds and removes members to match who can reach the repo on GitHub, and sets
 the channel's permissions so only that role can see it. `/sync roles` also runs
 automatically on every boot.
 
-Do `/map user` before you rely on [`/issue`](agent.md): it's the same mapping
+Do `/map github` before you rely on [`/issue`](agent.md): it's the same mapping
 the agent resolves a first name through when someone says *"assign it to Ana"*.
 
 ## Where it keeps state

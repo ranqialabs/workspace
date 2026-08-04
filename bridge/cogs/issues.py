@@ -278,6 +278,7 @@ class Issues(commands.Cog):
                 github=self.bot.github,
                 org=self.bot.config.org,
                 workspace=workspace,
+                linear=self.bot.linear_reader,
             ),
             requester=self._requester(interaction.user),
             owner_id=interaction.user.id,
@@ -369,7 +370,7 @@ class Issues(commands.Cog):
         if store.discord_id_for(draft.assignee) is not None:
             return None
         return (
-            f"`{draft.assignee}` isn't a mapped GitHub login — run `/map user`, "
+            f"`{draft.assignee}` isn't a mapped GitHub login — run `/map github`, "
             "then say who to assign. GitHub may reject the assignment as it is."
         )
 
@@ -467,6 +468,7 @@ class Issues(commands.Cog):
                 github=self.bot.github,
                 org=self.bot.config.org,
                 workspace=workspace,
+                linear=self.bot.linear_reader,
             ),
             requester=self._requester(message.author),
             owner_id=owner_id,

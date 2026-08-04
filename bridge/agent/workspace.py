@@ -66,8 +66,8 @@ class Workspace:
         self._last_drawn = 0.0
         self._started = time.monotonic()
 
-    def teammates(self) -> dict[str, str]:
-        return self._store.teammates(self._guild)
+    def people(self) -> list[dict[str, str]]:
+        return self._store.people(self._guild)
 
     async def earlier(self, limit: int) -> str:
         """Where `read_conversation` reads from. Subclasses say where that is.

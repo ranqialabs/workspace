@@ -122,6 +122,7 @@ class Mentions(commands.Cog):
                 org=self.bot.config.org,
                 candidates=issues.candidates_for(message.channel),
                 workspace=work,
+                linear=self.bot.linear_reader,
             ),
             requester=context.speaker(
                 message.author, store.login_for(message.author.id)

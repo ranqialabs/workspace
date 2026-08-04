@@ -1,13 +1,20 @@
 """Cog: the /map, /sync, /config command surface.
 
 You map a repo to a channel by hand (`/map repo`) — that grouping is a human
-decision GitHub can't infer. `/map user` links a GitHub login to a Discord member.
-`/sync roles` runs the access reconciler (bridge/access.py), which fills each
-mapped repo's role from GitHub and gates its channel. This cog is the Discord
-command layer only; the reconciliation engine lives in AccessReconciler.
+decision GitHub can't infer. `/map github` and `/map linear` link a person's
+account in each system to a Discord member; the member is the key those two meet
+through, so one question about somebody can reach either side. `/sync roles` runs
+the access reconciler (bridge/access.py), which fills each mapped repo's role from
+GitHub and gates its channel. This cog is the Discord command layer only; the
+reconciliation engine lives in AccessReconciler.
+
+The subcommands are named after the system they map, so `/map github` rather than
+the `/map user` it used to be: with a second person-mapping beside it, "user" said
+which side only by historical accident. Lines already written to #bot-config
+migrate themselves (see `bridge.store`).
 """
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, cast
 
 import discord
 from discord import app_commands
@@ -20,14 +27,28 @@ from bridge.render import BLURPLE, GREEN
 if TYPE_CHECKING:
     from bridge.bot import BridgeBot
 
+type Node = dict[str, Any]
+"""One entry in a GraphQL connection's `nodes`, read by `.get` rather than typed:
+the selection sets live in this module and nothing else reads these dicts."""
 
-class GithubSync(commands.Cog):
+# Workspace members, for the `/map linear` picker and its confirmation. A
+# workspace of tens of people fits in one page, so neither needs to paginate.
+_MEMBERS = """
+query Members {
+  users(first: 100, includeDisabled: false) {
+    nodes { name displayName email active avatarUrl }
+  }
+}
+"""
+
+
+class Mapping(commands.Cog):
     def __init__(self, bot: "BridgeBot") -> None:
         self.bot = bot
 
     map = app_commands.Group(
         name="map",
-        description="Wire GitHub teams, repos, and users to Discord.",
+        description="Wire GitHub, Linear, and Discord to each other.",
         default_permissions=discord.Permissions(manage_guild=True),
     )
     sync = app_commands.Group(
@@ -72,6 +93,38 @@ class GithubSync(commands.Cog):
                 break
         return choices
 
+    async def _linear_choices(
+        self, _: discord.Interaction, current: str
+    ) -> list[app_commands.Choice[str]]:
+        """Workspace members from Linear, matched on the name or the email.
+
+        The value is the email, because that is what the mapping is keyed on and
+        what Linear's own filters take; the name is only what makes the list
+        pickable. An autocomplete has three seconds and no way to report an error,
+        so a failure comes back as no choices — the same trade `map_github` makes
+        when its enrichment fails.
+        """
+        if self.bot.linear is None:
+            return []
+        try:
+            data = await self.bot.linear.query(_MEMBERS)
+        except Exception:  # noqa: BLE001 - a broken picker beats a raised error
+            return []
+        choices: list[app_commands.Choice[str]] = []
+        for user in _nodes(data.get("users")):
+            name = str(user.get("name") or user.get("displayName") or "")
+            email = str(user.get("email") or "")
+            if not email:
+                continue
+            if current.lower() not in f"{name} {email}".lower():
+                continue
+            choices.append(
+                app_commands.Choice(name=f"{name} · {email}"[:100], value=email)
+            )
+            if len(choices) >= 25:
+                break
+        return choices
+
     # --- /map ---
 
     @map.command(name="repo", description="Map a GitHub repo to a Discord channel.")
@@ -105,9 +158,9 @@ class GithubSync(commands.Cog):
             f"Announcements for `{repo}` → {channel.mention}.", ephemeral=True
         )
 
-    @map.command(name="user", description="Link a GitHub user to a Discord member.")
+    @map.command(name="github", description="Link a GitHub user to a Discord member.")
     @app_commands.autocomplete(github_login=_member_choices)
-    async def map_user(
+    async def map_github(
         self,
         interaction: discord.Interaction,
         github_login: str,
@@ -115,12 +168,12 @@ class GithubSync(commands.Cog):
     ) -> None:
         assert self.bot.store is not None
         assert self.bot.github is not None
-        await self.bot.store.link_identity(github_login, member.id)
+        await self.bot.store.link_github(github_login, member.id)
 
         # Enrich the confirmation with the GitHub profile (name + avatar). One
         # request, only for the chosen login — cheap, and this is where an image
         # can actually render (Discord autocomplete choices are text-only).
-        embed = discord.Embed(title="Identity linked", color=GREEN)
+        embed = discord.Embed(title="GitHub identity linked", color=GREEN)
         try:
             resp = await self.bot.github.rest.users.async_get_by_username(github_login)
             user = resp.parsed_data
@@ -133,6 +186,72 @@ class GithubSync(commands.Cog):
             # Unknown login or API hiccup: the link is saved, just show it plainly.
             embed.description = f"`{github_login}` → {member.mention}"
         await interaction.response.send_message(embed=embed, ephemeral=True)
+
+    @map.command(name="linear", description="Link a Linear member to a Discord member.")
+    @app_commands.describe(linear_user="Pick from the workspace; stored by email.")
+    @app_commands.autocomplete(linear_user=_linear_choices)
+    async def map_linear(
+        self,
+        interaction: discord.Interaction,
+        linear_user: str,
+        member: discord.Member,
+    ) -> None:
+        assert self.bot.store is not None
+        await self.bot.store.link_linear(linear_user, member.id)
+
+        # Same shape as `/map github`: save first, then enrich, so a failure here
+        # costs the picture and not the mapping. Unlike GitHub's, this lookup can
+        # tell a typo from an API hiccup — and a mapping to an email Linear has
+        # never heard of would only ever return empty listings, so it says so.
+        embed = discord.Embed(title="Linear identity linked", color=GREEN)
+        embed.description = f"`{linear_user}` → {member.mention}"
+        found = await self._linear_member(linear_user)
+        if found is None and self.bot.linear is not None:
+            embed.add_field(
+                name="⚠️",
+                value=(
+                    f"No workspace member has the email `{linear_user}`. The link "
+                    "is saved, but it will match nothing until it is corrected — "
+                    "run `/map linear` again and pick from the list."
+                ),
+                inline=False,
+            )
+        elif found is not None:
+            name = str(found.get("name") or found.get("displayName") or linear_user)
+            embed.description = f"**{name}** (`{linear_user}`) → {member.mention}"
+            if avatar := found.get("avatarUrl"):
+                embed.set_thumbnail(url=str(avatar))
+            if not found.get("active"):
+                embed.add_field(
+                    name="Note",
+                    value="This member is deactivated in Linear.",
+                    inline=False,
+                )
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
+    async def _linear_member(self, email: str) -> Node | None:
+        """The workspace member with this email, or None if there isn't one.
+
+        None also covers "we couldn't ask" — an unconfigured or unreachable
+        Linear — which the caller tells apart by checking the client itself,
+        because "no such member" and "could not check" are different things to
+        put in front of somebody.
+        """
+        if self.bot.linear is None:
+            return None
+        try:
+            data = await self.bot.linear.query(_MEMBERS)
+        except Exception:  # noqa: BLE001 - the link is saved either way
+            return None
+        wanted = email.casefold()
+        return next(
+            (
+                user
+                for user in _nodes(data.get("users"))
+                if str(user.get("email") or "").casefold() == wanted
+            ),
+            None,
+        )
 
     # --- /config ---
 
@@ -196,7 +315,7 @@ class GithubSync(commands.Cog):
         field("Removed", [f"<@{m}> → <@&{r}>" for m, r in result.removed])
         if result.unmapped:
             field(
-                "Unmapped — run `/map user`",
+                "Unmapped — run `/map github`",
                 [
                     f"[{login}](https://github.com/{login})"
                     for login in sorted(result.unmapped)
@@ -205,5 +324,22 @@ class GithubSync(commands.Cog):
         return embed
 
 
+def _nodes(connection: object) -> list[Node]:
+    """The `nodes` of a GraphQL connection, or nothing readable.
+
+    Total, because this runs on an autocomplete's three-second budget and inside
+    a confirmation that has already saved the mapping: a shape we did not expect
+    is worth an empty list, not an exception.
+    """
+    if not isinstance(connection, dict):
+        return []
+    nodes: object = connection.get("nodes")
+    if not isinstance(nodes, list):
+        return []
+    return [
+        cast(Node, node) for node in cast(list[object], nodes) if isinstance(node, dict)
+    ]
+
+
 async def setup(bot: "BridgeBot") -> None:
-    await bot.add_cog(GithubSync(bot))
+    await bot.add_cog(Mapping(bot))

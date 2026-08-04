@@ -51,19 +51,31 @@ _LEAD = (
     "query",
     "path",
     "number",
+    # Linear's own "which one": `RAN-123` on an issue, a uuid on a document.
+    "issue",
+    "identifier",
+    "document",
     "sha",
     "ref",
     "head",
     "base",
     # On a filtered listing, what it was filtered by is the news.
     "assignee",
+    "assignee_email",
     "creator",
     "mentioned",
     "labels",
+    "label",
+    "project",
+    "team",
+    "initiative",
     "name",
     "login",
     "url",
 )
+# An opaque cursor is not a subject. It says nothing a reader can act on and would
+# spend the line's budget on base64, so a paged Linear call is named by its filters.
+_HIDDEN = ("repo", "after")
 
 # What each tool is doing, in words and a glyph, since the reader is following a
 # draft and not reading our function names. One entry per tool rather than a
@@ -90,6 +102,19 @@ _TOOLS = {
     "check_failures": ("🚨", "reading CI failures"),
     "get_commit": ("🕘", "reading commit"),
     "compare_refs": ("↔️", "comparing"),
+    # Linear's verbs name the system, because a card that reads both sides would
+    # otherwise say "listing issues" twice for two different boards — the same
+    # confusion `_where` was added to fix for two repos.
+    "linear_teams": ("🧭", "listing Linear teams"),
+    "linear_vocabulary": ("🏷️", "reading Linear statuses"),
+    "linear_projects": ("🗺️", "listing Linear projects"),
+    "linear_initiatives": ("🎯", "listing initiatives"),
+    "linear_cycles": ("🔄", "listing cycles"),
+    "linear_members": ("🧑‍🤝‍🧑", "listing Linear members"),
+    "linear_issues": ("🧾", "listing Linear issues"),
+    "linear_issue": ("🔖", "reading Linear issue"),
+    "linear_documents": ("📘", "listing Linear docs"),
+    "linear_document": ("📖", "reading Linear doc"),
 }
 
 _RUNNING = "⏳"
@@ -152,13 +177,14 @@ def parse_args(raw: str | dict[str, Any] | None) -> dict[str, Any]:
 
 
 def _ordered(args: dict[str, Any]) -> list[tuple[str, Any]]:
-    """Arguments with the identifying ones first, empties and `repo` dropped.
+    """Arguments with the identifying ones first, empties and `_HIDDEN` dropped.
 
     An omitted optional (`ref=None`, `path=""`) is noise: it says nothing the
     tool name didn't already say, and the card has a budget. `repo` goes for the
-    opposite reason — `_where` already shows it, in front, where it lines up.
+    opposite reason — `_where` already shows it, in front, where it lines up —
+    and `after` because a cursor identifies nothing to a reader.
     """
-    present = [(k, v) for k, v in args.items() if k != "repo" and v not in _EMPTY]
+    present = [(k, v) for k, v in args.items() if k not in _HIDDEN and v not in _EMPTY]
     return sorted(
         present,
         key=lambda kv: (_LEAD.index(kv[0]) if kv[0] in _LEAD else len(_LEAD), kv[0]),
@@ -177,6 +203,15 @@ def _where(args: dict[str, Any]) -> str:
     so the owner would repeat on every line and only crowd the subject. A tool
     with no `repo` argument (`search_code` spans the org, `teammates` isn't GitHub
     at all) gets nothing rather than a guessed name — the caller renders it.
+
+    Deliberately not widened to Linear's `team` or `project`. This slot exists to
+    tell apart the same tool called against different places, and a Linear listing
+    filters by team only sometimes, so the column would be blank on most lines —
+    which gives the eye nothing to run down, the one thing it was for. A project
+    name is prose-shaped besides, and sharing this 24-char slot with a repo name
+    would clip it, which is the bug `_MAX_REPO` records this card once had. The
+    Linear verbs name their system instead (see `_TOOLS`), and that is what keeps
+    two boards' lines apart.
     """
     repo = args.get("repo")
     if not isinstance(repo, str) or not repo.strip():

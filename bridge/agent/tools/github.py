@@ -25,6 +25,7 @@ from bridge.agent.tools._shared import (
     Deps,
     Sort,
     State,
+    applied,
     author_name,
     body,
     changed_file,
@@ -79,23 +80,18 @@ the sha.
 """
 
 
-def _applied(given: dict[str, str | None]) -> str:
-    """The filters that were actually sent, as `key=value` text."""
-    return ", ".join(f"{key}={value}" for key, value in given.items() if value)
-
-
 def _nothing_matched(state: str, given: dict[str, str | None], page: int) -> str:
     """An empty listing, said as the filters that emptied it — a bare empty list
     reads as "this repo has no issues"."""
-    filters = _applied(given)
+    filters = applied(given)
     if not filters and page <= 1:
         return f"This repo has no {state} issues."
     where = f" on page {page}" if page > 1 else ""
     narrowed = f" matching {filters}" if filters else ""
     return (
         f"No {state} issues{narrowed}{where} — a filtered result, not an empty "
-        "board. Drop a filter and look again; a login comes from `teammates` and a "
-        "label from `repo_labels`."
+        "board. Drop a filter and look again; a login is the `github` field on "
+        "`teammates`, and a label comes from `repo_labels`."
     )
 
 
@@ -346,8 +342,8 @@ def toolset() -> FunctionToolset[Deps]:
     ) -> ToolReturn[list[dict[str, object]]]:
         """A repo's issues. A page holds 15, so filter rather than list-then-sift.
 
-        - `assignee`: a login from `teammates`, `"none"` for what nobody has taken,
-          `"*"` for what somebody has.
+        - `assignee`: a login — the `github` field on `teammates` — `"none"` for
+          what nobody has taken, `"*"` for what somebody has.
         - `creator`: who opened it. `mentioned`: who is @-ed in it.
         - `labels`: comma-separated and ANDed, each matching `repo_labels`.
         - `sort`: `created`, `updated`, or `comments`.
@@ -383,9 +379,10 @@ def toolset() -> FunctionToolset[Deps]:
             if exc.response.status_code != 422:
                 raise
             raise ToolFailed(
-                f"GitHub rejected these filters: {_applied(given) or state}. "
-                "`assignee`, `creator` and `mentioned` take a login from "
-                '`teammates`, not a name; only "none" and "*" are special.'
+                f"GitHub rejected these filters: {applied(given) or state}. "
+                "`assignee`, `creator` and `mentioned` take a login — the "
+                '`github` field on `teammates` — not a name; only "none" and '
+                '"*" are special.'
             ) from exc
         # Truthiness, not `is None`: githubkit leaves an absent field as `UNSET`,
         # which is not None, so an identity test drops every real issue too.

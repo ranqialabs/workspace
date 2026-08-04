@@ -1,5 +1,5 @@
 """Reconcile GitHub repo access into Discord roles + channel gating (engine only;
-commands live in cogs/github_sync.py). Runs on startup and on /sync."""
+commands live in cogs/mapping.py). Runs on startup and on /sync."""
 
 from typing import TYPE_CHECKING
 

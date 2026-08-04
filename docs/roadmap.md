@@ -54,7 +54,7 @@ ones already running.
 **Bridge**
 
 - **Review requests only mention individuals**, not teams.
-- **Identity mapping is manual** via `/map user` — there's no GitHub/Discord OAuth
+- **Identity mapping is manual** via `/map github` — there's no GitHub/Discord OAuth
   to match accounts automatically.
 - **Mappings are replayed from a channel on boot** — great up to low hundreds of
   entries, but a much larger server would want a real store.
@@ -67,6 +67,20 @@ ones already running.
   comes back truncated. Every other field is exact.
 - **It reads one channel.** A mention can only read back in the channel it
   happened in, so a question spanning two channels needs the context pasted.
+
+**Linear**
+
+- **Read-only.** The app holds the `read` scope and nothing else, so an issue can't
+  be filed, moved or assigned in Linear from Discord. Issues still get drafted for
+  GitHub, where a human clicks Submit.
+- **The rate limit is per app token**, and the token is shared: everyone's questions
+  spend the same quota, with no per-user backoff. When it runs out, the agent is told
+  to stop asking and say what it couldn't check.
+- **The app sees only the teams it was granted**, so an ungranted team is
+  indistinguishable from an absent one at the API. The agent is told to say which it
+  can't rule out rather than report absence.
+- **Linear teams don't become Discord roles.** Access roles are filled from GitHub
+  only; a second source of truth over the same roles is its own design question.
 
 ## Design principle
 

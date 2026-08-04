@@ -31,7 +31,7 @@ from pydantic_ai import (
     ToolReturnPart,
     UserContent,
 )
-from pydantic_ai.capabilities import ProcessEventStream
+from pydantic_ai.capabilities import ProcessEventStream, ToolSearch
 from pydantic_ai.exceptions import ModelAPIError, UsageLimitExceeded
 
 from bridge.agent import tools
@@ -99,9 +99,9 @@ Rules:
 - Choose `repo` only from the candidates you're given — the code you read to
   understand the problem is not restricted, but where it gets filed is.
 - Choose `labels` only from the repo's existing labels (`repo_labels`).
-- `assignee` is a GitHub login from `teammates`, not a name from the
-  conversation. If nobody there matches, leave it null and ask who takes it in
-  `questions` — a login that doesn't exist is rejected, and one that does
+- `assignee` is a GitHub login — the `github` field on `teammates` — not a name
+  from the conversation. If nobody there matches, leave it null and ask who takes
+  it in `questions` — a login that doesn't exist is rejected, and one that does
   assigns a stranger.
 - Assign only who was actually named or agreed on. When the person you are
   talking to asks for it themselves, that is their login — not the one who
@@ -211,7 +211,12 @@ def build(model: str) -> Agent[Deps, Reply]:
         instructions=INSTRUCTIONS,
         toolsets=tools.build(),
         retries=2,
-        capabilities=[ProcessEventStream(_report_steps)],
+        # `ToolSearch` is what actually hides the deferred tools: `.defer_loading()`
+        # only marks them, and naming any capability here replaces the default set
+        # that would otherwise have supplied it. Without it the long tail ships in
+        # every request, silently — the tools still work, so nothing fails, it just
+        # costs what deferring them was meant to save.
+        capabilities=[ProcessEventStream(_report_steps), ToolSearch()],
     )
 
     @agent.output_validator

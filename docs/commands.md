@@ -14,7 +14,7 @@ entirely by [just mentioning the bot](agent.md).
 
 | Command | Who can run it |
 | :------ | :------------- |
-| [`/map repo`](#map-repo), [`/map announce`](#map-announce), [`/map user`](#map-user) | Manage Server |
+| [`/map repo`](#map-repo), [`/map announce`](#map-announce), [`/map github`](#map-github), [`/map linear`](#map-linear) | Manage Server |
 | [`/sync roles`](#sync-roles), [`/config`](#config) | Manage Server |
 | [`/issue`](agent.md), *Draft issue from here*, and [`@`mentioning the bot](agent.md) | anyone in the server |
 
@@ -23,8 +23,15 @@ access model, so there's no admin role to create. Discord greys them out for
 anyone without it.
 
 And you never touch an ID. Repo and user names come from **autocomplete backed by
-the GitHub API** — start typing and the bot offers your org's real repos or
-members. Roles and channels are ordinary Discord **mentions**.
+the live API** — start typing and the bot offers your org's real repos or members,
+or your Linear workspace's people. Roles and channels are ordinary Discord
+**mentions**.
+
+!!! note "`/map user` is now `/map github`"
+
+    The person-mapping commands are named after the system they map, so
+    `/map github` sits beside `/map linear` and each says which account it means.
+    Mappings already saved migrate themselves — you don't re-run anything.
 
 !!! info "Access is derived, not mapped"
 
@@ -70,12 +77,12 @@ repo's [notifications channel](#map-repo) — so a single `/map repo` still gets
 everything. Point several repos at one announce channel to gather them (all your
 `*-api` releases in one place, say).
 
-### `/map user` { #map-user }
+### `/map github` { #map-github }
 
 Tie a GitHub user to a Discord member.
 
 ```text
-/map user github_login:‹login› member:@member
+/map github github_login:‹login› member:@member
 ```
 
 | Parameter | Description |
@@ -91,6 +98,40 @@ picked the right account. Re-mapping a login overwrites the old link.
 It does one more job: [`/issue`](agent.md) resolves *"assign it to Ana"* to a
 GitHub login through these mappings. An unmapped person can't be assigned by
 name — the agent will ask who takes it instead of guessing.
+
+### `/map linear` { #map-linear }
+
+Tie a Linear workspace member to a Discord member.
+
+```text
+/map linear linear_user:‹person› member:@member
+```
+
+| Parameter | Description |
+| :-------- | :---------- |
+| `linear_user` | Autocompletes from the workspace — pick a person; stored by email |
+| `member` | The Discord member behind that account |
+
+The same shape as `/map github`, for the other side. The Discord member is the key
+the two meet through, so one person can be mapped on both sides and a question
+about them reaches either system: *"o que a Ana está fazendo?"* becomes her Linear
+email, and then her issues.
+
+The two are independent. Somebody mapped in GitHub and not in Linear is normal, and
+the agent says which half it has rather than reporting an empty board for the half
+it doesn't. [`linear_members`](agent.md) is the other direction — everyone in the
+workspace, marking who still needs this command run for them.
+
+Stored by email, because that's what reads in `#bot-config` and what Linear's own
+filters take. If somebody's email changes, run the command again. Pick from the
+list rather than typing an address: an email the workspace has never heard of saves
+fine and then matches nothing, and the bot warns you when that happens.
+
+!!! info "Needs Linear configured"
+
+    Without `LINEAR_CLIENT_ID` and `LINEAR_CLIENT_SECRET` (see
+    [configuration](configuration.md)), the picker comes back empty. The mapping
+    still saves, so you can wire people up before the credentials land.
 
 ### `/issue` { #issue }
 
@@ -130,7 +171,7 @@ automatically on every boot.
 For each repo you've [mapped to a channel](#map-repo), the bridge:
 
 1. **Ensures an access role** named `‹repo› devs` exists, creating it if missing.
-2. **Reconciles membership** against the [linked users](#map-user): it reads
+2. **Reconciles membership** against the [linked users](#map-github): it reads
    everyone with effective access to the repo on GitHub — team members, direct
    collaborators, and org owners alike — then *adds* the role to those people and
    *removes* it from
@@ -143,7 +184,7 @@ has its access role deleted (the channel itself is left untouched).
 
 It replies with what changed — roles created and deleted, members added and
 removed, and any GitHub logins it couldn't place because nobody has run
-[`/map user`](#map-user) for them yet.
+[`/map github`](#map-github) for them yet.
 
 !!! warning "The bot only touches what it manages"
 
@@ -169,7 +210,7 @@ rather than posting a new one. `/config` just forces that refresh on demand.
 
 The bridge listens for these GitHub webhook events and posts a rich embed to the
 repo's [announce channel](#map-announce) — or, if none is mapped, its
-[repo channel](#map-repo). When the person involved is [linked](#map-user) they
+[repo channel](#map-repo). When the person involved is [linked](#map-github) they
 get an `@mention`; otherwise their GitHub login shows up as plain text, so the
 message still makes sense. New issues and PRs-ready also ping the repo's
 [`@<repo> devs`](#sync-roles) role.

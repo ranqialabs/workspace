@@ -2,6 +2,10 @@
 
 Both tools reach Discord through the `Workspace` protocol rather than a client of
 their own: the run already belongs to a thread, and the workspace knows which.
+
+`teammates` lives here rather than beside either system's tools because the
+mapping is Discord's: the member is the key a GitHub login and a Linear email meet
+through, and neither system knows about the other.
 """
 
 from pydantic_ai import FunctionToolset, RunContext, ToolFailed
@@ -28,15 +32,25 @@ def toolset() -> FunctionToolset[Deps]:
 
     @tools.tool
     def teammates(ctx: RunContext[Deps]) -> list[dict[str, str]]:
-        """Who can be assigned, as `login` and the `name` people call them by.
+        """Who is who here: the `name` people use, and the accounts it maps to.
 
-        The conversation uses first names; GitHub only takes logins. Resolve any
-        name through this list before setting `assignee` — a name that isn't
-        here has no GitHub account we know of.
+        The conversation uses first names; GitHub takes a `github` login and
+        Linear takes a `linear` email. Resolve any name through this list before
+        setting `assignee` or filtering by a person — a name that isn't here has
+        no account we know of, and a first name is not a login.
+
+        The two account fields fill in independently, because they are separate
+        mappings on the same person. An empty `github` means nobody ran
+        `/map github` for them; an empty `linear` means nobody ran `/map linear`,
+        **not** that they have no work in Linear. Say which half you have rather
+        than reporting an empty board for the half you don't.
         """
-        mapped = ctx.deps.workspace.teammates()
+        mapped = ctx.deps.workspace.people()
         if not mapped:
-            raise ToolFailed("nobody is mapped yet; `/map user` links a login")
-        return [{"login": login, "name": name} for login, name in mapped.items()]
+            raise ToolFailed(
+                "nobody is mapped yet; `/map github` links a login and "
+                "`/map linear` links a Linear member"
+            )
+        return mapped
 
     return tools

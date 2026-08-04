@@ -168,7 +168,7 @@ you can check, and one that paraphrases a hunch isn't.
 | `similar_issues` | is this already filed? |
 | `list_issues` | the board, filtered by assignee, creator, mentioned or label |
 | `repo_labels` | the labels this repo actually has |
-| `teammates` | mapped GitHub logins, and the names people call them by |
+| `teammates` | who is who here: the name people use, and the GitHub and Linear accounts it maps to |
 
 A question about people — *"tem alguma issue pra mim?"*, *"o que está livre pra
 pegar?"* — is a filter, so `list_issues` asks GitHub for that slice rather than
@@ -186,6 +186,56 @@ some repo, it reads the list instead of inferring absence from an empty search.
 An unindexed private repo answers a search exactly like an empty one, so
 inferring is how it used to send people looking for a repo that was there all
 along.
+
+### The Linear side
+
+With [Linear configured](configuration.md), it reads the board too — the same
+read-only shape, no writes:
+
+| Tool | What it's for |
+| :--- | :------------ |
+| `linear_teams` | the shape of the workspace, and the only tool that settles "can you see X" |
+| `linear_vocabulary` | this workspace's own words for status and label — they aren't GitHub's |
+| `linear_projects` | projects with their lead, health, progress and target date |
+| `linear_initiatives` | the widest container: what the quarter is about |
+| `linear_cycles` | what a team is meant to finish in this stretch |
+| `linear_members` | everyone in the workspace, marking who is mapped to Discord |
+| `linear_issues` | the board, filtered by team, project, assignee, status, label or recency |
+| `linear_issue` | one issue in full — including the GitHub links it points at |
+| `linear_documents`, `linear_document` | specs and decisions written down rather than tracked |
+
+**Code goes to GitHub; Linear holds the rest.** The work that isn't directly code,
+and the issue that *groups* several that are — so a Linear issue often points at
+GitHub rather than containing anything, and `linear_issue` hands back those links so
+the agent can follow them and read that side too. Plenty of questions span both, and
+answering half of one as though it were the whole thing is the mistake this split is
+meant to prevent.
+
+Reading Linear is mostly about **situating** something: which team owns it, which
+project it's under, who's holding it. That's why the vocabulary tools matter — a
+status name is per-team and arbitrary, so one team's *In Review* is another's
+*Reviewing*, and a guessed status is a filter that matches nothing and reads like an
+empty board.
+
+An empty listing is more ambiguous here than on GitHub, and the agent is told to say
+so. The app's token reaches only the teams it was granted, so a missing name is one
+of three things — absent, ungranted, or filtered out — and `linear_teams` is what
+tells them apart. It should never report *"that project doesn't exist"* when the
+honest answer is *"I can't see it"*.
+
+!!! info "Two directions on people"
+
+    [`teammates`](commands.md#map-linear) starts from Discord, so somebody who exists
+    in Linear and was never mapped is invisible to it. `linear_members` starts from
+    Linear and shows the whole workspace, marking who still needs `/map linear` run
+    for them. Somebody mapped on one side and not the other is normal — the agent
+    says which half it has rather than reporting an empty board for the half it
+    doesn't.
+
+Two of these are held back until needed. The document tools are only ever reached
+after a listing pointed at one, so they're discovered on demand rather than shipped
+in every request — the tool list stays cheap for the many questions that never touch
+Linear at all.
 
 ### Watching it work
 
@@ -238,12 +288,14 @@ Looked at: 3x reading, 1x searching code, 1x checking for duplicates, 12s.
 
 !!! info "Why `teammates` exists"
 
-    People ask for each other by first name; GitHub only accepts logins. The
-    agent resolves a name to a login through the [`/map user`](commands.md#map-user)
-    mappings, read fresh on every call — so a `/map user` run while a draft is
-    open reaches the next revision. If nobody matches, it leaves the assignee
-    empty and asks in *Open questions* rather than guessing: a login that doesn't
-    exist gets rejected, and one that does assigns a stranger.
+    People ask for each other by first name; GitHub accepts only logins and Linear
+    only emails. The agent resolves a name to both through the
+    [`/map github`](commands.md#map-github) and
+    [`/map linear`](commands.md#map-linear) mappings, read fresh on every call — so
+    a mapping run while a draft is open reaches the next revision. If nobody
+    matches, it leaves the assignee empty and asks in *Open questions* rather than
+    guessing: a login that doesn't exist gets rejected, and one that does assigns a
+    stranger.
 
 ## Answering
 
@@ -415,5 +467,9 @@ The agent is the one feature with requirements beyond the rest of the bridge:
   See [Setup](configuration.md#1-the-github-app).
 - **A model API key** — `OPENAI_API_KEY` by default. Override the model with
   `AGENT_MODEL` (any [pydantic-ai] model string).
+
+Reading Linear is optional on top of that: with `LINEAR_CLIENT_ID` and
+`LINEAR_CLIENT_SECRET` unset, the Linear tools say Linear isn't configured and
+everything else runs unchanged. See [Setup](configuration.md#linear-optional).
 
 [pydantic-ai]: https://ai.pydantic.dev/models/
