@@ -223,7 +223,7 @@ message still makes sense. New issues and PRs-ready also ping the repo's
 | `pull_request` (`opened` non-draft / `ready_for_review`) | a PR is ready for review | title, body, author — pings `@<repo> devs` |
 | `pull_request` (`review_requested`) | a review is requested | who wants whom to review — pings the reviewer |
 | `pull_request` (`closed`) | a PR is merged or closed | 🟣 merged / 🔴 closed, who did it — pings the author |
-| `pull_request_review` (`submitted`) | a review is submitted | reviewer, verdict (✅ approved / 🔴 changes / 💬 comment) + body — pings the PR author |
+| `pull_request_review` (`submitted`) | a review is submitted | reviewer, verdict (✅ approved / 🔴 changes / 💬 comment) + body, on one live card per reviewer counting their comments — pings the PR author |
 | `workflow_run` (`completed`) | a workflow on the default branch finishes | a line on the commit's [pipeline card](#pipeline-card), titled with the commit's subject: the workflow's name, ✅ passed / ❌ failed, and how long it took |
 | `check_run` (`completed`) | a job within that workflow finishes | the job's name on the same line, so it reads `workflow / job` the way GitHub names a check |
 | `deployment_status` | a deploy changes state | a line on the same card: 🚀 the environment deployed to, 🕒 deploying → ✅ deployed / ❌ failed, linking the live URL and the logs |
@@ -233,12 +233,18 @@ function per event — so restyling or adding an event is a self-contained chang
 
 !!! info "Live messages — edited, not repeated"
 
-    An issue and a commit's pipeline each keep **one live message** that the
-    bridge *edits* in place as state changes (an issue gets assigned then closed;
-    a deploy goes pending → done) — instead of stacking a new message per change.
-    It only edits while that message is still recent (under an hour) and still the
-    last thing in the channel; once it's buried or stale, the next change posts
-    fresh. PRs and reviews always post a new message.
+    An issue, a commit's pipeline and one reviewer's review each keep **one live
+    message** that the bridge *edits* in place as state changes (an issue gets
+    assigned then closed; a deploy goes pending → done; a reviewer's comments add
+    up) — instead of stacking a new message per change. It only edits while that
+    message is still recent (under an hour) and still the last thing in the
+    channel; once it's buried or stale, the next change posts fresh. Other PR
+    events always post a new message.
+
+    Reviews are keyed **per reviewer**, so two people reviewing the same PR get a
+    card each. Commenting on a diff fires one event per thread, so a reviewer
+    leaving five comments edits one card that says `5 comments` rather than
+    posting five identical ones.
 
 !!! info "An issue submitted from Discord posts once, not twice"
 

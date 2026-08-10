@@ -3,6 +3,7 @@ in, Rendered or None out); add a renderer and register it in RENDERERS."""
 
 import re
 from collections.abc import Callable
+from enum import Enum
 from typing import NamedTuple, Protocol
 
 import discord
@@ -54,14 +55,26 @@ class Mentions(Protocol):
     def role(self, repo_full_name: str) -> str | None: ...
 
 
+class Merge(Enum):
+    """How a keyed render folds into the card already in the channel.
+
+    `NONE` replaces it: the new state is the whole story (an issue reopened). The
+    rest accumulate, each in the way its own events arrive — a pipeline grows a
+    line per step, a review counts the comments that keep coming.
+    """
+
+    NONE = "none"
+    PIPELINE = "pipeline"
+    REVIEW = "review"
+
+
 class Rendered(NamedTuple):
     content: str | None  # ping text, shown above the embed
     embed: discord.Embed | None
     # entity id; if set, edit the live message in place instead of posting anew
     key: str | None = None
-    # when set, this card is one line of a running summary: the live message keeps
-    # every field it already had, and this render only adds/replaces its own.
-    merge: bool = False
+    # how this card combines with the one already on screen; see `Merge`.
+    merge: Merge = Merge.NONE
 
 
 def _ping(*mentions: str | None) -> str | None:
@@ -239,7 +252,56 @@ def _pull_request(payload: dict, m: Mentions) -> Rendered | None:
     return renderer(payload, m) if renderer else None
 
 
+_COMMENTS = "Comments"
+
+
+def review_count(card: discord.Embed) -> int:
+    """How many comments a review card already stands for.
+
+    Read off the card, like every other live message: the channel is the truth, so
+    a restart doesn't reset the tally.
+    """
+    for field in card.fields:
+        if field.name == _COMMENTS:
+            leading = (field.value or "").split(" ", 1)[0]
+            return int(leading) if leading.isdigit() else 0
+    return 0
+
+
+def merge_review(into: discord.Embed, previous: discord.Embed) -> discord.Embed:
+    """Fold a review card into the one on screen: add up the comments.
+
+    A verdict carries no tally of its own, so it keeps what was counted before it
+    rather than adding to it — it concludes those comments instead of being one.
+    """
+    total = review_count(previous) + review_count(into)
+    if not total:
+        return into
+    into.clear_fields()
+    into.add_field(
+        name=_COMMENTS,
+        value=f"{total} comment" + ("s" if total != 1 else ""),
+        inline=False,
+    )
+    return into
+
+
+def review_key(repo_full_name: str, number: int, reviewer: str) -> str:
+    """The live-message key for one person's review of one PR.
+
+    Keyed by reviewer as well as PR: two people reviewing the same PR are two
+    conversations, and one card would have each edit overwrite the other's verdict.
+    """
+    return f"review:{repo_full_name}:{number}:{reviewer}"
+
+
 def _pull_request_review(payload: dict, m: Mentions) -> Rendered | None:
+    """One live card per reviewer per PR: the verdict, and how much was said.
+
+    Commenting on a diff without batching fires a `submitted` event per thread, all
+    of them `state: "commented"`, so the card is keyed and counts them rather than
+    standing for the one event that drew it.
+    """
     if payload.get("action") != "submitted":
         return None
     review, pr, gh_repo = (
@@ -252,18 +314,28 @@ def _pull_request_review(payload: dict, m: Mentions) -> Rendered | None:
     verb = {"approved": "approved", "changes_requested": "requested changes on"}.get(
         state, "commented on"
     )
+    reviewer_login = review["user"]["login"]
     pr_author = m.user(pr["user"]["login"])
     embed = _embed(
         gh_repo,
         author=f"{icon} Review · {gh_repo['name']}",
         title=_pr_title(pr),
-        url=review.get("html_url") or pr["html_url"],
-        description=f"{m.user(review['user']['login'])} {verb} {pr_author}'s PR"
+        # The PR, not this one comment: the card stands for all of them, and the
+        # fifth thread is a worse place to land than the PR itself.
+        url=pr["html_url"],
+        description=f"{m.user(reviewer_login)} {verb} {pr_author}'s PR"
         + (f"\n\n{body}" if (body := _body(review)) else ""),
         color=GREEN if state == "approved" else BLUE,
         when=review.get("submitted_at"),
     )
-    return Rendered(content=_ping(pr_author), embed=embed)
+    if state not in ("approved", "changes_requested"):
+        embed.add_field(name=_COMMENTS, value="1 comment", inline=False)
+    return Rendered(
+        content=_ping(pr_author),
+        embed=embed,
+        key=review_key(gh_repo["full_name"], pr["number"], reviewer_login),
+        merge=Merge.REVIEW,
+    )
 
 
 # --- the pipeline card (workflows + deploys for one commit) ---
@@ -378,7 +450,7 @@ def _pipeline_card(
         content=None,
         embed=embed,
         key=pipeline_key(gh_repo["full_name"], sha),
-        merge=True,
+        merge=Merge.PIPELINE,
     )
 
 

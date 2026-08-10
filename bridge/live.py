@@ -7,12 +7,13 @@ truth; a per-key asyncio.Lock serialises locate-then-post against concurrent
 aiohttp webhooks.
 
 An entity whose state *replaces* what came before (an issue) publishes plainly.
-One that *accumulates* (a commit's checks and deploys, arriving as separate
-webhooks) publishes with `merge=True`, growing a line per step.
+One that *accumulates* names how it folds (`render.Merge`): a commit's checks and
+deploys grow a line per step, a reviewer's comments add up to a count.
 """
 
 import asyncio
 import datetime as dt
+from collections.abc import Callable
 
 import discord
 
@@ -23,9 +24,11 @@ from bridge.render import (
     PASSED,
     RED,
     RUNNING,
+    Merge,
     decode,
     encode,
     headlined,
+    merge_review,
     merge_step_name,
     step_key,
 )
@@ -88,6 +91,12 @@ def _reverdict(card: discord.Embed) -> None:
         card.set_author(name=icon + author[1:], url=card.author.url)
 
 
+_FOLD: dict[Merge, Callable[[discord.Embed, discord.Embed], discord.Embed]] = {
+    Merge.PIPELINE: merge_into,
+    Merge.REVIEW: merge_review,
+}
+
+
 class LiveMessages:
     def __init__(self, ttl: dt.timedelta = _TTL, scan_limit: int = _SCAN_LIMIT) -> None:
         self._ttl = ttl
@@ -104,22 +113,23 @@ class LiveMessages:
         content: str | None,
         embed: discord.Embed,
         *,
-        merge: bool = False,
+        merge: Merge = Merge.NONE,
     ) -> None:
         """Edit this entity's fresh live message if it exists, else post one.
         Serialised per key so concurrent webhooks can't both post.
 
-        With `merge`, the edit keeps the summary already on the live message (its
-        fields and its verdict) instead of replacing it — and only looks back
+        A merging `merge` keeps what the live message already summarised instead of
+        replacing it, each kind in its own way (`_FOLD`) — and only looks back
         `_MERGE_WINDOW`, so a finished card isn't reopened much later.
         """
         stamp(embed, key)
+        fold = _FOLD.get(merge)
         async with self._lock_for(key):
-            ttl = min(self._ttl, _MERGE_WINDOW) if merge else self._ttl
+            ttl = min(self._ttl, _MERGE_WINDOW) if fold else self._ttl
             existing = await self._locate(channel, key, ttl)
             if existing is not None:
-                if merge and existing.embeds:
-                    merge_into(embed, existing.embeds[0])
+                if fold and existing.embeds:
+                    fold(embed, existing.embeds[0])
                 await existing.edit(content=content, embed=embed)
                 return
             # send() rejects content=None; pass only what we have.
