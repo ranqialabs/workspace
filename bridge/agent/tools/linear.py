@@ -139,10 +139,12 @@ def _person(value: object) -> str:
     return _named(value, "displayName") or _named(value)
 
 
-def _more(connection: object) -> bool:
-    """Whether there is at least one. Linear exposes no count on every connection,
-    so the cheap ask is `hasNextPage` on an empty page."""
-    return bool(_page(connection).get("hasNextPage"))
+def _any(connection: object) -> bool:
+    """Whether there is at least one — the `has_members`/`has_comments` question,
+    not whether a page was clipped. Linear exposes no count on every connection, so
+    the cheap ask is a one-row page and whether anything came back; `first: 0` says
+    the same thing more directly but Linear rejects it as an invalid argument."""
+    return bool(_nodes(connection))
 
 
 # What "not finished" means, for the counts that answer "is anyone on this".
@@ -185,7 +187,7 @@ query Teams($rows: Int!, $after: String) {
       name
       description
       activeCycle { number name startsAt endsAt progress }
-      members(first: 0) { pageInfo { hasNextPage } }
+      members(first: 1) { nodes { id } }
     }
   }
 }
@@ -213,8 +215,8 @@ query Projects(
       lead { name displayName }
       teams(first: 5) { nodes { key } }
       initiatives(first: 3) { nodes { name } }
-      issues(first: 0, filter: { state: { type: { in: $open } } }) {
-        pageInfo { hasNextPage }
+      issues(first: 1, filter: { state: { type: { in: $open } } }) {
+        nodes { id }
       }
     }
   }
@@ -249,7 +251,7 @@ query Cycles($rows: Int!, $filter: CycleFilter) {
       endsAt
       progress
       team { key }
-      issues(first: 0) { pageInfo { hasNextPage } }
+      issues(first: 1) { nodes { id } }
     }
   }
 }
@@ -341,7 +343,7 @@ query Issue($id: String!) {
     parent { identifier }
     children(first: 20) { nodes { identifier } }
     attachments(first: 10) { nodes { url } }
-    comments(first: 0) { pageInfo { hasNextPage } }
+    comments(first: 1) { nodes { id } }
   }
 }
 """
@@ -421,7 +423,7 @@ def toolset() -> FunctionToolset[Deps]:
                     str(node.get("description") or ""), MAX_SUMMARY_CHARS
                 ),
                 "cycle": _cycle(node.get("activeCycle")),
-                "has_members": _more(node.get("members")),
+                "has_members": _any(node.get("members")),
             }
             for node in _nodes(teams)
         ]
@@ -472,7 +474,7 @@ def toolset() -> FunctionToolset[Deps]:
         clipped_off = [
             noun
             for noun, connection in (("states", states), ("labels", labels))
-            if _more(connection)
+            if _page(connection).get("hasNextPage")
         ]
         return ToolReturn(
             {"states": grouped, "labels": _names(labels)},
@@ -531,7 +533,7 @@ def toolset() -> FunctionToolset[Deps]:
                 "target_date": when(node.get("targetDate")),
                 "started_at": when(node.get("startedAt")),
                 "updated_at": when(node.get("updatedAt")),
-                "has_open_issues": _more(node.get("issues")),
+                "has_open_issues": _any(node.get("issues")),
                 "summary": clipped(
                     str(node.get("description") or ""), MAX_DESCRIPTION_CHARS
                 ),
@@ -596,7 +598,7 @@ def toolset() -> FunctionToolset[Deps]:
                 "starts_at": when(node.get("startsAt")),
                 "ends_at": when(node.get("endsAt")),
                 "progress": node.get("progress"),
-                "has_issues": _more(node.get("issues")),
+                "has_issues": _any(node.get("issues")),
             }
             for node in _nodes(cycles)
         ]
@@ -742,7 +744,7 @@ def toolset() -> FunctionToolset[Deps]:
             "parent": _named(node.get("parent"), "identifier"),
             "children": _names(node.get("children"), "identifier"),
             "links": _names(node.get("attachments"), "url"),
-            "has_comments": _more(node.get("comments")),
+            "has_comments": _any(node.get("comments")),
         }
         return row
 
