@@ -1,19 +1,13 @@
 """Everything the agent may read from Linear: teams, projects, issues, documents.
 
-Read-only by construction, like the GitHub toolset: no create, update or comment
-tool, so a confused model can waste tokens but cannot change anything. Here the
-credential agrees — the app asks for the `read` scope and nothing else.
+Read-only by construction, like the GitHub toolset, and here the credential
+agrees: the app asks for the `read` scope and nothing else.
 
-GraphQL over `bridge.linear` rather than Linear's MCP server, for the reason
-recorded in `github.py`: an MCP server would mean a second identity and dozens of
-tool definitions in every request's context.
-
-Two shapes differ from the GitHub side and both are deliberate. Listings page by
-cursor rather than by number, because that is what Linear offers — see
-`more_pages`. And an empty listing is three-way ambiguous rather than two-way: an
-app-actor token reaches only the teams it was granted, so a name that is missing
-may be absent, ungranted, or filtered out. `_nothing_matched` says all three, and
-`linear_teams` is what settles which.
+Two shapes differ from the GitHub side. Listings page by cursor rather than by
+number, because that is what Linear offers. And an empty listing is three-way
+ambiguous rather than two-way: an app-actor token reaches only the teams it was
+granted, so a missing name may be absent, ungranted, or filtered out —
+`_nothing_matched` says all three.
 """
 
 from typing import Any, Literal, cast
@@ -35,84 +29,62 @@ from bridge.agent.tools._shared import (
 from bridge.linear import Node, nodes as _nodes
 
 INSTRUCTIONS = """\
-Linear is where this team keeps the work that is not directly code, and the
-containers that hold work together: teams, projects, initiatives, cycles. Code
-goes to GitHub. So a Linear issue often *points at* GitHub rather than containing
-anything — read its `links` and follow them. Reading Linear is mostly about
-situating something: which team owns it, which project it belongs to, which
-initiative that project is under, and who is holding it right now. Plenty of
-questions are about both systems, and answering half of one as though it were the
-whole thing is the mistake to avoid.
+Linear holds the work that is not directly code, and the containers that group it:
+teams, projects, initiatives, cycles. Code goes to GitHub, so a Linear issue often
+*points at* GitHub rather than containing anything — read its `links` and follow
+them. Plenty of questions are about both systems, and answering half of one as
+though it were the whole thing is the mistake to avoid.
 
-`linear_teams` is the map, and it is the one tool that settles what you can see.
-This app acts with a token granted specific teams, so a team, project or person
-missing from Linear is one of two things — absent, or never granted — and those
-are very different things to tell somebody. Never say a project does not exist
-because a listing came back empty; read `linear_teams` and say which it is. Asked
-whether you can see some team, read it before answering.
+`linear_teams` settles what you can see. This app acts with a token granted
+specific teams, so anything missing is one of two things — absent, or never
+granted — and those are very different things to tell somebody. Never say a
+project does not exist because a listing came back empty.
 
 `linear_vocabulary` is this workspace's own words for status and label. State
-names are per-team and arbitrary — one team's "In Review" is another's
-"Reviewing" — so filter `linear_issues` by `status`, which is the state *type* and
-is the same in every team, and reach for a team's own names only when the question
-is really about one team's column. Never assert a status or a label that isn't in
-the vocabulary.
+names are per-team and arbitrary, so filter `linear_issues` by `status`, which is
+the state *type* and the same everywhere. Never assert a status or label that
+isn't in the vocabulary.
 
-Two id forms, and they are not interchangeable. People say `RAN-123` out loud, and
-that is what `linear_issue` takes and what every listing row carries. A uuid is
-what a listing hands back for a team or a document. Quote what the person said
-rather than translating it.
+Two id forms, not interchangeable. People say `RAN-123` out loud, which is what
+`linear_issue` takes and what every listing row carries; a uuid is what a listing
+hands back for a team or a document. Quote what the person said.
 
 An empty filtered listing is not an empty workspace. `linear_issues` and
 `linear_projects` both default to what is in flight, so backlog and planned work
-is invisible until you ask for `all` — check that before telling anyone something
-is not in Linear.
+is invisible until you ask for `all`.
 
-A question about a person — "o que a Ana está fazendo?", "tem algo pra mim?" — is
-a filter, not a listing to read by eye. `teammates` gives you the people here and
-both accounts each one maps to; `linear_issues` takes the Linear one as
+A question about a person is a filter, not a listing to read by eye. `teammates`
+maps the people here to both accounts, and `linear_issues` takes the Linear one as
 `assignee_email`. Somebody with no `linear` there is not somebody with no Linear
-work: say that `/map linear` hasn't run for them rather than reporting an empty
-board. `linear_members` is the other direction — everyone in the workspace,
-including the ones nobody has mapped yet.
+work: say `/map linear` hasn't run for them rather than reporting an empty board.
 
-A listing that didn't fit says so and hands you a cursor. Pass it back as `after`
-rather than reporting the first page as the whole list; Linear pages by cursor, so
-unlike GitHub there is no page number to ask for.
+A listing that didn't fit hands you a cursor. Pass it back as `after`; Linear pages
+by cursor, so unlike GitHub there is no page number to ask for.
 
 You cannot change anything in Linear. Asked to create, move, assign or close
-something there, say so and say who can — reading is all these tools do.
+something there, say so and say who can.
 """
 
 type IssueStatus = Literal[
     "backlog", "unstarted", "started", "completed", "canceled", "all"
 ]
-"""A workflow state's *type*, which is the only status name that means the same
-thing in every team. A team's own state names are its own, so filtering by type is
-what works across teams; `linear_vocabulary` lists the names."""
+"""A workflow state's *type*, the only status name that means the same thing in
+every team. `linear_vocabulary` lists a team's own names."""
 
 type ProjectState = Literal[
     "planned", "started", "paused", "completed", "canceled", "all"
 ]
 """A project's own status type, which Linear keeps separate from an issue's."""
 
-# Rows in one page. Named apart from MAX_RESULTS because it caps a GraphQL `first`
-# argument rather than a REST `per_page`, but deliberately the same number: it is a
-# budget on the model's context, not a property of either API.
 ROWS = MAX_RESULTS
-# A description on a listing row is a summary; the full text is one call away.
 MAX_DESCRIPTION_CHARS = 400
+# Not `ROWS`: short names grouped by type, and six teams have more than fifteen.
+STATES = 60
 
 
 def _nothing_matched(noun: str, given: dict[str, str | None]) -> str:
-    """An empty listing, said as the filters that emptied it and the two other
-    things it could be.
-
-    Three-way where GitHub's is two-way: under an app-actor token an absent team or
-    project is ambiguous between "does not exist", "was never granted to this app",
-    and "the filter excluded it". A bare empty list reads as the first, which is
-    the one answer that sends people looking for work that was there all along.
-    """
+    """An empty listing, said as the filters that emptied it — a bare empty list
+    reads as "this does not exist", which under an app-actor token it may not."""
     filters = applied(given)
     if not filters:
         return (
@@ -131,12 +103,8 @@ def _nothing_matched(noun: str, given: dict[str, str | None]) -> str:
 
 
 def _not_found(what: str, which: str) -> ToolFailed:
-    """A singular lookup that came back null.
-
-    A failure rather than an empty answer: under an app-actor token, null and 404
-    are indistinguishable, so the one thing this must not do is let the model
-    conclude the thing does not exist.
-    """
+    """A lookup that came back null. A failure rather than an empty answer: null
+    and "not granted" are indistinguishable here."""
     return ToolFailed(
         f"No {what} {which} — which may mean it does not exist, or that it is in a "
         "team this app was not granted. `linear_teams` lists the teams reachable "
@@ -154,9 +122,8 @@ def _page(connection: object) -> Node:
 
 
 def _named(value: object, key: str = "name") -> str:
-    """One field off a nested object, or "" — all of these are nullable in Linear
-    (an unassigned lead, an issue in no project), and a row wants "" over a None
-    the model reads as a field it got wrong."""
+    """One field off a nested object, or "" — these are all nullable in Linear, and
+    a row wants "" over a None the model reads as a field it got wrong."""
     if not isinstance(value, dict):
         return ""
     return str(value.get(key) or "")
@@ -173,11 +140,8 @@ def _person(value: object) -> str:
 
 
 def _more(connection: object) -> bool:
-    """Whether a `first: 0` count connection says there is at least one.
-
-    Linear exposes no count on every connection, so the cheap "are there any" is
-    `hasNextPage` on an empty page.
-    """
+    """Whether there is at least one. Linear exposes no count on every connection,
+    so the cheap ask is `hasNextPage` on an empty page."""
     return bool(_page(connection).get("hasNextPage"))
 
 
@@ -186,12 +150,8 @@ _OPEN = ["backlog", "unstarted", "started"]
 
 
 def _filter(**given: object) -> dict[str, Any]:
-    """A Linear filter, with the absent conditions left out entirely.
-
-    Built in Python rather than spelled in the query: `{ null: true }` is a real
-    comparator meaning *is null*, so a null passed through would ask for rows whose
-    field is unset rather than for no filter at all.
-    """
+    """A Linear filter with the absent conditions dropped. Built here rather than
+    in the query because `{ null: true }` means *is null*, not *no filter*."""
     return {key: value for key, value in given.items() if value is not None}
 
 
@@ -295,21 +255,42 @@ query Cycles($rows: Int!, $filter: CycleFilter) {
 }
 """
 
-_MEMBERS = """
-query Members($rows: Int!, $after: String, $filter: UserFilter) {
-  users(first: $rows, after: $after, filter: $filter) {
-    pageInfo { hasNextPage endCursor }
-    nodes {
-      name
-      displayName
-      email
-      active
-      admin
-      teams(first: 10) { nodes { key } }
-    }
+# A fragment rather than a copied selection: both member queries return the same
+# `UserConnection` and feed the same row, so the two cannot drift on what a member
+# is. Appended to each document, since a fragment travels with the query using it.
+_MEMBER_FIELDS = """
+fragment MemberFields on UserConnection {
+  pageInfo { hasNextPage endCursor }
+  nodes {
+    name
+    displayName
+    email
+    active
+    admin
+    teams(first: 10) { nodes { key } }
   }
 }
 """
+
+_MEMBERS = (
+    """
+query Members($rows: Int!, $after: String) {
+  users(first: $rows, after: $after) { ...MemberFields }
+}
+"""
+    + _MEMBER_FIELDS
+)
+
+_TEAM_MEMBERS = (
+    """
+query TeamMembers($team: String!, $rows: Int!, $after: String) {
+  team(id: $team) {
+    members(first: $rows, after: $after) { ...MemberFields }
+  }
+}
+"""
+    + _MEMBER_FIELDS
+)
 
 _ISSUES = """
 query Issues($rows: Int!, $after: String, $filter: IssueFilter) {
@@ -366,8 +347,9 @@ query Issue($id: String!) {
 """
 
 _VOCABULARY = """
-query Vocabulary($rows: Int!, $filter: WorkflowStateFilter) {
-  workflowStates(first: 60, filter: $filter) {
+query Vocabulary($rows: Int!, $states: Int!, $filter: WorkflowStateFilter) {
+  workflowStates(first: $states, filter: $filter) {
+    pageInfo { hasNextPage endCursor }
     nodes { name type position team { key } }
   }
   issueLabels(first: $rows) {
@@ -423,19 +405,11 @@ def toolset() -> FunctionToolset[Deps]:
         ctx: RunContext[Deps], after: str | None = None
     ) -> ToolReturn[list[dict[str, object]]]:
         """Every team you can read, with its current cycle. The one tool that
-        settles "can you see X" — a team absent here is one you cannot read.
+        settles "can you see X": a team missing here either does not exist or was
+        never granted to this app, so read it before calling anything absent.
 
-        Asks what this token reaches, so this is access, not existence: a team
-        missing from it either does not exist or was never granted to this app.
-        Read it before saying a team, or anything inside one, is absent — saying
-        something is absent when it was only ungranted sends people looking for
-        work that was there all along.
-
-        It is also where team `key`s come from ("RAN"), which is what
-        `linear_issues`, `linear_projects` and `linear_cycles` filter on, and what
-        the front half of `RAN-123` is. Never guess one.
-
-        `cycle` is the team's cycle in flight, or null for a team that runs none.
+        Also where team `key`s come from ("RAN"), which is what `linear_issues`,
+        `linear_projects` and `linear_cycles` filter on. Never guess one.
         """
         data = await ctx.deps.linear.query(_TEAMS, {"rows": ROWS, "after": after})
         teams = data.get("teams")
@@ -451,8 +425,7 @@ def toolset() -> FunctionToolset[Deps]:
             }
             for node in _nodes(teams)
         ]
-        # An empty answer here means the token reaches no teams at all, which is
-        # worth saying outright: every other tool's emptiness is explained by it.
+        # Empty here explains every other tool's emptiness, so it is said outright.
         return ToolReturn(
             rows,
             content=(
@@ -471,20 +444,16 @@ def toolset() -> FunctionToolset[Deps]:
     async def linear_vocabulary(
         ctx: RunContext[Deps], team: str | None = None
     ) -> ToolReturn[dict[str, object]]:
-        """This workspace's own words for status and label.
+        """This workspace's own words for status and label. Read it before you
+        assert or propose either — a status you guessed matches nothing and reads
+        as an empty board. Pass a team `key` for one team's columns.
 
-        Read it before you assert or propose either. Statuses are per-team and
-        arbitrary — one team's "In Review" is another's "Reviewing" — so a status
-        you guessed is a filter that matches nothing and reads as an empty board.
-        Pass a team `key` to see only that team's, which is what you want when the
-        question is about one team's column.
-
-        `states` are grouped by the `type` that `linear_issues` filters on, and
-        that type is the same in every team; the names inside are not. Filter by
-        type, and use these names only to say what you found.
+        `states` are grouped by the `type` that `linear_issues` filters on. Filter
+        by type, which is the same everywhere; use these names only to report.
         """
         data = await ctx.deps.linear.query(
-            _VOCABULARY, {"rows": ROWS, "filter": _filter(team=_eq_key(team))}
+            _VOCABULARY,
+            {"rows": ROWS, "states": STATES, "filter": _filter(team=_eq_key(team))},
         )
         grouped: dict[str, list[str]] = {}
         # Sorted by Linear's own board order, so `started` reads left to right.
@@ -496,9 +465,23 @@ def toolset() -> FunctionToolset[Deps]:
             if name and kind:
                 grouped.setdefault(kind, []).append(name)
         labels = data.get("issueLabels")
+        states = data.get("workflowStates")
+        # This tool takes no cursor, so a clipped vocabulary can only be said, not
+        # paged past — and saying it matters: the instructions tell the model never
+        # to assert a status outside this list.
+        clipped_off = [
+            noun
+            for noun, connection in (("states", states), ("labels", labels))
+            if _more(connection)
+        ]
         return ToolReturn(
             {"states": grouped, "labels": _names(labels)},
-            content=more_pages(_page(labels), "labels", narrowable=False),
+            content=(
+                f"More {' and '.join(clipped_off)} than fit here — pass a `team` to "
+                "narrow this; treat the list as partial rather than complete."
+                if clipped_off
+                else None
+            ),
         )
 
     # --- the containers work lives in ---
@@ -512,23 +495,16 @@ def toolset() -> FunctionToolset[Deps]:
         state: ProjectState = "started",
         after: str | None = None,
     ) -> ToolReturn[list[dict[str, object]]]:
-        """Projects: who leads them, how they are going, when they are due.
+        """Projects: who leads them, how they are going, when they are due. Usually
+        the answer to "de quem é isso" and "isso faz parte de quê".
 
-        Projects are where the non-code work lives and where code work gets
-        grouped, so this is usually the answer to "de quem é isso" and "isso faz
-        parte de quê".
-
-        - `team`: a `key` from `linear_teams`, not a team's display name.
+        - `team`: a `key` from `linear_teams`, not a display name.
         - `initiative`: an initiative name, for "what is under X".
-        - `state` defaults to `started` — the work in flight. Ask for `all` before
-          saying a project does not exist, because a planned or paused one is
-          invisible by default and looks exactly like an absent one.
+        - `state` defaults to `started`. Ask for `all` before saying a project does
+          not exist — a planned or paused one is invisible by default.
 
-        `health` is the lead's own last call on the project, and it goes stale: a
-        green project nobody has touched in two months is not a green project, so
-        read `updated_at` beside it and say which you are reading.
-
-        A project's issues are not here — `linear_issues(project=)` gets those.
+        `health` is the lead's last call and goes stale, so read `updated_at`
+        beside it. A project's issues are `linear_issues(project=)`.
         """
         given = {"team": team, "initiative": initiative, "state": state}
         variables = {
@@ -536,7 +512,7 @@ def toolset() -> FunctionToolset[Deps]:
             "after": after,
             "open": _OPEN,
             "filter": _filter(
-                accessibleTeams=_eq_key(team),
+                accessibleTeams=_some_key(team),
                 initiatives=_contains_name(initiative),
                 status=_in_type(None if state == "all" else [state]),
             ),
@@ -570,11 +546,9 @@ def toolset() -> FunctionToolset[Deps]:
     async def linear_initiatives(
         ctx: RunContext[Deps], after: str | None = None
     ) -> ToolReturn[list[dict[str, object]]]:
-        """Initiatives, and the projects under each.
-
-        The widest container: what the quarter is about. Carries its projects' names
-        with it, because reading an initiative without them means a second call
-        every time. For a project's own health and dates, `linear_projects`.
+        """Initiatives, and the projects under each — the widest container, what
+        the quarter is about. For a project's own health and dates,
+        `linear_projects`.
         """
         data = await ctx.deps.linear.query(_INITIATIVES, {"rows": ROWS, "after": after})
         initiatives = data.get("initiatives")
@@ -601,12 +575,9 @@ def toolset() -> FunctionToolset[Deps]:
     ) -> ToolReturn[list[dict[str, object]]]:
         """Cycles: what a team is meant to finish in this stretch of time.
 
-        `current_only` keeps it to the cycles running now, which is what "o que tá
-        no sprint" means. Pass False for the ones around it, when the question is
-        about what a team just finished or takes on next.
-
-        `team` is a `key` from `linear_teams`. The work itself is
-        `linear_issues(team=)`, which is the cycle's contents in practice.
+        `current_only` is "o que tá no sprint"; pass False for what a team just
+        finished or takes on next. `team` is a `key` from `linear_teams`, and the
+        work itself is `linear_issues(team=)`.
         """
         variables = {
             "rows": ROWS,
@@ -641,33 +612,39 @@ def toolset() -> FunctionToolset[Deps]:
     ) -> ToolReturn[list[dict[str, object]]]:
         """Everyone in the Linear workspace, mapped to Discord or not.
 
-        The other direction from `teammates`, and the difference matters.
-        `teammates` starts from Discord, so somebody who exists in Linear and was
-        never mapped is invisible there. This starts from Linear and shows the whole
-        workspace, with `mapped` saying which of them the bot can reach back in
-        Discord.
+        The other direction from `teammates`, which starts from Discord and so
+        cannot see anybody unmapped — so this answers "quem ainda falta mapear?"
+        with its `mapped: false` rows, which `/map linear` fixes.
 
-        So this answers both "quem tá no Linear?" and "quem ainda falta mapear?" —
-        for the second, the rows with `mapped: false` are the answer, and
-        `/map linear` is what fixes them.
-
-        `email` is what `linear_issues(assignee_email=)` takes. A display name
-        filters on nothing and comes back empty, which reads as "she has no work".
+        `team` is a `key` from `linear_teams`. `email` is what
+        `linear_issues(assignee_email=)` takes; a display name filters on nothing
+        and comes back empty, reading as "she has no work".
         """
-        variables = {
-            "rows": ROWS,
-            "after": after,
-            "filter": _filter(teams=_eq_key(team)),
+        # Down `Team.members` when a team is named, since `UserFilter` carries no
+        # team field. Both sides hand back a `UserConnection`, so only the query
+        # and where it sits in the answer differ.
+        if team:
+            data = await ctx.deps.linear.query(
+                _TEAM_MEMBERS, {"team": team, "rows": ROWS, "after": after}
+            )
+            node = data.get("team")
+            if not isinstance(node, dict):
+                raise _not_found("team", team)
+            members = node.get("members")
+        else:
+            data = await ctx.deps.linear.query(_MEMBERS, {"rows": ROWS, "after": after})
+            members = data.get("users")
+        # From the store, not Linear: reachability in Discord is Discord's fact.
+        linked = {
+            row["linear"].casefold()
+            for row in ctx.deps.workspace.people()
+            if row.get("linear")
         }
-        data = await ctx.deps.linear.query(_MEMBERS, variables)
-        members = data.get("users")
-        store_linear = ctx.deps.workspace.people()
-        # Mapped emails from the store, not from Linear: whether the bot can reach
-        # somebody in Discord is Discord's fact, and it costs no query.
-        linked = {row["linear"].casefold() for row in store_linear if row.get("linear")}
         rows = [
             {
-                "name": node.get("name") or node.get("displayName"),
+                # Full name first, unlike `_person`: this row is for recognising
+                # somebody to map, not for naming an assignee in passing.
+                "name": _named(node) or _named(node, "displayName"),
                 "email": email,
                 "active": node.get("active"),
                 "admin": node.get("admin"),
@@ -696,10 +673,6 @@ def toolset() -> FunctionToolset[Deps]:
         """Linear's issues, filtered. A page holds 15, so filter rather than
         list-then-sift.
 
-        These are not GitHub's issues. Code goes to GitHub; what is here is the
-        work that is not directly code, or the issue that *groups* several that
-        are — so a row here often points at GitHub rather than containing the work.
-
         - `team`: a `key` from `linear_teams` ("RAN"), not a team name.
         - `project`: a project name from `linear_projects`.
         - `assignee_email`: the `linear` field on `teammates`, or an `email` from
@@ -711,11 +684,9 @@ def toolset() -> FunctionToolset[Deps]:
         - `updated_since`: ISO-8601, absolute (`2026-01-15`) or relative (`-P2W`
           for the last two weeks). For "o que andou essa semana".
 
-        `status` defaults to `started` — what is in flight. Ask for `all` before
-        concluding something is not in Linear, since a backlog item is invisible by
-        default. Say who holds an issue from the row's `assignee`, not from the
-        filter you passed. `linear_issue` reads one in full, by the `identifier` on
-        every row.
+        `status` defaults to `started`. Ask for `all` before concluding something is
+        not in Linear, since a backlog item is invisible by default. `linear_issue`
+        reads one in full, by the `identifier` on every row.
         """
         given = {
             "team": team,
@@ -745,19 +716,15 @@ def toolset() -> FunctionToolset[Deps]:
     @tools.tool
     @reports_linear_failure
     async def linear_issue(ctx: RunContext[Deps], issue: str) -> dict[str, object]:
-        """One Linear issue in full, by the identifier people say: "RAN-123".
+        """One Linear issue in full, by the identifier people say: "RAN-123". When
+        somebody cites one, read it before answering about it.
 
-        When somebody cites one — "aquela RAN-42", "a issue do onboarding" — read it
-        before answering about it. Its `description` is the whole text rather than
-        the clipped `summary` a listing gives you.
+        `links` is where this issue points, usually the GitHub issue or PR holding
+        the actual work — follow it and read that side too. `parent` and `children`
+        say whether this is the grouping issue or one of the grouped.
 
-        `links` is where this issue points, and it is usually the GitHub issue or PR
-        that holds the actual work — follow it and read that side too. `parent` and
-        `children` say whether this is the grouping issue or one of the grouped.
-
-        Takes the `RAN-123` form or a uuid. `comments` are not here; `has_comments`
-        says there is discussion you have not read, which is worth saying rather
-        than implying you read it.
+        `comments` are not here; `has_comments` says there is discussion you have
+        not read, which is worth saying rather than implying you read it.
         """
         data = await ctx.deps.linear.query(_ISSUE, {"id": issue})
         node = data.get("issue")
@@ -791,15 +758,13 @@ def toolset() -> FunctionToolset[Deps]:
     ) -> ToolReturn[list[dict[str, object]]]:
         """Linear documents: specs, decisions, notes that are not an issue.
 
-        Where something was written down rather than tracked. Ask by `query` for
-        words in a title, or by `project` for what is attached to one; with
-        neither, you get the most recently touched, which is a sample and not an
+        Ask by `query` for words in a title, or by `project` for what is attached to
+        one; with neither you get the most recently touched, a sample and not an
         inventory.
 
         Rows carry a clipped `summary` — `linear_document` reads one in full by its
-        `id`. Finding nothing here proves nothing: not every decision was written
-        up, most live in the conversation or the code, and this token reaches only
-        granted teams. Say you did not find one rather than that none exists.
+        `id`. Finding nothing here proves nothing: most decisions live in the
+        conversation or the code. Say you did not find one, not that none exists.
         """
         variables = {
             "rows": ROWS,
@@ -834,11 +799,9 @@ def toolset() -> FunctionToolset[Deps]:
     async def linear_document(
         ctx: RunContext[Deps], document: str
     ) -> dict[str, object]:
-        """One document in full, by the `id` a listing gave you.
-
-        The whole text, not the summary — read this before quoting a spec or a
-        decision, because paraphrasing from a title is how you state as settled
-        something the document never said. Long ones come back clipped and say so.
+        """One document in full, by the `id` a listing gave you. Read it before
+        quoting a spec or a decision: paraphrasing from a title is how you state as
+        settled something the document never said.
         """
         data = await ctx.deps.linear.query(_DOCUMENT, {"id": document})
         node = data.get("document")
@@ -859,14 +822,9 @@ def toolset() -> FunctionToolset[Deps]:
 
 
 def _issue_row(node: Node) -> dict[str, object]:
-    """One issue as a listing shows it.
-
-    Shared by the listing and the single read so the two cannot drift on what an
-    issue's fields are called — the single read adds to this rather than restating
-    it. `priorityLabel` rather than `priority`: an integer where 0 means "no
-    priority" and 1 means "urgent" is an inversion a model gets backwards, and the
-    string costs the same.
-    """
+    """One issue as a listing shows it, shared with the single read so the two
+    cannot drift. `priorityLabel` rather than `priority`, whose 0 means "none" and
+    1 means "urgent" — an inversion a model gets backwards."""
     return {
         "identifier": node.get("identifier"),
         "title": node.get("title"),
@@ -900,8 +858,14 @@ def _cycle(value: object) -> dict[str, object] | None:
 
 
 def _eq_key(key: str | None) -> dict[str, Any] | None:
-    """A nested filter on a team `key`, or None to leave it out."""
+    """A `TeamFilter` on a team `key`, for the fields Linear types as one team."""
     return {"key": {"eq": key}} if key else None
+
+
+def _some_key(key: str | None) -> dict[str, Any] | None:
+    """The same, for a `TeamCollectionFilter` — which takes no `key` of its own,
+    only `some`. `ProjectFilter.accessibleTeams` is the one that needs it."""
+    return {"some": _eq_key(key)} if key else None
 
 
 def _contains_name(name: str | None) -> dict[str, Any] | None:

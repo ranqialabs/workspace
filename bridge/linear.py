@@ -1,13 +1,9 @@
 """Linear client: read the workspace over GraphQL, as the app itself.
 
-GraphQL over httpx rather than Linear's MCP server, which would mean a second
-identity to manage and dozens of tool definitions in every request's context.
-
 Authenticates with the `client_credentials` grant, which yields an app-actor
-token — the bot acts as itself rather than impersonating whoever set it up, and
-costs no billable seat. That token comes with no refresh token, so per Linear's
-guidance this holds one, mints it on first use, and re-mints exactly once on a
-401 before giving up.
+token: the bot acts as itself rather than impersonating whoever set it up, and
+costs no billable seat. That token has no refresh token, so this holds one, mints
+it on first use, and re-mints exactly once on a 401 before giving up.
 
 We ask for `read` and nothing else, so the read-only promise holds at the
 credential and not only in which tools happen to exist.
@@ -43,12 +39,8 @@ class LinearRateLimited(LinearError):
 
 
 class LinearQueryFailed(LinearError):
-    """The query ran and GraphQL returned errors.
-
-    Its own type because a GraphQL error arrives with HTTP 200 and may sit beside
-    partial data, which makes it a bug in our query rather than a transport
-    failure.
-    """
+    """The query ran and GraphQL returned errors. Its own type because that arrives
+    with HTTP 200 and means a bug in our query, not a transport failure."""
 
 
 class Linear:
@@ -57,12 +49,11 @@ class Linear:
     def __init__(self, client_id: str, client_secret: str) -> None:
         self._client_id = client_id
         self._client_secret = client_secret
-        # One client for the process: a client per query would spend a TLS
-        # handshake on each.
+        # One client for the process: one per query would spend a TLS handshake each.
         self._http = httpx.AsyncClient(timeout=_TIMEOUT)
         self._token: str | None = None
-        # Tool calls run concurrently, so two queries can fail on the same expired
-        # token at once. This is what stops them both minting.
+        # Concurrent tool calls can fail on the same expired token; this stops them
+        # both minting.
         self._minting = asyncio.Lock()
 
     async def query(
@@ -82,8 +73,8 @@ class Linear:
         return _data(resp.json())
 
     async def whoami(self) -> str:
-        """The identity this token acts as, so a wrong credential pair fails at
-        boot rather than at somebody's first question."""
+        """The identity this token acts as, so a wrong credential pair fails at boot
+        rather than at somebody's first question."""
         data = await self.query("query Viewer { viewer { id name } }")
         viewer = data.get("viewer") or {}
         return f"{viewer.get('name') or 'unknown'} ({viewer.get('id') or '?'})"
@@ -109,11 +100,8 @@ class Linear:
         return self._token
 
     async def _mint(self, *, stale: str | None) -> None:
-        """Fetch a fresh token, unless someone already replaced `stale`.
-
-        Whichever caller takes the lock first mints; the second finds the token
-        already changed and uses it, so one 401 doesn't become two failures under
-        a rate limit.
+        """Fetch a fresh token, unless someone already replaced `stale` — so one 401
+        doesn't become two failures under a rate limit.
 
         No `expires_in` clock: the 401 path has to be correct anyway, and a second
         mechanism could disagree with the server about when a token died.
@@ -138,11 +126,8 @@ class Linear:
 
 
 def _data(payload: object) -> dict[str, Any]:
-    """A GraphQL response's `data`, raising if it carried errors.
-
-    Raised even when `data` is present: a GraphQL query can partially succeed, and
-    half an answer returned as a whole one is what the tools' caveats prevent.
-    """
+    """A GraphQL response's `data`, raising if it carried errors — even alongside
+    data, since half an answer returned as a whole one is the failure to avoid."""
     if not isinstance(payload, dict):
         raise LinearQueryFailed("Linear's answer was not a GraphQL response.")
     if errors := payload.get("errors"):
@@ -154,11 +139,8 @@ def _data(payload: object) -> dict[str, Any]:
 
 
 def nodes(connection: object) -> list[Node]:
-    """The `nodes` of a GraphQL connection, or nothing readable.
-
-    Total: an unexpected shape is worth an empty listing the caller can explain,
-    not an exception mid-answer.
-    """
+    """The `nodes` of a GraphQL connection. Total: an unexpected shape is worth an
+    empty listing the caller can explain, not an exception mid-answer."""
     if not isinstance(connection, dict):
         return []
     found: object = connection.get("nodes")
@@ -182,11 +164,8 @@ def _said(errors: object) -> str:
 
 
 async def workspace_client(secrets: Secrets) -> Linear | None:
-    """A Linear client, or None when the workspace isn't configured.
-
-    None rather than raising: Linear is optional. `config.load_secrets` has
-    already rejected half a credential pair, so either both are here or neither.
-    """
+    """A Linear client, or None when the workspace isn't configured — Linear is
+    optional. `config.load_secrets` has already rejected half a credential pair."""
     if secrets.linear_client_id is None or secrets.linear_client_secret is None:
         return None
     return Linear(secrets.linear_client_id, secrets.linear_client_secret)

@@ -5,3 +5,5 @@ __pycache__/
 .ruff_cache/
 site/
 .cache/
+# Linear's schema dump, pulled to check a query and too large to carry.
+linear-api.graphql
