@@ -314,8 +314,8 @@ def _pull_request_review(payload: dict, m: Mentions) -> Rendered | None:
     verb = {"approved": "approved", "changes_requested": "requested changes on"}.get(
         state, "commented on"
     )
-    reviewer_login = review["user"]["login"]
-    pr_author = m.user(pr["user"]["login"])
+    reviewer_login, author_login = review["user"]["login"], pr["user"]["login"]
+    pr_author = m.user(author_login)
     embed = _embed(
         gh_repo,
         author=f"{icon} Review · {gh_repo['name']}",
@@ -330,8 +330,11 @@ def _pull_request_review(payload: dict, m: Mentions) -> Rendered | None:
     )
     if state not in ("approved", "changes_requested"):
         embed.add_field(name=_COMMENTS, value="1 comment", inline=False)
+    # The ping exists to tell the author someone looked at their PR. Commenting on
+    # your own is not news to you, so the card still lands and notifies nobody.
+    notify = None if reviewer_login == author_login else _ping(pr_author)
     return Rendered(
-        content=_ping(pr_author),
+        content=notify,
         embed=embed,
         key=review_key(gh_repo["full_name"], pr["number"], reviewer_login),
         merge=Merge.REVIEW,
