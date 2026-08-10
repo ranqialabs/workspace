@@ -105,6 +105,18 @@ other two go straight to an issue, for when that's already what you want.
     decides it needs to. You don't have to choose a number, and you don't have to
     copy a message link: if it can't tell what "isso" means, it goes and looks.
 
+    **One answer at a time per channel.** Mention it while it's still working and
+    your message is queued rather than starting a second run — it replies
+    `💭 queued...` to say so, then picks your turn up when the current answer
+    lands. Everything that piled up goes in as one turn, on the same conversation,
+    so it still has whatever it just read. Another channel is unaffected: the
+    limit is per channel, not global.
+
+    **In a thread it's already in, you don't have to keep mentioning it.** Every
+    message counts as directed at it, so a back-and-forth reads like one. In an
+    ordinary channel it only answers when you name it — a mention, or a reply to
+    something it said.
+
 === "Slash command"
 
     ```text
@@ -438,9 +450,12 @@ Only a few things are the agent's own, and they hold either way:
     handful of messages. The agent then calls `read_conversation` to page further
     back as it decides it needs to, up to 100 messages.
 
-    It reads **only the channel you mentioned it in**, and only messages already
-    there when you asked. It cannot reach another channel, so if you can see the
-    conversation, so can it, and nothing else.
+    It reads **only the channel you mentioned it in**, and what it reads back is
+    bounded by your message: a run's `read_conversation` sees the conversation that
+    led up to the request, not messages posted since. Those aren't lost — one
+    addressed to it is queued and answered as the next turn. It cannot reach
+    another channel, so if you can see the conversation, so can it, and nothing
+    else.
 
 ??? note "When the model fails"
 

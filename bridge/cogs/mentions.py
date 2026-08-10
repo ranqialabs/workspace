@@ -13,10 +13,19 @@ context or fifty.
 
 The GitHub boundary is the same one `/issue` has: a proposed issue arrives as a
 draft card with buttons, and only a human pressing Submit files anything.
+
+One run per channel at a time. Two people mentioning us at once used to start two
+runs that answered over each other and spent the same channel's edit budget
+twice, so a channel with a run in flight queues what arrives instead: the run
+finishes, and what was said meanwhile becomes the next turn of the same
+conversation. Which is also why it reads better — the queued turn keeps the
+history the first one built, rather than starting cold from a fresh seed.
 """
 
+import asyncio
 import contextlib
 import logging
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 import discord
@@ -40,6 +49,34 @@ log = logging.getLogger(__name__)
 # decides it needs to.
 _SEED = 8
 _THINKING = "💭 thinking..."
+_QUEUED = "💭 queued..."
+# Messages back to look for a line of our own, deciding whether a thread is one
+# we're working in. One page, so the check costs at most a single fetch.
+_THREAD_SCAN = 50
+
+
+@dataclass
+class _Conversation:
+    """A channel's run in flight, and what came in while it was running.
+
+    Keyed by channel rather than by person: the run holds one channel's edit
+    budget and answers into one channel's scrollback, so that is the thing there
+    can only be one of. Two people talking to us in the same channel are one
+    conversation as far as this is concerned, which is also how it reads to them.
+    """
+
+    # Held, not read: asyncio keeps only a weak reference to a running task, so
+    # dropping this one would let a run be collected mid-answer. Cancellation is
+    # out of scope, so nothing else needs it.
+    task: asyncio.Task[None]
+    # Messages waiting for the current run to finish, oldest first. Their text is
+    # not flattened here: the drain needs the message itself to reply to it, to
+    # name who spoke, and to read its images.
+    queued: list[tuple[discord.Message, str]] = field(default_factory=list)
+    # The session the run built, handed to the drained turn so it inherits the
+    # history rather than reading the channel again from scratch.
+    session: Session | None = None
+    work: "MentionWorkspace | None" = None
 
 
 class MentionWorkspace(workspace.Workspace):
@@ -67,14 +104,24 @@ class MentionWorkspace(workspace.Workspace):
 
 
 class Mentions(commands.Cog):
-    """Answers a mention. Owns no state: every run reads what it needs."""
+    """Answers a mention, one run per channel at a time.
+
+    State is what is running where (`_active`) and which threads we've spoken in
+    (`_threads`, so an unaddressed line there costs no fetch after the first). A
+    run still reads its own context — no conversation is cached between runs.
+    """
 
     def __init__(self, bot: "BridgeBot") -> None:
         self.bot = bot
+        self._active: dict[int, _Conversation] = {}
+        # Threads we've said something in, so every line there is ours to answer.
+        # Positives only, and rebuilt by a read after a restart, so it is a cache
+        # rather than a record — losing it costs one history fetch.
+        self._threads: set[int] = set()
 
     @commands.Cog.listener()
     async def on_message(self, message: discord.Message) -> None:
-        """Answer when we're mentioned, and stay out of the way otherwise.
+        """Answer when we're spoken to, and stay out of the way otherwise.
 
         This fires for every message in the server, so the order of these tests
         matters: the cheap local ones first, and nothing that costs a fetch until
@@ -83,8 +130,6 @@ class Mentions(commands.Cog):
         me = self.bot.user
         if message.author.bot or me is None:
             return  # our own answers mention people; never answer ourselves
-        if me not in message.mentions:
-            return
         channel = message.channel
         # A draft thread is the issues cog's conversation and it answers there
         # without being mentioned; both replying would say the same thing twice.
@@ -92,9 +137,133 @@ class Mentions(commands.Cog):
             threads.PREFIX
         ):
             return
+        if not await self._directed_at_us(message, me):
+            return
         if not (asked := _asked(message, me)):
             return  # a bare mention with nothing in it isn't a question
+        # A run already holding this channel takes the turn as queued work; only
+        # an idle channel starts one. The lookup and the claim in `_start` run
+        # without an await between them, so two messages can't both find the
+        # channel idle however they interleave above.
+        if (live := self._active.get(channel.id)) is not None:
+            await self._enqueue(live, message, asked)
+            return
+        self._start(message, asked)
+
+    async def _directed_at_us(
+        self, message: discord.Message, me: discord.ClientUser
+    ) -> bool:
+        """Whether this message is talking to us.
+
+        In an ordinary channel we only answer when named: a mention, or a reply to
+        something we said. Anything else is the channel's own conversation, and
+        answering it would be us talking over people.
+
+        A thread we're already working in is different — see below. (Draft threads
+        never reach here: they belong to the issues cog.)
+
+        Ordered so the free tests come first and the one fetch is last, on the
+        narrowest path: a mention is local, a reply is usually already in the
+        payload, and only an unaddressed line in a thread we don't yet recognise
+        reads history.
+        """
+        if me in message.mentions:
+            return True  # named outright; free and the common case
+        # A reply to something we said is addressed to us wherever it happens.
+        replied = await history.replied_to(message)
+        if replied is not None and replied.author.id == me.id:
+            return True
+        if not isinstance(message.channel, discord.Thread):
+            return False  # an ordinary channel only counts when we're named
+        # In a thread we're working in, every line counts: it was opened for one
+        # thing and we're a participant, so making someone re-mention us on each
+        # line of a back-and-forth reads as pedantic. A thread we're mid-run in is
+        # known locally; otherwise ask the thread whether we've spoken in it, and
+        # remember a yes — that answer only ever goes from false to true.
+        if message.channel.id in self._active or message.channel.id in self._threads:
+            return True
+        if await _we_spoke_in(message.channel, me):
+            self._threads.add(message.channel.id)
+            return True
+        return False
+
+    def _start(self, message: discord.Message, asked: str) -> None:
+        """Claim this channel and answer on a task of its own.
+
+        Registered before the task is scheduled, not inside it: a second message
+        arriving in the same channel has to find the claim already there, and a
+        task doesn't begin running until this handler yields.
+        """
+        channel_id = message.channel.id
+        task = asyncio.create_task(self._run(message, asked))
+        self._active[channel_id] = _Conversation(task=task)
+        # Discarded on purpose: `_run` reports its own failures and always clears
+        # the registry, so a done callback would have nothing left to do.
+        task.add_done_callback(lambda _: self._active.pop(channel_id, None))
+
+    async def _enqueue(
+        self, live: _Conversation, message: discord.Message, asked: str
+    ) -> None:
+        """Hold a turn until the run in flight is done with the channel."""
+        live.queued.append((message, asked))
+        # Says the message was seen, which a silent wait doesn't. One send, not a
+        # per-turn edit loop: the answer is what they're waiting for.
+        with contextlib.suppress(discord.HTTPException):
+            await message.reply(_QUEUED, mention_author=False)
+
+    async def _run(self, message: discord.Message, asked: str) -> None:
+        """One channel's conversation: the first turn, then whatever queued up.
+
+        The loop is what makes queueing worth more than a lock. Each drained turn
+        reuses the session the last one built, so the agent keeps the files it
+        already read and the answers it already gave — a follow-up costs a turn,
+        not a whole fresh run.
+        """
         await self._answer(message, asked)
+        while (live := self._active.get(message.channel.id)) is not None:
+            if not live.queued:
+                return
+            queued, live.queued = live.queued, []
+            # Everything that piled up during one run goes in as one turn: three
+            # people asking three things while we were busy is one thing to
+            # answer, and answering them one run each would flood right back.
+            await self._continue(live, queued)
+
+    async def _continue(
+        self, live: _Conversation, queued: list[tuple[discord.Message, str]]
+    ) -> None:
+        """Answer the turns that arrived during the last run, on its session."""
+        session, work, store = live.session, live.work, self.bot.store
+        last = queued[-1][0]
+        if session is None or work is None or store is None:
+            # The first run died before it had a session (no store, no agent, or
+            # it raised on the way up). Nothing to continue, so this turn starts
+            # its own conversation rather than being dropped.
+            await self._answer(last, queued[-1][1])
+            return
+        placeholder = await last.reply(_THINKING, mention_author=False)
+        work.restart(last.channel)
+        live_out = stream.Live(placeholder)
+        try:
+            session.candidates(self._candidates_for(last.channel))
+            reply = await session.stream(_said(queued, store), live_out.feed)
+        except Exception as exc:  # noqa: BLE001 — a failed turn mustn't kill the cog
+            log.exception("queued mention failed in channel %s", last.channel.id)
+            await work.collapse()
+            with contextlib.suppress(discord.HTTPException):
+                await placeholder.edit(content=f"⚠️ {core.explain(exc)}", embed=None)
+            return
+        await work.collapse()
+        if isinstance(reply, IssueDraft):
+            issues = self.bot.get_cog("Issues")
+            if isinstance(issues, Issues):
+                await self._propose(last, placeholder, reply, issues)
+            return
+        await live_out.finish(reply)
+
+    def _candidates_for(self, channel: discord.abc.Messageable) -> list[str]:
+        issues = self.bot.get_cog("Issues")
+        return issues.candidates_for(channel) if isinstance(issues, Issues) else []
 
     async def _answer(self, message: discord.Message, asked: str) -> None:
         """Read, run, and stream the answer back under the mention."""
@@ -130,6 +299,10 @@ class Mentions(commands.Cog):
             owner_id=message.author.id,
             history=past,
         )
+        # Published for the drain: a turn that queued up behind this run continues
+        # this session instead of building a cold one.
+        if (held := self._active.get(message.channel.id)) is not None:
+            held.session, held.work = session, work
         live = stream.Live(placeholder)
         try:
             prompt = await self._prompt(
@@ -216,6 +389,40 @@ class Mentions(commands.Cog):
             pointed_at=replied is not None,
             continuing=continuing,
         )
+
+
+async def _we_spoke_in(thread: discord.Thread, me: discord.ClientUser) -> bool:
+    """Whether we've said anything in this thread.
+
+    What separates a thread we're working in from one that merely exists. Read off
+    the thread rather than remembered, so it still holds after a restart — and
+    bounded, because a thread where we haven't spoken in its first page of replies
+    is not a thread we're in.
+    """
+    try:
+        async for message in thread.history(limit=_THREAD_SCAN):
+            if message.author.id == me.id:
+                return True
+    except discord.HTTPException:
+        return False  # can't tell; better silent than answering a stranger's thread
+    return False
+
+
+def _said(queued: list[tuple[discord.Message, str]], store: Store) -> str:
+    """The queued turns as one thing said, named so the agent knows who spoke.
+
+    Named per line because a channel is several people: folding three turns into
+    one unattributed block would have the agent answer them as though one person
+    had asked all three, and "me" in the third would point at the wrong person.
+
+    Named by `context.speaker`, like every other place a person reaches the model,
+    so the agent can match these lines to the requester the prompt named.
+    """
+    return "\n\n".join(
+        f"{context.speaker(message.author, store.login_for(message.author.id))} "
+        f"says:\n\n{asked}"
+        for message, asked in queued
+    )
 
 
 def _asked(message: discord.Message, me: discord.ClientUser) -> str:
