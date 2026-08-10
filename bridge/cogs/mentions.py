@@ -249,17 +249,21 @@ class Mentions(commands.Cog):
             reply = await session.stream(_said(queued, store, session), live_out.feed)
         except Exception as exc:  # noqa: BLE001 — a failed turn mustn't kill the cog
             log.exception("queued mention failed in channel %s", last.channel.id)
-            await work.collapse()
+            failed = await work.collapse(session.spend, carried=True)
             with contextlib.suppress(discord.HTTPException):
-                await placeholder.edit(content=f"⚠️ {core.explain(exc)}", embed=None)
+                await placeholder.edit(
+                    content=_reason(core.explain(exc), failed), embed=None
+                )
             return
-        await work.collapse()
+        summary = await work.collapse(
+            session.spend, carried=not isinstance(reply, IssueDraft)
+        )
         if isinstance(reply, IssueDraft):
             issues = self.bot.get_cog("Issues")
             if isinstance(issues, Issues):
                 await self._propose(last, placeholder, reply, issues)
             return
-        await live_out.finish(reply)
+        await live_out.finish(reply, summary)
 
     def _candidates_for(self, channel: discord.abc.Messageable) -> list[str]:
         issues = self.bot.get_cog("Issues")
@@ -311,18 +315,23 @@ class Mentions(commands.Cog):
             reply = await session.stream(prompt, live.feed)
         except Exception as exc:  # noqa: BLE001 — a failed answer mustn't kill the cog
             log.exception("mention run failed in channel %s", message.channel.id)
-            await work.collapse()
+            failed = await work.collapse(session.spend, carried=True)
             with contextlib.suppress(discord.HTTPException):
-                await placeholder.edit(content=f"⚠️ {core.explain(exc)}", embed=None)
+                await placeholder.edit(
+                    content=_reason(core.explain(exc), failed), embed=None
+                )
             return
         # The card and the answer share one channel's edit budget, so the card
-        # folds into its summary line before the answer takes over the placeholder.
-        await work.collapse()
+        # comes down before the answer takes over the placeholder. A draft has no
+        # prose to carry the summary, so there the line stays in the card's place.
+        summary = await work.collapse(
+            session.spend, carried=not isinstance(reply, IssueDraft)
+        )
 
         if isinstance(reply, IssueDraft):
             await self._propose(message, placeholder, reply, issues)
             return
-        await live.finish(reply)
+        await live.finish(reply, summary)
 
     async def _propose(
         self,
@@ -406,6 +415,16 @@ async def _we_spoke_in(thread: discord.Thread, me: discord.ClientUser) -> bool:
     except discord.HTTPException:
         return False  # can't tell; better silent than answering a stranger's thread
     return False
+
+
+def _reason(explained: str, summary: str) -> str:
+    """A failed run's message: why it failed, and what it spent getting there.
+
+    A run that died to a retry storm or a usage limit is exactly the one whose cost
+    is worth knowing, so the footnote goes on the failure too rather than only on
+    the answers.
+    """
+    return f"⚠️ {explained}" + (f"\n-# {summary}" if summary else "")
 
 
 def _said(

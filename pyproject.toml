@@ -6,6 +6,10 @@ readme = "README.md"
 requires-python = ">=3.14"
 dependencies = [
     "discord-py>=2.7.1",
+    # Direct because bridge.agent.spend prices a run against it. It arrives
+    # transitively through pydantic-ai too, and depending on that is how a future
+    # bump breaks.
+    "genai-prices>=0.1",
     "githubkit[auth-app]>=0.16.0",
     # Direct because bridge.linear talks to Linear's GraphQL API over it. It
     # arrives transitively too, and depending on that is how a future bump breaks.

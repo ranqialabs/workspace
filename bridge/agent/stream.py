@@ -55,6 +55,23 @@ def segments(text: str, limit: int = MAX_MESSAGE) -> list[str]:
     return out
 
 
+def footnoted(
+    parts: list[str], footnote: str | None, limit: int = MAX_MESSAGE
+) -> list[str]:
+    """`parts` with `footnote` on the last one, or on its own if it won't fit.
+
+    For a caller sending finished segments rather than streaming into one message:
+    the footnote belongs to the answer, so it rides on the end of it, and only
+    becomes a message of its own when the last segment has no room left.
+    """
+    if not footnote or not parts:
+        return parts
+    tail = f"\n-# {footnote}"
+    if len(parts[-1]) + len(tail) <= limit:
+        return [*parts[:-1], parts[-1] + tail]
+    return [*parts, tail.lstrip()]
+
+
 def _break_at(text: str, limit: int) -> int:
     """Where to cut `text` so the first piece fits `limit`, preferring prose."""
     window = text[:limit]
@@ -95,17 +112,25 @@ class Live:
             return
         await self._paint(self._text)
 
-    async def finish(self, text: str | None = None) -> str:
+    async def finish(self, text: str | None = None, footnote: str | None = None) -> str:
         """Write the final text, whatever the clock says, and return it.
 
         `text` overrides the last snapshot, so the caller can show the validated
         output rather than whatever the stream happened to end on.
+
+        `footnote` is what the run cost and covered, appended as a subtext line so
+        the answer carries it instead of a second message doing so. It is not part
+        of the returned text: the answer is what the agent said, and the footnote
+        is ours.
         """
         final = text if text is not None else self._text
         self._text = final
         # A run that produced no text at all still has to say something: an empty
         # edit is rejected by Discord, and a bare placeholder reads as a hang.
-        await self._paint(final.strip() or "(no answer)", force=True)
+        shown = final.strip() or "(no answer)"
+        if footnote:
+            shown = f"{shown}\n-# {footnote}"
+        await self._paint(shown, force=True)
         return final
 
     async def _paint(self, text: str, *, force: bool = False) -> None:

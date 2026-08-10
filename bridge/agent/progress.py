@@ -23,6 +23,7 @@ import pydantic_core
 
 from pydantic_ai import ToolCallPart, ToolReturnPart
 
+from bridge.agent.spend import Spend, footnote
 from bridge.render import GREY
 from bridge.repo import short_name
 
@@ -289,15 +290,26 @@ def card(lines: Sequence[str]) -> discord.Embed:
     )
 
 
-def summarise(calls: list[str], *, elapsed: float | None = None) -> str:
+def summarise(
+    calls: list[str],
+    *,
+    elapsed: float | None = None,
+    spend: Spend | None = None,
+) -> str:
     """One line standing in for a finished run's cards.
 
     Counted by tool rather than listed: what survives the cards is how much ground
-    the agent covered, not the order it covered it in.
+    the agent covered, not the order it covered it in. What it spent goes on the
+    same line, since a run that looked at twelve files and one that answered from
+    memory are told apart by exactly these two numbers.
     """
+    took = f", {elapsed:.0f}s" if elapsed is not None else ""
+    cost = f", {footnote(spend)}" if spend is not None else ""
     if not calls:
-        return "Drafted without looking anything up."
+        # A run that called nothing still spent something, so the clause moves to
+        # the front of a sentence that has no list to hang off. Neutral about what
+        # the run produced, since the same line follows a draft and an answer.
+        return f"Looked nothing up{took}{cost}."
     counts = Counter(calls)
     parts = [f"{count}x {_verb(name)}" for name, count in sorted(counts.items())]
-    took = f", {elapsed:.0f}s" if elapsed is not None else ""
-    return f"Looked at: {', '.join(parts)}{took}."
+    return f"Looked at: {', '.join(parts)}{took}{cost}."

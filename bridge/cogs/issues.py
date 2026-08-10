@@ -24,6 +24,7 @@ from bridge import access, render
 from bridge.cogs.notifications import Notifications
 from bridge.agent import context, core, history, stream, threads, view, workspace
 from bridge.agent.core import Session
+from bridge.agent.spend import Spend
 from bridge.agent.tools import Deps
 from bridge.agent.draft import IssueDraft, card_submitted, from_embed, preview
 from bridge.render import GREEN, RED
@@ -290,15 +291,18 @@ class Issues(commands.Cog):
         except Exception as exc:  # noqa: BLE001 — a failed draft mustn't kill the cog
             log.exception("issue draft failed in thread %s", thread.id)
             del self._sessions[thread.id]
-            await self._settle(workspace, opening, core.explain(exc))
+            await self._failed(workspace, opening, session.spend, core.explain(exc))
             return
 
-        await self._settle(workspace, opening)
+        drafted = isinstance(reply, IssueDraft)
+        summary = await self._settle(
+            workspace, opening, session.spend, carried=not drafted
+        )
         # `/issue` asks for a draft, so prose here means the agent had something to
         # say instead — usually that it needs more to go on. Say it and let them
         # answer in the thread rather than dropping it for a card we don't have.
-        if not isinstance(reply, IssueDraft):
-            for segment in stream.segments(reply):
+        if not drafted:
+            for segment in stream.footnoted(stream.segments(reply), summary):
                 await thread.send(segment)
             return
 
@@ -310,22 +314,38 @@ class Issues(commands.Cog):
         self,
         work: DraftWorkspace,
         opening: discord.Message,
-        error: str | None = None,
-    ) -> None:
-        """End a run's progress: collapse its card, then close out the opening line.
+        spend: Spend | None,
+        *,
+        carried: bool,
+    ) -> str:
+        """End a run's progress: retire its card, then drop the opening line.
 
-        On success what's left in the thread is one summary line, and the draft
-        posts under it — so the thread reads in the order it happened rather than
-        having the result edited back into its own announcement. A failed run has
-        nothing to post under it, so the opening line carries the reason instead.
+        The opening line was a placeholder for a result that has now arrived, so it
+        goes; what the run covered comes back for the caller to place.
         """
-        await work.collapse()
-        if error is not None:
-            with contextlib.suppress(discord.HTTPException):
-                await opening.edit(content=f"⚠️ {error}")
-            return
+        summary = await work.collapse(spend, carried=carried)
         with contextlib.suppress(discord.HTTPException):
             await opening.delete()
+        return summary
+
+    async def _failed(
+        self,
+        work: DraftWorkspace,
+        opening: discord.Message,
+        spend: Spend | None,
+        error: str,
+    ) -> None:
+        """End a run that raised: the opening line carries the reason, and the cost.
+
+        A failed run has no result to post under the line, so the announcement it
+        already owns becomes the report — a run that died to a retry storm or a
+        usage limit is exactly the one whose cost is worth knowing.
+        """
+        summary = await work.collapse(spend, carried=True)
+        with contextlib.suppress(discord.HTTPException):
+            await opening.edit(
+                content=f"⚠️ {error}" + (f"\n-# {summary}" if summary else "")
+            )
 
     async def show(
         self,
@@ -464,9 +484,16 @@ class Issues(commands.Cog):
             )
         except Exception as exc:  # noqa: BLE001
             log.exception("refine failed")
-            await self._settle(open_draft.workspace, opening, core.explain(exc))
+            await self._failed(
+                open_draft.workspace,
+                opening,
+                open_draft.session.spend,
+                core.explain(exc),
+            )
             return
-        await open_draft.workspace.collapse()
+        summary = await open_draft.workspace.collapse(
+            open_draft.session.spend, carried=not isinstance(reply, IssueDraft)
+        )
         if isinstance(reply, IssueDraft):
             # The opening line was a placeholder for an answer that isn't coming;
             # the card below says everything it would have.
@@ -474,7 +501,7 @@ class Issues(commands.Cog):
                 await opening.delete()
             await self.show(thread, reply, open_draft.session.owner_id)
             return
-        await live.finish(reply)
+        await live.finish(reply, summary)
 
     async def _resume(self, thread: discord.Thread, message: discord.Message) -> None:
         """Answer in a thread whose session we no longer hold.
@@ -531,9 +558,11 @@ class Issues(commands.Cog):
             )
         except Exception as exc:  # noqa: BLE001 — a failed reply mustn't kill the cog
             log.exception("resumed reply failed in thread %s", thread.id)
-            await self._settle(workspace, opening, core.explain(exc))
+            await self._failed(workspace, opening, session.spend, core.explain(exc))
             return
-        await workspace.collapse()
+        summary = await workspace.collapse(
+            session.spend, carried=not isinstance(reply, IssueDraft)
+        )
         # Hold the session from here on: the conversation is live again, and the
         # next message should not pay to rebuild what we now have.
         self._sessions[thread.id] = Draft(session, workspace)
@@ -542,7 +571,7 @@ class Issues(commands.Cog):
                 await opening.delete()
             await self.show(thread, reply, owner_id)
             return
-        await live.finish(reply)
+        await live.finish(reply, summary)
 
     async def _card(
         self, thread: discord.Thread

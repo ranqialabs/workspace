@@ -24,6 +24,7 @@ from pydantic_ai import (
     FunctionToolCallEvent,
     FunctionToolResultEvent,
     ModelMessage,
+    ModelResponse,
     ModelRetry,
     RunContext,
     TextOutput,
@@ -31,12 +32,14 @@ from pydantic_ai import (
     ToolReturnPart,
     UserContent,
 )
+from pydantic_ai.result import StreamedRunResult
 from pydantic_ai.capabilities import ProcessEventStream, ToolSearch
 from pydantic_ai.exceptions import ModelAPIError, UsageLimitExceeded
 
-from bridge.agent import tools
+from bridge.agent import spend, tools
 from bridge.agent.context import Transcript
 from bridge.agent.draft import IssueDraft
+from bridge.agent.spend import Spend
 from bridge.agent.tools import Deps
 
 log = logging.getLogger(__name__)
@@ -176,6 +179,18 @@ def explain(exc: BaseException) -> str:
             return f"The model provider rejected our API key:\n> {detail}"
         return f"The model call failed:\n> {detail}"
     return "Something went wrong reaching the model."
+
+
+def _responded(result: StreamedRunResult[Deps, Reply]) -> ModelResponse | None:
+    """The response so far, or None if the run failed before there was one.
+
+    `StreamedRunResult.response` raises rather than answering when nothing has come
+    back yet, which is reachable from the `finally` that prices a failed run.
+    """
+    try:
+        return result.response
+    except ValueError:
+        return None
 
 
 def _answer(text: str) -> str:
@@ -374,6 +389,10 @@ class Session:
         # session resumed after a restart starts where the thread left off.
         self._history: list[ModelMessage] = history or []
         self.draft: IssueDraft | None = draft
+        # What the last run spent, for the line that reports it. Per run rather
+        # than per session: the reader is being told what the turn they just asked
+        # for cost, and a session's total would climb with every follow-up.
+        self.spend: Spend | None = None
 
     async def stream(
         self,
@@ -401,13 +420,23 @@ class Session:
         async with self._agent.run_stream(
             prompt, deps=self._deps, message_history=self._history or None
         ) as result:
-            async for snapshot in result.stream_output():
-                if on_answer is not None and isinstance(snapshot, str):
-                    await on_answer(snapshot)
-            # Completes the stream, applies the output validators, and is what
-            # puts the final message into the history.
-            output = await result.get_output()
-            self._history = list(result.all_messages())
+            # In a `finally` because the tokens are spent whether or not the run
+            # gets as far as an answer, and a retry storm or a usage limit is
+            # exactly the turn worth reporting the cost of. It also keeps the field
+            # from going stale: a session is reused across turns, so a failure that
+            # left the previous turn's spend in place would report it against this
+            # one. `RunUsage` sums every request the run made, so a turn that
+            # called ten tools before answering is priced on all eleven exchanges.
+            try:
+                async for snapshot in result.stream_output():
+                    if on_answer is not None and isinstance(snapshot, str):
+                        await on_answer(snapshot)
+                # Completes the stream, applies the output validators, and is what
+                # puts the final message into the history.
+                output = await result.get_output()
+                self._history = list(result.all_messages())
+            finally:
+                self.spend = spend.of(result.usage, _responded(result))
         # Only a draft replaces the draft. A run that answered a question has no
         # draft in it, and taking its prose as one would wipe what the requester
         # is still reviewing.
