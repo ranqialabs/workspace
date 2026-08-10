@@ -5,7 +5,8 @@ waits. Nothing reaches GitHub until whoever asked clicks Submit — the agent ha
 no write tool at all, so that isn't a policy, it's the shape of the code.
 
 The thread is the point: everyone in the conversation can watch the draft take
-shape, but only the requester can act on it.
+shape, colleagues who can reach the target repo can talk in it and revise it, and
+only the requester can submit or discard it.
 """
 
 import contextlib
@@ -19,7 +20,7 @@ from discord.ext import commands
 from discord.utils import MISSING
 from githubkit.exception import GitHubException
 
-from bridge import render
+from bridge import access, render
 from bridge.cogs.notifications import Notifications
 from bridge.agent import context, core, history, stream, threads, view, workspace
 from bridge.agent.core import Session
@@ -378,9 +379,9 @@ class Issues(commands.Cog):
     async def on_message(self, message: discord.Message) -> None:
         """A draft thread is a conversation: talking in it revises, or asks.
 
-        Only the requester — the thread is public, and anyone else in it is
-        commenting on the draft, not steering it. Who that is comes off the
-        thread's own draft card, so it outlives us.
+        Its requester may steer it, and so may a colleague who can reach the repo
+        the issue is aimed at, since the person who ran `/issue` is rarely the only
+        one who knows what it should say.
         """
         if message.author.bot or not message.content.strip():
             return
@@ -394,25 +395,61 @@ class Issues(commands.Cog):
             return
         open_draft = self._sessions.get(thread.id)
         if open_draft is not None:
-            if message.author.id != open_draft.session.owner_id:
+            if not await self._may_review(
+                thread, message.author, open_draft.session.owner_id
+            ):
                 return
-            await self._revise(thread, open_draft, message.content)
+            await self._revise(thread, open_draft, message)
             return
-        # A draft thread we hold no session for — we restarted, or it predates
-        # this process. The conversation is still in the thread, so rebuild it
-        # from there rather than telling them we lost it.
+        # A draft thread we hold no session for: we restarted, or it predates this
+        # process. The conversation is still in the thread, so rebuild it from
+        # there rather than telling them we lost it.
         await self._resume(thread, message)
+
+    async def _may_review(
+        self,
+        thread: discord.Thread,
+        author: discord.User | discord.Member,
+        owner_id: int,
+        drafted: IssueDraft | None = None,
+    ) -> bool:
+        """Whether `author` may steer the draft by talking in `thread`.
+
+        Its owner always may, and that costs nothing to tell, so it settles the
+        common case before anything is read. Anyone else needs the access role for
+        the repo the draft names, the same role `/sync` fills from that repo's
+        collaborators: someone who could be assigned the issue can help shape it,
+        and a passer-by in a public thread can't.
+
+        The repo comes off the thread's newest card rather than a held session, so
+        the answer doesn't depend on what this process happens to remember. A caller
+        that has already read the card passes `drafted` to save the second scan.
+        """
+        if author.id == owner_id:
+            return True
+        store = self.bot.store
+        if store is None or not isinstance(author, discord.Member):
+            return False
+        if drafted is None:
+            found = await self._card(thread)
+            if found is None:
+                return False
+            drafted = found[1]
+        return access.may_reach(store, author, drafted.repo)
 
     # --- view.Actions ---
 
     async def _revise(
-        self, thread: discord.Thread, open_draft: Draft, feedback: str
+        self, thread: discord.Thread, open_draft: Draft, feedback: discord.Message
     ) -> None:
-        """Answer them, or revise the draft — whichever they asked for.
+        """Answer them, or revise the draft, whichever they asked for.
 
         A revision posts a new card and leaves the old one where it is: the thread
         is the record of how the issue got its shape, and editing it away loses
         that. An answer posts as an ordinary message and touches no card.
+
+        Takes the message rather than its text because the turn has to say who
+        wrote it, and several people may.
         """
         opening = await thread.send(_REVISING)
         open_draft.workspace.restart(thread)
@@ -420,7 +457,10 @@ class Issues(commands.Cog):
         try:
             open_draft.session.candidates(self.candidates_for(thread))
             reply = await open_draft.session.stream(
-                open_draft.session.saying(feedback), live.feed
+                open_draft.session.saying(
+                    feedback.content, self._requester(feedback.author)
+                ),
+                live.feed,
             )
         except Exception as exc:  # noqa: BLE001
             log.exception("refine failed")
@@ -440,19 +480,22 @@ class Issues(commands.Cog):
         """Answer in a thread whose session we no longer hold.
 
         Everything a reply needs is in the thread: the conversation is its
-        messages, the draft is its newest preview card, and who may steer it is
-        the owner encoded in that card's buttons. So a restart costs a re-read
-        rather than the conversation.
+        messages, the draft and its repo are its newest preview card, and the owner
+        is encoded in that card's buttons. So a restart costs a re-read rather than
+        the conversation.
         """
         if self._unavailable() is not None or self.bot.store is None:
             return
         assert self.bot.agent is not None
         assert self.bot.github is not None
-        card = await self._card(thread)
-        if card is None:
+        found = await self._card(thread)
+        if found is None:
             return  # no draft card: not a thread of ours to answer in
+        card, drafted = found
         owner_id = view.owner_of(card)
-        if owner_id is None or message.author.id != owner_id:
+        if owner_id is None or not await self._may_review(
+            thread, message.author, owner_id, drafted
+        ):
             return
         assert thread.guild is not None
         assert self.bot.user is not None
@@ -462,6 +505,7 @@ class Issues(commands.Cog):
         past = await history.rebuild(
             thread, self.bot.store, bot_user_id=self.bot.user.id
         )
+        spoke = self._requester(message.author)
         session = Session(
             self.bot.agent,
             Deps(
@@ -470,15 +514,21 @@ class Issues(commands.Cog):
                 workspace=workspace,
                 linear=self.bot.linear_reader,
             ),
-            requester=self._requester(message.author),
+            # Who the draft belongs to, which is not always who just spoke: a
+            # colleague may be reviewing it. The turn below names them separately.
+            requester=spoke
+            if message.author.id == owner_id
+            else self._owner_name(thread, owner_id),
             owner_id=owner_id,
             history=past,
-            draft=from_embed(card.embeds[0]),
+            draft=drafted,
         )
         live = stream.Live(opening)
         try:
             session.candidates(self.candidates_for(thread))
-            reply = await session.stream(session.resuming(message.content), live.feed)
+            reply = await session.stream(
+                session.resuming(message.content, spoke), live.feed
+            )
         except Exception as exc:  # noqa: BLE001 — a failed reply mustn't kill the cog
             log.exception("resumed reply failed in thread %s", thread.id)
             await self._settle(workspace, opening, core.explain(exc))
@@ -494,16 +544,22 @@ class Issues(commands.Cog):
             return
         await live.finish(reply)
 
-    async def _card(self, thread: discord.Thread) -> discord.Message | None:
-        """The newest draft preview card in `thread`, if it still has one."""
+    async def _card(
+        self, thread: discord.Thread
+    ) -> tuple[discord.Message, IssueDraft] | None:
+        """The newest draft preview card in `thread`, and the draft it holds.
+
+        Both, because the scan has to parse the embed to recognise a card at all,
+        and every caller that wants the card wants what it says.
+        """
         async for message in thread.history(limit=_CARD_SCAN):
             if (
                 self.bot.user is not None
                 and message.author.id == self.bot.user.id
                 and message.embeds
-                and from_embed(message.embeds[0]) is not None
+                and (drafted := from_embed(message.embeds[0])) is not None
             ):
-                return message
+                return message, drafted
         return None
 
     async def apply_edit(
@@ -612,11 +668,11 @@ class Issues(commands.Cog):
         """
         if not isinstance(channel, discord.Thread):
             return
-        card = await self._card(channel)
-        if card is None:
+        found = await self._card(channel)
+        if found is None:
             return
         with contextlib.suppress(discord.HTTPException):
-            await card.edit(view=None)
+            await found[0].edit(view=None)
 
     async def _archive(self, channel: discord.abc.Messageable) -> None:
         """An archived thread is what stops `on_message` treating a draft as live."""
@@ -630,6 +686,16 @@ class Issues(commands.Cog):
         without that the agent has no referent for "assign it to me"."""
         store = self.bot.store
         return context.speaker(user, store.login_for(user.id) if store else None)
+
+    def _owner_name(self, thread: discord.Thread, owner_id: int) -> str:
+        """The draft owner, named as the transcript names them.
+
+        Only their id survives in the card, so a member who has since left can't be
+        named any better than by it, which is still a referent the agent can tell
+        apart from whoever is speaking.
+        """
+        member = thread.guild.get_member(owner_id)
+        return self._requester(member) if member else f"<@{owner_id}>"
 
     def _session_for(self, interaction: discord.Interaction) -> Session | None:
         channel = interaction.channel

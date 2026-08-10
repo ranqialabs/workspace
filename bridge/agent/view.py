@@ -1,9 +1,13 @@
 """The buttons under a draft, and the modals behind two of them.
 
 Every button carries the requester's id in its own custom_id, so "only whoever
-ran /issue may act" survives a restart with no state on our side — and so does
-the button itself. DynamicItem is what makes that possible: discord.py matches
-the custom_id against `template` and rebuilds the item from the match.
+ran /issue may press these" survives a restart with no state on our side — and so
+does the button itself. DynamicItem is what makes that possible: discord.py
+matches the custom_id against `template` and rebuilds the item from the match.
+
+Pressing one is the owner's alone. Revising by talking in the thread is open to
+colleagues with access to the target repo, which the cog decides (see
+`Issues._may_review`) because it takes the repo and the roles, not a custom_id.
 
 The handlers live on the cog (see `Actions`); this module is only the widgets.
 """
@@ -16,7 +20,10 @@ from discord.ext import commands
 
 from bridge.agent.draft import IssueDraft, card_submitted
 
-_DENIED = "Only whoever ran `/issue` can act on this draft."
+_DENIED = (
+    "Only whoever ran `/issue` can use these buttons. If you have access to the "
+    "repo, say what you'd change in this thread and the draft gets revised."
+)
 # Public because the cog refuses on the same grounds where it would call GitHub,
 # and both refusals should read the same.
 ALREADY_SUBMITTED = (

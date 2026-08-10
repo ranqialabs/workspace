@@ -270,10 +270,12 @@ def _prompt(
         repo_line = f"Pick the repo from these candidates: {listed}."
 
     # Without this the agent has no referent for "me" and picks whoever opened
-    # the discussion.
+    # the discussion. Scoped to the turn rather than the conversation, because
+    # colleagues with access to the repo review the draft in the thread too.
     who = (
-        f"You are talking to {requester}. In anything they ask you, "
-        '"me" and "I" mean them, not whoever spoke in the conversation.'
+        f"You are talking to {requester}, who asked for this issue. Every turn "
+        'says who wrote it, and "me" and "I" always mean that person, not whoever '
+        "spoke in the conversation below."
     )
 
     # The instruction goes first: it's what the person actually wants, and the
@@ -435,22 +437,27 @@ class Session:
         """
         self._deps.candidates = candidates
 
-    def saying(self, feedback: str) -> str:
-        """A human's turn, as the agent should read it."""
-        return f"{self.requester} says:\n\n{feedback}"
+    def saying(self, feedback: str, speaker: str) -> str:
+        """A human's turn, attributed to whoever wrote it.
 
-    def resuming(self, feedback: str) -> str:
+        `speaker` is named on every turn, not only when it isn't the requester: a
+        conversation has several people in it, and a uniform attribution is what
+        lets the agent tell whose "me" it is reading. Named by `context.speaker`,
+        like anywhere else a person reaches the model.
+        """
+        return f"{speaker} says:\n\n{feedback}"
+
+    def resuming(self, feedback: str, speaker: str) -> str:
         """A turn in a conversation rebuilt from its thread rather than held.
 
         The draft is restated because a rebuilt history has the preview card
-        filtered out of it — the agent would otherwise be revising an issue it
-        can't see. Its fields come from the card, so this is what the thread
-        shows, not a remembered copy.
+        filtered out of it, so the agent would otherwise be revising an issue it
+        can't see. Its fields come from the card, so this is what the thread shows.
         """
         if self.draft is None:
-            return self.saying(feedback)
+            return self.saying(feedback, speaker)
         return (
             "The issue draft currently under review in this conversation:\n"
             f"{self.draft.model_dump_json(indent=2)}\n\n"
-            f"{self.saying(feedback)}"
+            + self.saying(feedback, speaker)
         )

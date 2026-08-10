@@ -246,7 +246,7 @@ class Mentions(commands.Cog):
         live_out = stream.Live(placeholder)
         try:
             session.candidates(self._candidates_for(last.channel))
-            reply = await session.stream(_said(queued, store), live_out.feed)
+            reply = await session.stream(_said(queued, store, session), live_out.feed)
         except Exception as exc:  # noqa: BLE001 — a failed turn mustn't kill the cog
             log.exception("queued mention failed in channel %s", last.channel.id)
             await work.collapse()
@@ -408,19 +408,23 @@ async def _we_spoke_in(thread: discord.Thread, me: discord.ClientUser) -> bool:
     return False
 
 
-def _said(queued: list[tuple[discord.Message, str]], store: Store) -> str:
+def _said(
+    queued: list[tuple[discord.Message, str]], store: Store, session: Session
+) -> str:
     """The queued turns as one thing said, named so the agent knows who spoke.
 
     Named per line because a channel is several people: folding three turns into
     one unattributed block would have the agent answer them as though one person
     had asked all three, and "me" in the third would point at the wrong person.
 
-    Named by `context.speaker`, like every other place a person reaches the model,
-    so the agent can match these lines to the requester the prompt named.
+    Through `session.saying` so a turn is spelled the same way wherever it comes
+    from, and named by `context.speaker` like anywhere else a person reaches the
+    model.
     """
     return "\n\n".join(
-        f"{context.speaker(message.author, store.login_for(message.author.id))} "
-        f"says:\n\n{asked}"
+        session.saying(
+            asked, context.speaker(message.author, store.login_for(message.author.id))
+        )
         for message, asked in queued
     )
 

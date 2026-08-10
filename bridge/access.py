@@ -13,6 +13,19 @@ if TYPE_CHECKING:
     from bridge.store import Store
 
 
+def may_reach(store: "Store", member: discord.Member, repo: str) -> bool:
+    """Whether `member` holds the access role `reconcile` filled for `repo`.
+
+    Asking the role asks `reconcile`'s own answer, with no GitHub round trip, and
+    it stays right across a restart because the membership lives in Discord.
+
+    A repo with no access role yet answers no: reading an unsynced repo as
+    "everyone" would grant what nothing has granted.
+    """
+    role_id = store.repo_to_role.get(repo)
+    return role_id is not None and member.get_role(role_id) is not None
+
+
 class SyncResult:
     def __init__(self) -> None:
         self.created_roles: list[int] = []
