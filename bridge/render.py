@@ -430,8 +430,9 @@ def _pipeline_card(
     icon = STEP_ICONS[ok]
     short = sha[:7]
     # The subject says what the commit *did*, so when an event carries one it takes
-    # the title and the sha steps back to the byline. Deploys don't carry one, so
-    # such a card leads with the sha until merge_into adopts a titled one.
+    # the title and the sha steps back to the byline. A card that didn't (a check
+    # run, a deploy whose commit we couldn't resolve) leads with the sha until
+    # merge_into adopts a titled one.
     if subject:
         title = subject + encode("headline")
         description = f"`{short}` by {by}" if by else f"`{short}`"
@@ -572,10 +573,13 @@ _DEPLOY_STATES: dict[str, tuple[str, bool | None]] = {
 }
 
 
-def _deployment_status(payload: dict, _m: Mentions) -> Rendered | None:
+def _deployment_status(payload: dict, m: Mentions) -> Rendered | None:
     """The `deployment_status` event — a deploy step on its commit's card.
 
     (We ignore the raw `status` event, which would double-report the same deploy.)
+    The webhook often has no commit message of its own; notifications.py attaches
+    `head_commit` when it had to look the sha up, and we read that the same way
+    `workflow_run` already carries one.
     """
     ds, deployment, gh_repo = (
         payload["deployment_status"],
@@ -592,13 +596,13 @@ def _deployment_status(payload: dict, _m: Mentions) -> Rendered | None:
     # log_url is current, target_url its deprecated predecessor; the run that
     # triggered the deploy beats both, being the job you'd actually go read.
     run = payload.get("workflow_run") or {}
-    live = ds.get("environment_url")
-    log_url = run.get("html_url") or ds.get("log_url") or ds.get("target_url")
+    live = ds.get("environment_url") or None
+    log_url = run.get("html_url") or ds.get("log_url") or ds.get("target_url") or None
     # The name carries the environment and the title the branch, so the line adds
     # only the verdict and where to click — plus anything unusual, which the name
-    # alone would misrepresent.
+    # alone would misrepresent. Two links that go to the same URL are one link.
     detail = f"[{word}]({live})" if live else word
-    if log_url:
+    if log_url and log_url != live:
         detail += f" ([logs]({log_url}))"
     if (origin := deployment.get("original_environment")) and origin != env:
         detail += f", promoted from `{origin}`"
@@ -609,6 +613,14 @@ def _deployment_status(payload: dict, _m: Mentions) -> Rendered | None:
         detail += f" at `{ref}`"
     if note := ds.get("description"):
         detail += f"\n{note}"
+    # Prefer a message that is actually there: an Actions payload can carry a
+    # head_commit with none, and notifications.py then attaches one it looked up.
+    head = run.get("head_commit") or {}
+    if not (head.get("message") or "").strip():
+        head = payload.get("head_commit") or {}
+    by = None
+    if login := (run.get("actor") or {}).get("login"):
+        by = m.user(login)
     return _pipeline_card(
         gh_repo,
         sha=sha,
@@ -619,6 +631,8 @@ def _deployment_status(payload: dict, _m: Mentions) -> Rendered | None:
         detail=detail,
         ok=ok,
         when=ds.get("updated_at"),
+        by=by,
+        subject=_subject(head.get("message")) or None,
     )
 
 

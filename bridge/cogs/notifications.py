@@ -1,15 +1,19 @@
 """Cog: route rendered GitHub events (render.py) to repo channels, deduping keyed
 ones via live.py. Uses the announce channel if mapped, else the plain repo one."""
 
+import logging
 from typing import TYPE_CHECKING
 
 import discord
 from discord.ext import commands
+from githubkit.exception import GitHubException
 
 from bridge import render
 
 if TYPE_CHECKING:
     from bridge.bot import BridgeBot
+
+log = logging.getLogger(__name__)
 
 
 class Notifications(commands.Cog):
@@ -39,11 +43,34 @@ class Notifications(commands.Cog):
 
     def _event_handler(self, event: str):
         async def handler(payload: dict) -> None:
+            if event == "deployment_status":
+                await self._resolve_deploy_commit(payload)
             rendered = render.render(event, payload, self)
             if rendered is not None:
                 await self.route(payload["repository"]["full_name"], rendered)
 
         return handler
+
+    async def _resolve_deploy_commit(self, payload: dict) -> None:
+        """Attach the deployed commit's message when the webhook didn't carry one."""
+        run = payload.get("workflow_run") or {}
+        head = run.get("head_commit") or payload.get("head_commit") or {}
+        if (head.get("message") or "").strip():
+            return
+        sha = (payload.get("deployment") or {}).get("sha") or ""
+        full_name = (payload.get("repository") or {}).get("full_name") or ""
+        github = self.bot.github
+        if not sha or "/" not in full_name or github is None:
+            return
+        owner, name = full_name.split("/", 1)
+        try:
+            resp = await github.rest.repos.async_get_commit(owner, name, sha)
+        except GitHubException as exc:
+            log.warning(
+                "could not resolve commit %s in %s: %s", sha[:7], full_name, exc
+            )
+            return
+        payload["head_commit"] = {"message": resp.parsed_data.commit.message}
 
     async def route(self, repo: str, rendered: render.Rendered) -> None:
         """Send to the repo's (announce or plain) channel; edit in place if keyed."""

@@ -226,7 +226,7 @@ message still makes sense. New issues and PRs-ready also ping the repo's
 | `pull_request_review` (`submitted`) | a review is submitted | reviewer, verdict (✅ approved / 🔴 changes / 💬 comment) + body, on one live card per reviewer counting their comments — pings the PR author, unless they are the reviewer |
 | `workflow_run` (`completed`) | a workflow on the default branch finishes | a line on the commit's [pipeline card](#pipeline-card), titled with the commit's subject: the workflow's name, ✅ passed / ❌ failed, and how long it took |
 | `check_run` (`completed`) | a job within that workflow finishes | the job's name on the same line, so it reads `workflow / job` the way GitHub names a check |
-| `deployment_status` | a deploy changes state | a line on the same card: 🚀 the environment deployed to, 🕒 deploying → ✅ deployed / ❌ failed, linking the live URL and the logs |
+| `deployment_status` | a deploy changes state | a line on the same card, titled with the commit's subject: 🚀 the environment deployed to, 🕒 deploying → ✅ deployed / ❌ failed, linking the live URL and the logs when they differ |
 
 Where each message *looks like* is defined in `bridge/render.py` — one pure
 function per event — so restyling or adding an event is a self-contained change.
@@ -276,9 +276,15 @@ a line per step naming it and how long it took:
 > **🚀 deploy: github-pages** — ✅ [deployed](#) ([logs](#))
 
 The card leads with the commit's subject, so the channel says what shipped rather
-than only which sha did. Each line is named `workflow / job`, the way GitHub names
-a check — the workflow comes from `workflow_run` and the job from `check_run`, two
-webhooks that arrive in either order and are matched by the run id they share.
+than only which sha did. That holds when the first event is a deploy, too: a
+check's payload already names the commit, a deploy's often doesn't, so the
+bridge looks the sha up rather than waiting for a check to title the card. If
+the lookup fails the sha is the fallback, and the card still publishes. Each
+line is named `workflow / job`, the way GitHub names a check — the workflow
+comes from `workflow_run` and the job from `check_run`, two webhooks that arrive
+in either order and are matched by the run id they share. **deployed** links the
+live URL and **logs** the run; when those are the same URL the line carries one
+link, not two.
 
 Each new step **edits** the card rather than posting under it, for up to ten
 minutes after it appeared — long enough for a push's workflows to land, short
