@@ -15,10 +15,15 @@ if TYPE_CHECKING:
 
 log = logging.getLogger(__name__)
 
+# Commit messages looked up by sha, newest last. One commit is reported by a deploy
+# and by each job it ran, all wanting the same message.
+_MESSAGES_KEPT = 32
+
 
 class Notifications(commands.Cog):
     def __init__(self, bot: "BridgeBot") -> None:
         self.bot = bot
+        self._messages: dict[tuple[str, str], str] = {}
         # Whatever render.py knows how to draw, we listen for — registering a
         # renderer is the whole of adding an event, with no second list to match.
         for event in render.RENDERERS:
@@ -43,34 +48,39 @@ class Notifications(commands.Cog):
 
     def _event_handler(self, event: str):
         async def handler(payload: dict) -> None:
-            if event == "deployment_status":
-                await self._resolve_deploy_commit(payload)
+            await self._resolve_commit(event, payload)
             rendered = render.render(event, payload, self)
             if rendered is not None:
                 await self.route(payload["repository"]["full_name"], rendered)
 
         return handler
 
-    async def _resolve_deploy_commit(self, payload: dict) -> None:
-        """Attach the deployed commit's message when the webhook didn't carry one."""
-        run = payload.get("workflow_run") or {}
-        head = run.get("head_commit") or payload.get("head_commit") or {}
-        if (head.get("message") or "").strip():
-            return
-        sha = (payload.get("deployment") or {}).get("sha") or ""
+    async def _resolve_commit(self, event: str, payload: dict) -> None:
+        """Attach the commit's message when the webhook didn't carry one, so the card
+        reads what shipped rather than `1ab46d1 on main`."""
+        sha = render.pipeline_sha(event, payload)
         full_name = (payload.get("repository") or {}).get("full_name") or ""
+        if render.commit_message(payload) or not sha or "/" not in full_name:
+            return
         github = self.bot.github
-        if not sha or "/" not in full_name or github is None:
+        if github is None:
             return
-        owner, name = full_name.split("/", 1)
-        try:
-            resp = await github.rest.repos.async_get_commit(owner, name, sha)
-        except GitHubException as exc:
-            log.warning(
-                "could not resolve commit %s in %s: %s", sha[:7], full_name, exc
-            )
-            return
-        payload["head_commit"] = {"message": resp.parsed_data.commit.message}
+        message = self._messages.get((full_name, sha))
+        if message is None:
+            owner, name = full_name.split("/", 1)
+            try:
+                resp = await github.rest.repos.async_get_commit(owner, name, sha)
+            except GitHubException as exc:
+                # The card still publishes, leading with the sha; see _pipeline_card.
+                log.warning(
+                    "could not resolve commit %s in %s: %s", sha[:7], full_name, exc
+                )
+                return
+            message = resp.parsed_data.commit.message
+            self._messages[(full_name, sha)] = message
+            if len(self._messages) > _MESSAGES_KEPT:
+                del self._messages[next(iter(self._messages))]
+        payload["head_commit"] = {"message": message}
 
     async def route(self, repo: str, rendered: render.Rendered) -> None:
         """Send to the repo's (announce or plain) channel; edit in place if keyed."""

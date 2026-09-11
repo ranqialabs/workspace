@@ -396,6 +396,30 @@ def pipeline_key(repo_full_name: str, sha: str) -> str:
     return f"pipeline:{repo_full_name}:{sha}"
 
 
+def pipeline_sha(event: str, payload: dict) -> str | None:
+    """The commit a pipeline event reports on: a run names its own sha, a job the
+    suite's, a deploy the deployment's. None for any other event."""
+    match event:
+        case "workflow_run":
+            return (payload.get("workflow_run") or {}).get("head_sha")
+        case "check_run":
+            run = payload.get("check_run") or {}
+            return run.get("head_sha") or (run.get("check_suite") or {}).get("head_sha")
+        case "deployment_status":
+            return (payload.get("deployment") or {}).get("sha")
+    return None
+
+
+def commit_message(payload: dict) -> str:
+    """The commit's message in this payload, or "" if it has none. A `check_run`
+    names only the sha, so notifications.py puts the one it looked up here."""
+    run = payload.get("workflow_run") or {}
+    for head in (run.get("head_commit"), payload.get("head_commit")):
+        if message := ((head or {}).get("message") or "").strip():
+            return message
+    return ""
+
+
 def _subject(message: str | None) -> str:
     """A commit message's first line, short enough to sit in an embed title."""
     subject = (message or "").strip().split("\n", 1)[0].strip()
@@ -429,10 +453,9 @@ def _pipeline_card(
     """
     icon = STEP_ICONS[ok]
     short = sha[:7]
-    # The subject says what the commit *did*, so when an event carries one it takes
-    # the title and the sha steps back to the byline. A card that didn't (a check
-    # run, a deploy whose commit we couldn't resolve) leads with the sha until
-    # merge_into adopts a titled one.
+    # The subject says what the commit *did*, so it takes the title and the sha steps
+    # back to the byline. Without one the card leads with the sha, until a titled card
+    # merges in.
     if subject:
         title = subject + encode("headline")
         description = f"`{short}` by {by}" if by else f"`{short}`"
@@ -510,7 +533,7 @@ def _workflow_run(payload: dict, m: Mentions) -> Rendered | None:
         name = head.get("author", {}).get("name") or "someone"
     return _pipeline_card(
         gh_repo,
-        sha=run.get("head_sha", ""),
+        sha=pipeline_sha("workflow_run", payload) or "",
         # Only the workflow half of the name; check_run supplies the job.
         step=run.get("name") or "workflow",
         run_id=run.get("id"),
@@ -519,7 +542,7 @@ def _workflow_run(payload: dict, m: Mentions) -> Rendered | None:
         ok=ok,
         when=head.get("timestamp"),
         by=name,
-        subject=_subject(head.get("message")),
+        subject=_subject(commit_message(payload)),
     )
 
 
@@ -547,13 +570,15 @@ def _check_run(payload: dict, _m: Mentions) -> Rendered | None:
         detail += f" in {took}"
     return _pipeline_card(
         gh_repo,
-        sha=run.get("head_sha") or suite.get("head_sha", ""),
+        sha=pipeline_sha("check_run", payload) or "",
         step=run.get("name") or "job",
         run_id=_run_id_from(run.get("details_url") or run.get("html_url")),
         half=_JOB,
         detail=detail,
         ok=ok,
         when=run.get("completed_at"),
+        # A job's payload names no message, so this is the one looked up for it.
+        subject=_subject(commit_message(payload)),
     )
 
 
@@ -577,9 +602,8 @@ def _deployment_status(payload: dict, m: Mentions) -> Rendered | None:
     """The `deployment_status` event — a deploy step on its commit's card.
 
     (We ignore the raw `status` event, which would double-report the same deploy.)
-    The webhook often has no commit message of its own; notifications.py attaches
-    `head_commit` when it had to look the sha up, and we read that the same way
-    `workflow_run` already carries one.
+    A deploy's payload rarely names its commit, so the message is one
+    notifications.py had to look up.
     """
     ds, deployment, gh_repo = (
         payload["deployment_status"],
@@ -591,7 +615,7 @@ def _deployment_status(payload: dict, m: Mentions) -> Rendered | None:
     if styled is None:
         return None
     word, ok = styled
-    sha = deployment.get("sha", "")
+    sha = pipeline_sha("deployment_status", payload) or ""
     env = deployment.get("environment") or "deploy"
     # log_url is current, target_url its deprecated predecessor; the run that
     # triggered the deploy beats both, being the job you'd actually go read.
@@ -613,11 +637,6 @@ def _deployment_status(payload: dict, m: Mentions) -> Rendered | None:
         detail += f" at `{ref}`"
     if note := ds.get("description"):
         detail += f"\n{note}"
-    # Prefer a message that is actually there: an Actions payload can carry a
-    # head_commit with none, and notifications.py then attaches one it looked up.
-    head = run.get("head_commit") or {}
-    if not (head.get("message") or "").strip():
-        head = payload.get("head_commit") or {}
     by = None
     if login := (run.get("actor") or {}).get("login"):
         by = m.user(login)
@@ -632,7 +651,7 @@ def _deployment_status(payload: dict, m: Mentions) -> Rendered | None:
         ok=ok,
         when=ds.get("updated_at"),
         by=by,
-        subject=_subject(head.get("message")) or None,
+        subject=_subject(commit_message(payload)),
     )
 
 
