@@ -1,8 +1,9 @@
 """GitHub webhook payload -> Discord message. Pure functions (payload + Mentions
 in, Rendered or None out); add a renderer and register it in RENDERERS."""
 
+import json
 import re
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from enum import Enum
 from typing import NamedTuple, Protocol
 
@@ -354,9 +355,10 @@ def _pull_request_review(payload: dict, m: Mentions) -> Rendered | None:
 #
 # A step's line is named the way GitHub names a check, `workflow / job`. The two
 # events that report one run each know only half of that and arrive in either
-# order, so they carry the run id as their identity and merge_step_name joins the
-# halves. live.py drives the merge but the naming rules are GitHub's, so they live
-# here — as do the icons, which it reads a merged card's verdict back off.
+# order, so a field name carries its identity hidden: the run it belongs to, which
+# half it is, and the plain name to join. live.py drives the merge but the naming
+# rules are GitHub's, so they live here — as do the icons, which it reads a merged
+# card's verdict back off.
 PASSED, FAILED, RUNNING = "✅", "❌", "🕒"
 STEP_ICONS: dict[bool | None, str] = {True: PASSED, False: FAILED, None: RUNNING}
 
@@ -364,25 +366,51 @@ _WORKFLOW, _JOB = "workflow", "job"  # which half of `workflow / job` a name is
 
 
 def step_key(name: str) -> str:
-    """What identifies a step across the events reporting it: the run id hidden in
-    its name, else the name itself (enough for a deploy, reported by one event)."""
+    """What identifies a step across the events reporting it: the run, half and name
+    hidden in it, else the name itself (enough for a deploy, reported by one event)."""
+    run, half, plain, _ = _step_parts(name)
+    return f"{run}:{half}:{plain}" if run else plain
+
+
+def _step_parts(name: str) -> tuple[str, str, str, str]:
+    """A step's hidden (run id, half, plain name, workflow it ran under). A step hiding
+    none, a deploy, is ("", "", name, "") and reads as just its own name."""
+    visible = decode_visible(name)
     hidden = decode(name)
-    return hidden.split(":", 1)[0] if hidden else name
+    if hidden is None:
+        return "", "", visible, ""
+    if not hidden.startswith("["):
+        # Drawn before a run's name rode along with the jobs it named: `run:half`.
+        run, _, half = hidden.partition(":")
+        return run, half, visible, ""
+    run, half, plain, workflow = json.loads(hidden)
+    return run, half, plain or visible, workflow
 
 
-def merge_step_name(newer: str, older: str) -> str:
-    """One `workflow / job` name from the two events that report a run, in
-    GitHub's order whichever arrived first. A name already joined is kept."""
-    new_name, old_name = decode_visible(newer), decode_visible(older)
-    if new_name == old_name:
-        return newer
-    if new_name in old_name.split(" / "):
-        return older  # the older name already spells out both halves
-    if old_name in new_name.split(" / "):
-        return newer
-    run, _, half = (decode(newer) or "").partition(":")
-    workflow, job = (old_name, new_name) if half == _JOB else (new_name, old_name)
-    return f"{workflow} / {job}" + (encode(run) if run else "")
+def step_line(names: Iterable[str], name: str) -> str | None:
+    """How one line reads on a card that also holds `names`, or None if it gets none
+    of its own: a job is named for the workflow that ran it, and that workflow's own
+    line folds into the jobs it summarizes."""
+    steps = [_step_parts(other) for other in names]
+    run, half, plain, workflow = _step_parts(name)
+    label = plain
+    if half == _WORKFLOW:
+        # Its jobs each spell it out, so the run's own line has nothing to add.
+        if any(r == run and h == _JOB for r, h, _, _ in steps):
+            return None
+    elif half == _JOB:
+        # The workflow's line has folded away by now, so its name is read back off a
+        # line it named, or off the line that names the run these jobs belong to.
+        workflow = workflow or next((f for r, _, _, f in steps if r == run and f), "")
+        workflow = workflow or next(
+            (p for r, h, p, _ in steps if r == run and h == _WORKFLOW), ""
+        )
+        if workflow and not plain.startswith(f"{workflow} / "):
+            label = f"{workflow} / {plain}"
+    if not run:
+        return label
+    # The workflow rides along so a job reporting after the fold still reads for it.
+    return label + encode(json.dumps([run, half, plain, workflow]))
 
 
 def headlined(card: discord.Embed) -> bool:
@@ -447,9 +475,9 @@ def _pipeline_card(
 
     `step` names the line and the icon goes in `detail`, so a step reporting twice
     (queued, then deployed) replaces its own line rather than adding one. `run_id`
-    and `half` identify a line whose name arrives in two pieces; see
-    `merge_step_name`. `ok=None` means still running, which leaves the card's
-    colour to the steps that have finished.
+    and `half` identify a line whose name arrives in two pieces; see `step_line`.
+    `ok=None` means still running, which leaves the card's colour to the steps that
+    have finished.
     """
     icon = STEP_ICONS[ok]
     short = sha[:7]
@@ -471,7 +499,11 @@ def _pipeline_card(
         color=BLUE if ok is None else GREEN if ok else RED,
         when=when,
     )
-    name = step if run_id is None else step + encode(f"{run_id}:{half}")
+    # Which run this line belongs to, which half of `workflow / job` it is, and the
+    # plain name ride hidden in the field name: the events reporting a run arrive in
+    # either order and are matched on this. See `step_line`.
+    hidden = json.dumps([str(run_id), half, step, ""]) if run_id is not None else ""
+    name = step + (encode(hidden) if hidden else "")
     embed.add_field(name=name, value=f"{icon} {detail}", inline=False)
     return Rendered(
         content=None,

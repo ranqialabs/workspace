@@ -282,8 +282,10 @@ the bridge looks the missing one up, remembers it per sha, and takes the sha as
 the fallback when the lookup fails. Each line is named `workflow / job`, the way
 GitHub names a check — the workflow comes from `workflow_run` and the job
 from `check_run`, two webhooks that arrive in either order and are matched by the
-run id they share. **deployed** links the live URL and **logs** the run; when
-those are the same URL the line carries one link, not two.
+run id they share. Every job gets its own line, so a workflow that runs three is
+three lines, each with its own time, and the run's own line folds into the jobs it
+summarizes. **deployed** links the live URL and **logs** the run; when those are
+the same URL the line carries one link, not two.
 
 Each new step **edits** the card rather than posting under it, for up to ten
 minutes after it appeared — long enough for a push's workflows to land, short

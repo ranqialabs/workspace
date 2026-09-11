@@ -29,8 +29,8 @@ from bridge.render import (
     encode,
     headlined,
     merge_review,
-    merge_step_name,
     step_key,
+    step_line,
 )
 
 _TTL = dt.timedelta(seconds=3600)  # edit in place only this long after posting
@@ -54,18 +54,18 @@ def merge_into(into: discord.Embed, previous: discord.Embed) -> discord.Embed:
     A step's key identifies it, so one reporting again (queued, then deployed)
     overwrites its own line and keeps its place. `into` holds the newest step, so
     its fields win on a clash — except its headline, which it keeps only if it
-    brought one, since not every event knows what the commit was called.
+    brought one, since not every event knows what the commit was called. Each line
+    is then named for the card it now sits on; see `step_line`.
     """
     if headlined(previous) and not headlined(into):
         into.title, into.description = previous.title, previous.description
-    fresh = {step_key(f.name or ""): f for f in into.fields}
+    steps = {step_key(f.name or ""): f for f in previous.fields}
+    steps |= {step_key(f.name or ""): f for f in into.fields}
+    names = [f.name or "" for f in steps.values()]
     into.clear_fields()
-    for field in previous.fields:
-        newer = fresh.pop(step_key(field.name or ""), field)
-        name = merge_step_name(newer.name or "", field.name or "")
-        into.add_field(name=name, value=newer.value, inline=newer.inline)
-    for field in fresh.values():  # steps not on the previous card, in arrival order
-        into.add_field(name=field.name, value=field.value, inline=field.inline)
+    for field in steps.values():
+        if (name := step_line(names, field.name or "")) is not None:
+            into.add_field(name=name, value=field.value, inline=field.inline)
     _reverdict(into)
     return into
 
