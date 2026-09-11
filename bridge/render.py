@@ -39,11 +39,6 @@ def decode(text: str | None) -> str | None:
     return "".join(chr(ord(c) - _SHIFT) for c in text.split(_SENTINEL, 1)[1])
 
 
-def decode_visible(text: str) -> str:
-    """`text` without any hidden payload — what a reader actually sees."""
-    return text.split(_SENTINEL, 1)[0]
-
-
 # Commit subject chars on a pipeline card's title. Discord caps a title at 256
 # and the sha and branch sit in front of it, so this stays well clear.
 _SUBJECT_LIMIT = 160
@@ -345,9 +340,9 @@ def _pull_request_review(payload: dict, m: Mentions) -> Rendered | None:
 # --- the pipeline card (workflows + deploys for one commit) ---
 #
 # A push runs every matching workflow and each deploy it triggers, so one commit
-# produces a handful of events within a minute of each other. Rather than a
-# message each, they all render the same keyed card, one field per step, and
-# live.py merges each new field into the card already in the channel.
+# produces a handful of events within a minute of each other. Rather than a message
+# each, they all render the same keyed card, one line per step under the byline, and
+# live.py merges each new line into the card already in the channel.
 #
 # ponytail: we read `workflow_run`, not `check_suite`. A check suite is keyed by
 # the *app* that ran it, and all our workflows are GitHub Actions — so three
@@ -355,62 +350,67 @@ def _pull_request_review(payload: dict, m: Mentions) -> Rendered | None:
 #
 # A step's line is named the way GitHub names a check, `workflow / job`. The two
 # events that report one run each know only half of that and arrive in either
-# order, so a field name carries its identity hidden: the run it belongs to, which
-# half it is, and the plain name to join. live.py drives the merge but the naming
-# rules are GitHub's, so they live here — as do the icons, which it reads a merged
-# card's verdict back off.
+# order, so a line carries its identity hidden behind it: the run it belongs to,
+# which half it is, the plain name, and the workflow once that is known. live.py
+# drives the merge but the naming rules are GitHub's, so they live here — as do the
+# icons, which it reads a merged card's verdict back off.
 PASSED, FAILED, RUNNING = "✅", "❌", "🕒"
 STEP_ICONS: dict[bool | None, str] = {True: PASSED, False: FAILED, None: RUNNING}
 
 _WORKFLOW, _JOB = "workflow", "job"  # which half of `workflow / job` a name is
 
 
-def step_key(name: str) -> str:
-    """What identifies a step across the events reporting it: the run, half and name
-    hidden in it, else the name itself (enough for a deploy, reported by one event)."""
-    run, half, plain, _ = _step_parts(name)
-    return f"{run}:{half}:{plain}" if run else plain
+def step_key(line: str) -> str | None:
+    """What identifies a step across the events reporting it, or None for a line that
+    isn't a step: the byline the card leads with."""
+    parts = _step_parts(line)
+    if parts is None:
+        return None
+    run, half, name = parts[0], parts[1], parts[2]
+    return f"{run}:{half}:{name}" if run else name
 
 
-def _step_parts(name: str) -> tuple[str, str, str, str]:
-    """A step's hidden (run id, half, plain name, workflow it ran under). A step hiding
-    none, a deploy, is ("", "", name, "") and reads as just its own name."""
-    visible = decode_visible(name)
-    hidden = decode(name)
-    if hidden is None:
-        return "", "", visible, ""
-    if not hidden.startswith("["):
-        # Drawn before a run's name rode along with the jobs it named: `run:half`.
-        run, _, half = hidden.partition(":")
-        return run, half, visible, ""
-    run, half, plain, workflow = json.loads(hidden)
-    return run, half, plain or visible, workflow
+def _step_parts(line: str) -> tuple[str, str, str, str, str] | None:
+    """A step line's hidden (run id, half, plain name, what happened, workflow it ran
+    under), or None for any other line. A deploy hides no run, so its id and workflow
+    are empty and its key is its own name."""
+    hidden = decode(line)
+    if not hidden or not hidden.startswith("["):
+        return None
+    return tuple(json.loads(hidden))
 
 
-def step_line(names: Iterable[str], name: str) -> str | None:
-    """How one line reads on a card that also holds `names`, or None if it gets none
+def _step(
+    run: str, half: str, name: str, icon: str, detail: str, workflow: str = ""
+) -> str:
+    """One step's line: its icon, its name — `workflow / job` once the workflow that
+    ran it is known — and what happened, with everything the merge needs hidden
+    behind it. A detail is one line by construction, so any break in it folds flat."""
+    detail = " ".join(detail.split())
+    label = f"{workflow} / {name}" if half == _JOB and workflow else name
+    hidden = encode(json.dumps([run, half, name, detail, workflow]))
+    return f"{icon} {label} · {detail}{hidden}"
+
+
+def step_line(lines: Iterable[str], line: str) -> str | None:
+    """How one step reads on a card that also holds `lines`, or None if it gets no line
     of its own: a job is named for the workflow that ran it, and that workflow's own
     line folds into the jobs it summarizes."""
-    steps = [_step_parts(other) for other in names]
-    run, half, plain, workflow = _step_parts(name)
-    label = plain
-    if half == _WORKFLOW:
-        # Its jobs each spell it out, so the run's own line has nothing to add.
-        if any(r == run and h == _JOB for r, h, _, _ in steps):
-            return None
-    elif half == _JOB:
-        # The workflow's line has folded away by now, so its name is read back off a
-        # line it named, or off the line that names the run these jobs belong to.
-        workflow = workflow or next((f for r, _, _, f in steps if r == run and f), "")
+    parts = _step_parts(line)
+    if parts is None:
+        return line
+    run, half, name, detail, workflow = parts
+    steps = [other for other in map(_step_parts, lines) if other]
+    if half == _WORKFLOW and any(p[0] == run and p[1] == _JOB for p in steps):
+        return None
+    if half == _JOB:
+        # The workflow's own line has folded away by now, so its name is read back off
+        # a job line it named, or off the line that names the run these jobs belong to.
+        workflow = workflow or next((p[4] for p in steps if p[0] == run and p[4]), "")
         workflow = workflow or next(
-            (p for r, h, p, _ in steps if r == run and h == _WORKFLOW), ""
+            (p[2] for p in steps if p[0] == run and p[1] == _WORKFLOW), ""
         )
-        if workflow and not plain.startswith(f"{workflow} / "):
-            label = f"{workflow} / {plain}"
-    if not run:
-        return label
-    # The workflow rides along so a job reporting after the fold still reads for it.
-    return label + encode(json.dumps([run, half, plain, workflow]))
+    return _step(run, half, name, line[0], detail, workflow)
 
 
 def headlined(card: discord.Embed) -> bool:
@@ -448,6 +448,17 @@ def commit_message(payload: dict) -> str:
     return ""
 
 
+def commit_by(payload: dict, m: Mentions) -> str | None:
+    """Who the card credits for the commit: the login the run went under, so it can be
+    @mentioned, else the commit's own author — a login again, or the name it was
+    committed with. None when the event names nobody and nothing was looked up."""
+    run = payload.get("workflow_run") or {}
+    head = run.get("head_commit") or payload.get("head_commit") or {}
+    author = head.get("author") or {}
+    login = (run.get("actor") or {}).get("login") or author.get("login")
+    return m.user(login) if login else author.get("name")
+
+
 def _subject(message: str | None) -> str:
     """A commit message's first line, short enough to sit in an embed title."""
     subject = (message or "").strip().split("\n", 1)[0].strip()
@@ -473,11 +484,10 @@ def _pipeline_card(
 ) -> Rendered:
     """One step's line on its commit's card.
 
-    `step` names the line and the icon goes in `detail`, so a step reporting twice
-    (queued, then deployed) replaces its own line rather than adding one. `run_id`
-    and `half` identify a line whose name arrives in two pieces; see `step_line`.
-    `ok=None` means still running, which leaves the card's colour to the steps that
-    have finished.
+    The card is the byline plus a line per step, so a step reporting twice (queued,
+    then deployed) replaces its own line rather than adding one. `run_id` and `half`
+    identify a line whose name arrives in two pieces; see `step_line`. `ok=None` means
+    still running, which leaves the card's colour to the steps that have finished.
     """
     icon = STEP_ICONS[ok]
     short = sha[:7]
@@ -486,25 +496,20 @@ def _pipeline_card(
     # merges in.
     if subject:
         title = subject + encode("headline")
-        description = f"`{short}` by {by}" if by else f"`{short}`"
+        lead = f"`{short}` by {by}" if by else f"`{short}`"
     else:
         title = f"{short} on {gh_repo.get('default_branch') or 'main'}"
-        description = f"by {by}" if by else None
+        lead = f"by {by}" if by else ""
+    line = _step(str(run_id or ""), half, step, icon, detail)
     embed = _embed(
         gh_repo,
         author=f"{icon} pipeline · {gh_repo['name']}",
         title=title,
         url=f"{gh_repo['html_url']}/commit/{sha}",
-        description=description,
+        description="\n".join(part for part in (lead, line) if part),
         color=BLUE if ok is None else GREEN if ok else RED,
         when=when,
     )
-    # Which run this line belongs to, which half of `workflow / job` it is, and the
-    # plain name ride hidden in the field name: the events reporting a run arrive in
-    # either order and are matched on this. See `step_line`.
-    hidden = json.dumps([str(run_id), half, step, ""]) if run_id is not None else ""
-    name = step + (encode(hidden) if hidden else "")
-    embed.add_field(name=name, value=f"{icon} {detail}", inline=False)
     return Rendered(
         content=None,
         embed=embed,
@@ -555,14 +560,7 @@ def _workflow_run(payload: dict, m: Mentions) -> Rendered | None:
     # twice — say so.
     if (attempt := run.get("run_attempt") or 1) > 1:
         detail += f", attempt {attempt}"
-    # ponytail: the commit's own author is a git name, not a GitHub login, so it
-    # can't be mapped to a Discord account. The run's actor *is* a login — prefer
-    # it and @mention, falling back to the git name as plain text.
     head = run.get("head_commit") or {}
-    if login := (run.get("actor") or {}).get("login"):
-        name = m.user(login)
-    else:
-        name = head.get("author", {}).get("name") or "someone"
     return _pipeline_card(
         gh_repo,
         sha=pipeline_sha("workflow_run", payload) or "",
@@ -573,7 +571,7 @@ def _workflow_run(payload: dict, m: Mentions) -> Rendered | None:
         detail=detail,
         ok=ok,
         when=head.get("timestamp"),
-        by=name,
+        by=commit_by(payload, m),
         subject=_subject(commit_message(payload)),
     )
 
@@ -584,7 +582,7 @@ def _run_id_from(url: str | None) -> int | None:
     return int(match.group(1)) if match else None
 
 
-def _check_run(payload: dict, _m: Mentions) -> Rendered | None:
+def _check_run(payload: dict, m: Mentions) -> Rendered | None:
     """A job's half of its run's line: the job name (`prek`, `bot`), which
     `_workflow_run` completes with the workflow it belongs to."""
     if payload.get("action") != "completed":
@@ -609,7 +607,8 @@ def _check_run(payload: dict, _m: Mentions) -> Rendered | None:
         detail=detail,
         ok=ok,
         when=run.get("completed_at"),
-        # A job's payload names no message, so this is the one looked up for it.
+        # A job names no author and no message, so both are the ones looked up for it.
+        by=commit_by(payload, m),
         subject=_subject(commit_message(payload)),
     )
 
@@ -668,10 +667,7 @@ def _deployment_status(payload: dict, m: Mentions) -> Rendered | None:
     ):
         detail += f" at `{ref}`"
     if note := ds.get("description"):
-        detail += f"\n{note}"
-    by = None
-    if login := (run.get("actor") or {}).get("login"):
-        by = m.user(login)
+        detail += f" · {note}"
     return _pipeline_card(
         gh_repo,
         sha=sha,
@@ -682,7 +678,7 @@ def _deployment_status(payload: dict, m: Mentions) -> Rendered | None:
         detail=detail,
         ok=ok,
         when=ds.get("updated_at"),
-        by=by,
+        by=commit_by(payload, m),
         subject=_subject(commit_message(payload)),
     )
 

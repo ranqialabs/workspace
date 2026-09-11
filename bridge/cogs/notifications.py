@@ -15,15 +15,16 @@ if TYPE_CHECKING:
 
 log = logging.getLogger(__name__)
 
-# Commit messages looked up by sha, newest last. One commit is reported by a deploy
-# and by each job it ran, all wanting the same message.
-_MESSAGES_KEPT = 32
+# The commit each sha names — what it was called and who wrote it — newest last. One
+# commit is reported by a deploy and by each job it ran, and they all want the same
+# names on the card.
+_COMMITS_KEPT = 32
 
 
 class Notifications(commands.Cog):
     def __init__(self, bot: "BridgeBot") -> None:
         self.bot = bot
-        self._messages: dict[tuple[str, str], str] = {}
+        self._commits: dict[tuple[str, str], dict] = {}
         # Whatever render.py knows how to draw, we listen for — registering a
         # renderer is the whole of adding an event, with no second list to match.
         for event in render.RENDERERS:
@@ -56,8 +57,8 @@ class Notifications(commands.Cog):
         return handler
 
     async def _resolve_commit(self, event: str, payload: dict) -> None:
-        """Attach the commit's message when the webhook didn't carry one, so the card
-        reads what shipped rather than `1ab46d1 on main`."""
+        """Attach the commit's message and author when the webhook didn't carry them, so
+        the card says what shipped and who shipped it rather than `1ab46d1 on main`."""
         sha = render.pipeline_sha(event, payload)
         full_name = (payload.get("repository") or {}).get("full_name") or ""
         if render.commit_message(payload) or not sha or "/" not in full_name:
@@ -65,8 +66,8 @@ class Notifications(commands.Cog):
         github = self.bot.github
         if github is None:
             return
-        message = self._messages.get((full_name, sha))
-        if message is None:
+        head = self._commits.get((full_name, sha))
+        if head is None:
             owner, name = full_name.split("/", 1)
             try:
                 resp = await github.rest.repos.async_get_commit(owner, name, sha)
@@ -76,11 +77,21 @@ class Notifications(commands.Cog):
                     "could not resolve commit %s in %s: %s", sha[:7], full_name, exc
                 )
                 return
-            message = resp.parsed_data.commit.message
-            self._messages[(full_name, sha)] = message
-            if len(self._messages) > _MESSAGES_KEPT:
-                del self._messages[next(iter(self._messages))]
-        payload["head_commit"] = {"message": message}
+            commit = resp.parsed_data.commit
+            user, git_author = resp.parsed_data.author, commit.author
+            head = {
+                "message": commit.message,
+                # The login can be @mentioned; the git name is all a commit has when
+                # its author has no account behind that email.
+                "author": {
+                    "name": git_author.name if git_author else None,
+                    "login": user.login if user else None,
+                },
+            }
+            self._commits[(full_name, sha)] = head
+            if len(self._commits) > _COMMITS_KEPT:
+                del self._commits[next(iter(self._commits))]
+        payload["head_commit"] = head
 
     async def route(self, repo: str, rendered: render.Rendered) -> None:
         """Send to the repo's (announce or plain) channel; edit in place if keyed."""

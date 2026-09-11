@@ -269,23 +269,23 @@ a line per step naming it and how long it took:
 > ✅ **pipeline · workspace**
 > **fix: an image stays in view when the thread keeps talking**
 > `780ea4c` by @adeildo
->
-> **checks / prek** — ✅ [passed](#) in 14s
-> **docs / deploy** — ✅ [passed](#) in 24s
-> **fly deploy / bot** — ✅ [passed](#) in 44s
-> **🚀 deploy: github-pages** — ✅ [deployed](#) ([logs](#))
+> ✅ checks / prek · [passed](#) in 14s
+> ✅ docs / deploy · [passed](#) in 24s
+> ✅ fly deploy / bot · [passed](#) in 44s
+> ✅ 🚀 deploy: github-pages · [deployed](#) ([logs](#))
 
-The card leads with the commit's subject, so the channel says what shipped rather
-than only which sha did. No event brings it for certain: a `workflow_run` carries
-its message, a `check_run` names only the sha, and a deploy rarely names more. So
-the bridge looks the missing one up, remembers it per sha, and takes the sha as
-the fallback when the lookup fails. Each line is named `workflow / job`, the way
-GitHub names a check — the workflow comes from `workflow_run` and the job
-from `check_run`, two webhooks that arrive in either order and are matched by the
-run id they share. Every job gets its own line, so a workflow that runs three is
-three lines, each with its own time, and the run's own line folds into the jobs it
-summarizes. **deployed** links the live URL and **logs** the run; when those are
-the same URL the line carries one link, not two.
+A step is one line, not a field with its own label, so a run of three checks is
+three lines and nothing more. The card leads with the commit's subject, so the
+channel says what shipped rather than only which sha did. No event brings it for
+certain: a `workflow_run` carries its message, a `check_run` names only the sha,
+and a deploy rarely names more. So the bridge looks the missing one up, remembers
+it per sha, and takes the sha as the fallback when the lookup fails. Each line is
+named `workflow / job`, the way GitHub names a check — the workflow comes from
+`workflow_run` and the job from `check_run`, two webhooks that arrive in either
+order and are matched by the run id they share. Every job gets its own line, each
+with its own time, and the run's own line folds into the jobs it summarizes.
+**deployed** links the live URL and **logs** the run; when those are the same URL
+the line carries one link, not two.
 
 Each new step **edits** the card rather than posting under it, for up to ten
 minutes after it appeared — long enough for a push's workflows to land, short
@@ -297,6 +297,7 @@ The card's colour is the whole run's verdict, not the last step's: one failure
 turns it red and keeps it red however many steps pass afterwards — unless the
 re-run of that very step succeeds, which clears it. Only real verdicts get a
 line; cancelled, skipped and stale runs say nothing about the code and are
-ignored. The commit author is @mentioned when the run names the GitHub login that
-triggered it, and falls back to the git author's name as plain text when it
-doesn't.
+ignored. The commit is credited to the login that triggered the run, @mentioned
+when it maps to a Discord member, and to the commit's own author — looked up with
+its message — when the event names nobody. The git name stands in as plain text
+when there is no login to mention.

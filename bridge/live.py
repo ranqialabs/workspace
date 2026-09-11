@@ -48,24 +48,35 @@ def stamp(embed: discord.Embed, payload: str) -> discord.Embed:
     return embed
 
 
+def _lines(card: discord.Embed) -> list[str]:
+    """A card's description split into the lines it draws."""
+    return [line for line in (card.description or "").split("\n") if line]
+
+
+def _lead(card: discord.Embed) -> list[str]:
+    """A card's lines that aren't steps: the byline it leads with."""
+    return [line for line in _lines(card) if step_key(line) is None]
+
+
 def merge_into(into: discord.Embed, previous: discord.Embed) -> discord.Embed:
     """Fold `previous`'s steps into `into`, oldest first and without duplicating.
 
     A step's key identifies it, so one reporting again (queued, then deployed)
-    overwrites its own line and keeps its place. `into` holds the newest step, so
-    its fields win on a clash — except its headline, which it keeps only if it
-    brought one, since not every event knows what the commit was called. Each line
-    is then named for the card it now sits on; see `step_line`.
+    overwrites its own line and keeps its place. `into` holds the newest step, so its
+    lines win on a clash — except its headline and byline, which it keeps only if it
+    brought them, since not every event knows what the commit was called or who
+    shipped it. Each line is then named for the card it now sits on; see `step_line`.
     """
     if headlined(previous) and not headlined(into):
-        into.title, into.description = previous.title, previous.description
-    steps = {step_key(f.name or ""): f for f in previous.fields}
-    steps |= {step_key(f.name or ""): f for f in into.fields}
-    names = [f.name or "" for f in steps.values()]
-    into.clear_fields()
-    for field in steps.values():
-        if (name := step_line(names, field.name or "")) is not None:
-            into.add_field(name=name, value=field.value, inline=field.inline)
+        into.title = previous.title
+        lead = _lead(previous)
+    else:
+        lead = _lead(into)
+    steps = {key: line for line in _lines(previous) if (key := step_key(line))}
+    steps |= {key: line for line in _lines(into) if (key := step_key(line))}
+    names = list(steps.values())
+    lines = [named for line in names if (named := step_line(names, line))]
+    into.description = "\n".join(lead + lines)
     _reverdict(into)
     return into
 
@@ -77,7 +88,8 @@ def _reverdict(card: discord.Embed) -> None:
     failed step green clears the red — while a failure still standing keeps the
     card red however many later steps pass.
     """
-    icons = [(field.value or " ")[0] for field in card.fields]
+    icons = [line[0] for line in _lines(card) if step_key(line)]
+    icons += [value[0] for field in card.fields if (value := field.value)]
     if FAILED in icons:
         icon, color = FAILED, RED
     elif RUNNING in icons:
