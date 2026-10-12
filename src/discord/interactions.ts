@@ -112,6 +112,7 @@ export function toCommand(interaction: Interaction): Command | undefined {
   const member = textOption(values, "member")
 
   if (name === "config") return { name: "config" }
+  if (name === "import") return channel === undefined ? undefined : { name: "import", channel }
 
   if (name === "map") {
     if (sub === "repo" || sub === "announce") {

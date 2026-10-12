@@ -72,6 +72,13 @@ export const COMMANDS = [
     ],
   },
   {
+    name: "import",
+    description: "Read the old #bot-config channel once into bob's configuration",
+    contexts: IN_SERVERS,
+    default_member_permissions: MANAGE_GUILD,
+    options: [{ ...channel, description: "The old #bot-config channel" }],
+  },
+  {
     name: "config",
     description: "Show what bob knows: repos, channels and people",
     contexts: IN_SERVERS,
