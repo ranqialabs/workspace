@@ -41,6 +41,8 @@ export interface Review {
   login: string
   verdict: Verdict
   comments: number
+  /** When the review was asked for; reminders count from here. */
+  requestedAt?: string
 }
 
 export interface PullStory {
@@ -108,6 +110,22 @@ export interface PipelineStory {
 }
 
 export type Story = IssueStory | PullStory | PipelineStory
+
+/**
+ * Whether a commit's pipeline passed: false while any step stands failed,
+ * undefined while any still runs, true otherwise. A run's jobs speak for it
+ * once they arrive.
+ */
+export function pipelineVerdict(story: PipelineStory): boolean | undefined {
+  const outcomes = story.steps.flatMap((step) => {
+    if (step.type === "deploy") return [step.outcome.ok]
+    if (step.jobs.length > 0) return step.jobs.map((job) => job.outcome.ok)
+    return step.outcome === undefined ? [] : [step.outcome.ok]
+  })
+  if (outcomes.includes(false)) return false
+  if (outcomes.includes(undefined)) return undefined
+  return true
+}
 
 /** Someone a change should notify: a GitHub login, or everyone with access to a repo. */
 export type Ping = { login: string } | { repo: string }
@@ -272,6 +290,7 @@ function pullChange(payload: PullRequestPayload): Change | undefined {
         login: reviewer,
         verdict: "requested",
         comments: 0,
+        requestedAt: pr.updated_at ?? new Date().toISOString(),
       }))
       return { story, ping: [{ login: reviewer }] }
     })

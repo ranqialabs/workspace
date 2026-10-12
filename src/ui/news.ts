@@ -11,6 +11,7 @@ import type {
   RunStep,
   Story,
 } from "../news/stories"
+import { pipelineVerdict } from "../news/stories"
 import { type Card, type Field, type Mentions, type Tone, who } from "./card"
 import { KIND, MARK, outcomeMark, outcomeTone } from "./glyphs"
 import { code, count, oneLine } from "./text"
@@ -122,32 +123,23 @@ function deployLine(step: DeployStep): string {
  * One line per job, named the way GitHub names a check (`workflow / job`).
  * A run's own line shows only until its jobs arrive, since they say more.
  */
-function runLines(step: RunStep): { line: string; ok: boolean | undefined }[] {
+function runLines(step: RunStep): string[] {
   if (step.jobs.length > 0) {
     return step.jobs.map((job) => {
       const name = step.workflow === undefined ? job.name : `${step.workflow} / ${job.name}`
-      const line = `${outcomeMark(job.outcome.ok)} ${name} ${outcomeText(job.outcome)}`
-      return { line, ok: job.outcome.ok }
+      return `${outcomeMark(job.outcome.ok)} ${name} ${outcomeText(job.outcome)}`
     })
   }
   if (step.outcome === undefined) return []
   let line = `${outcomeMark(step.outcome.ok)} ${step.workflow ?? "Workflow"} ${outcomeText(step.outcome)}`
   if (step.attempt !== undefined && step.attempt > 1) line += `, attempt ${step.attempt}`
-  return [{ line, ok: step.outcome.ok }]
+  return [line]
 }
 
-function stepLines(story: PipelineStory): { line: string; ok: boolean | undefined }[] {
+function stepLines(story: PipelineStory): string[] {
   return story.steps.flatMap((step) =>
-    step.type === "deploy" ? [{ line: deployLine(step), ok: step.outcome.ok }] : runLines(step),
+    step.type === "deploy" ? [deployLine(step)] : runLines(step),
   )
-}
-
-/** Failed while any step stands failed, running while any runs, passed otherwise. */
-export function verdict(story: PipelineStory): boolean | undefined {
-  const outcomes = stepLines(story).map((step) => step.ok)
-  if (outcomes.includes(false)) return false
-  if (outcomes.includes(undefined)) return undefined
-  return true
 }
 
 const CHECKS_STATE = { passed: "Checks passed", failed: "Checks failed", running: "Checks running" }
@@ -155,11 +147,11 @@ const CHECKS_STATE = { passed: "Checks passed", failed: "Checks failed", running
 function pipelineCard(story: PipelineStory, mentions: Mentions): Card {
   const { repo, commit } = story
   const short = code(story.sha.slice(0, 7))
-  const ok = verdict(story)
+  const ok = pipelineVerdict(story)
   const state = ok === undefined ? CHECKS_STATE.running : CHECKS_STATE[ok ? "passed" : "failed"]
   const author = commit?.login === undefined ? commit?.name : who(mentions, commit.login)
   const lead = author === undefined ? short : `${short} by ${author}`
-  const lines = stepLines(story).map((step) => step.line)
+  const lines = stepLines(story)
   return {
     tone: outcomeTone(ok),
     kicker: `${KIND.checks} ${state} in ${repo.name}`,
