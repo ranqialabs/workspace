@@ -498,5 +498,3 @@ export function githubTools(github: GitHub, org: string) {
     }),
   }
 }
-
-export type GitHubTools = ReturnType<typeof githubTools>

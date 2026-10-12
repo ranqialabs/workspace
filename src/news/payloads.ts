@@ -136,7 +136,7 @@ export const PAYLOADS = {
   deployment_status: deploymentStatus,
 }
 
-export type NewsEvent = keyof typeof PAYLOADS
+type NewsEvent = keyof typeof PAYLOADS
 export type Payloads = { [E in NewsEvent]: z.infer<(typeof PAYLOADS)[E]> }
 export type IssuesPayload = Payloads["issues"]
 export type PullRequestPayload = Payloads["pull_request"]
@@ -144,7 +144,3 @@ export type PullRequestReviewPayload = Payloads["pull_request_review"]
 export type WorkflowRunPayload = Payloads["workflow_run"]
 export type CheckRunPayload = Payloads["check_run"]
 export type DeploymentStatusPayload = Payloads["deployment_status"]
-
-export function isNewsEvent(event: string): event is NewsEvent {
-  return Object.hasOwn(PAYLOADS, event)
-}
