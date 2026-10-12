@@ -10,6 +10,8 @@ export type Command =
   | { name: "map-person"; account: Account; value: string; user: string; userName?: string }
   | { name: "unmap-person"; account: Account; user: string }
   | { name: "config" }
+  /** Discord only: reads the Python version's #bot-config once. */
+  | { name: "import"; channel: string }
 
 export interface Reply {
   text: string
@@ -58,6 +60,8 @@ export async function run(
       const label = command.account === "github" ? "GitHub" : "Linear"
       return { text: `<@${command.user}> has no ${label} account linked anymore.` }
     }
+    case "import":
+      return { text: "Importing only works on Discord, from the old #bot-config channel." }
     case "config":
       break
   }

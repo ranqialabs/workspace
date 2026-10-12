@@ -23,6 +23,14 @@ with autocomplete for repos and GitHub logins. On Slack they are subcommands of
 
 On Slack, leaving the channel out of `map repo` means the channel you run it in.
 
+### Coming from the Python version
+
+`/import channel:#bot-config` (Discord, Manage Server) reads the channel where
+the Python bob kept its configuration and applies every line once: home and
+announce channels, access roles, and GitHub and Linear accounts. Running it
+again is harmless; later lines win, as they did before. The channel is not
+touched and can be archived afterwards.
+
 ### Who can run them
 
 - **Discord.** `/map` and `/unmap` need the **Manage Server** permission;
