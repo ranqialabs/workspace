@@ -1,7 +1,7 @@
 // What bob needs from a chat platform to post news and talk. Discord and
 // Slack each implement it; everything above this line is shared.
 import type { Platform } from "../store/config"
-import type { Card } from "./card"
+import type { Card } from "../ui/card"
 
 /** A message bob posted: Slack calls the id a `ts`, Discord a snowflake. */
 export interface MessageRef {

@@ -7,7 +7,7 @@ import { mentionsFor } from "../chat/mentions"
 import type { Config, Platform } from "../store/config"
 import { migrate } from "../store/migrations"
 import type { SqlDatabase } from "../store/sql"
-import { draw, pingText } from "./draw"
+import { draw, pingText } from "../ui/news"
 import type { Change, Commit, Ping, Story } from "./stories"
 
 const STEPS = [

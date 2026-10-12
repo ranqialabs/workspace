@@ -3,7 +3,7 @@
 // the draft is accepted, and GitHub checks the assignee and labels on Submit.
 import { z } from "zod"
 
-import type { Card, Tone } from "../chat/card"
+import type { Card, Tone } from "../ui/card"
 
 export const IssueDraft = z.object({
   title: z.string().max(256).describe("`type: what changes`, e.g. `fix: ...`, `feat: ...`"),

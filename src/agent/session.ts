@@ -5,7 +5,7 @@
 import { type LanguageModel, type ModelMessage, modelMessageSchema, tool, type ToolSet } from "ai"
 import { z } from "zod"
 
-import type { Card } from "../chat/card"
+import type { Card } from "../ui/card"
 import type { Button, Chat, MessageRef } from "../chat/chat"
 import { Throttled } from "../chat/throttle"
 import type { GitHub } from "../github/app"

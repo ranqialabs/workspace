@@ -78,7 +78,7 @@ function must<T>(value: T | undefined): T {
 
 test("news goes only to platforms that follow the repo", async () => {
   await newsroom.publish(must(issue("opened")))
-  expect(discord.log).toEqual(["post d-web/m1 <@&r1> | 🐛 issue · web"])
+  expect(discord.log).toEqual(["post d-web/m1 <@&r1> | 🐛 Open issue in web"])
   expect(slack.log).toEqual([])
 })
 
@@ -88,10 +88,10 @@ test("a fresh card is edited, and a ping on it goes out as a reply", async () =>
   await newsroom.publish(must(issue("assigned", { assignee: { login: "ana" } })))
   await newsroom.publish(must(issue("closed")))
   expect(discord.log).toEqual([
-    "post d-web/m1 <@&r1> | 🐛 issue · web",
-    "edit d-web/m1 🐛 issue · web",
+    "post d-web/m1 <@&r1> | 🐛 Open issue in web",
+    "edit d-web/m1 🐛 Open issue in web",
     "post d-web/m2 ↩m1 <@D-ANA>",
-    "edit d-web/m1 ✅ closed · web",
+    "edit d-web/m1 🐛 Closed issue in web",
   ])
 })
 
@@ -99,7 +99,7 @@ test("a card that has scrolled away is posted again", async () => {
   await newsroom.publish(must(issue("opened")))
   now += 2 * 60 * 60_000
   await newsroom.publish(must(issue("closed")))
-  expect(discord.log.at(-1)).toBe("post d-web/m2 ✅ closed · web")
+  expect(discord.log.at(-1)).toBe("post d-web/m2 🐛 Closed issue in web")
   expect(newsroom.card("issue:acme/web:7", "discord")?.id).toBe("m2")
 })
 
@@ -107,22 +107,22 @@ test("moving the repo's channel starts a card in the new one", async () => {
   await newsroom.publish(must(issue("opened")))
   config.mapChannel("acme/web", "discord", "announce", "d-news")
   await newsroom.publish(must(issue("closed")))
-  expect(discord.log.at(-1)).toBe("post d-news/m2 ✅ closed · web")
+  expect(discord.log.at(-1)).toBe("post d-news/m2 🐛 Closed issue in web")
 })
 
 test("both platforms get the card when both follow the repo", async () => {
   config.mapChannel("acme/web", "slack", "home", "s-web")
   config.link("slack", "S-ANA", "github", "ana")
   await newsroom.publish(must(issue("assigned", { assignee: { login: "ana" } })))
-  expect(discord.log).toEqual(["post d-web/m1 <@D-ANA> | 🐛 issue · web"])
-  expect(slack.log).toEqual(["post s-web/m1 <@S-ANA> | 🐛 issue · web"])
+  expect(discord.log).toEqual(["post d-web/m1 <@D-ANA> | 🐛 Open issue in web"])
+  expect(slack.log).toEqual(["post s-web/m1 <@S-ANA> | 🐛 Open issue in web"])
 })
 
 test("concurrent steps of one commit land on one card, looked up once", async () => {
   await Promise.all([newsroom.publish(must(job("lint"))), newsroom.publish(must(job("test")))])
   expect(discord.log).toEqual([
-    "post d-web/m1 ✅ pipeline · web",
-    "edit d-web/m1 ✅ pipeline · web",
+    "post d-web/m1 🚦 Checks passed in web",
+    "edit d-web/m1 🚦 Checks passed in web",
   ])
   expect(lookups).toEqual(["acme/web@abc1234def"])
   const story = newsroom.story("pipeline:acme/web:abc1234def")

@@ -1,7 +1,7 @@
 // What the agent is doing, one line per tool call, on a single card a human can
 // glance at. Pure and total: a progress line is never worth failing a run over,
 // so any shape the arguments arrive in comes back as text.
-import type { Card } from "../chat/card"
+import type { Card } from "../ui/card"
 
 const TOOLS: Record<string, [icon: string, verb: string]> = {
   read_file: ["📄", "reading"],

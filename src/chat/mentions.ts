@@ -1,7 +1,7 @@
 // Who to notify, in each platform's syntax. Slack's Free plan has no user
 // groups, so a repo there has no group to ping and only people are named.
 import type { Config, Platform } from "../store/config"
-import type { Mentions } from "./card"
+import type { Mentions } from "../ui/card"
 
 export function mentionsFor(config: Config, platform: Platform): Mentions {
   return {
