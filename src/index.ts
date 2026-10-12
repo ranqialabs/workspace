@@ -79,6 +79,9 @@ export default {
   },
 
   async scheduled(_controller, env): Promise<void> {
-    if (env.DISCORD_TOKEN) await env.GATEWAY.getByName("discord").start()
+    const work = [workspace(env).tick()]
+    if (env.DISCORD_TOKEN) work.push(env.GATEWAY.getByName("discord").start())
+    const failed = (await Promise.allSettled(work)).find((result) => result.status === "rejected")
+    if (failed !== undefined) throw failed.reason
   },
 } satisfies ExportedHandler<Env>

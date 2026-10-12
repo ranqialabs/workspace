@@ -16,6 +16,7 @@ import { credentials, type GitHub, installationClient } from "./github/app"
 import { OrgDirectory } from "./github/directory"
 import type { Delivery } from "./github/webhook"
 import { Newsroom } from "./news/newsroom"
+import { Reminders } from "./news/reminders"
 import { changeFor, type Commit, commitOf } from "./news/stories"
 import { Config, type Person, type Platform } from "./store/config"
 import { migrate } from "./store/migrations"
@@ -27,6 +28,7 @@ export class Workspace extends DurableObject<Env> {
   readonly config: Config
   private readonly directory: OrgDirectory
   private readonly newsroom: Newsroom
+  private readonly reminders: Reminders
   private client: Promise<GitHub> | undefined
 
   constructor(ctx: DurableObjectState, env: Env) {
@@ -37,6 +39,18 @@ export class Workspace extends DurableObject<Env> {
     this.newsroom = new Newsroom(ctx.storage, this.config, chats(env), (repo, sha) =>
       this.lookupCommit(repo, sha),
     )
+    this.reminders = new Reminders(
+      ctx.storage,
+      this.newsroom,
+      this.config,
+      chats(env),
+      env.TIMEZONE,
+    )
+  }
+
+  /** The cron's tick: whatever is due. */
+  async tick(): Promise<void> {
+    await this.reminders.run()
   }
 
   /** A verified webhook delivery. GitHub redelivers on timeouts, so each id counts once. */

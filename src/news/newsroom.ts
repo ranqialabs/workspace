@@ -8,7 +8,7 @@ import type { Config, Platform } from "../store/config"
 import { migrate } from "../store/migrations"
 import type { SqlDatabase } from "../store/sql"
 import { draw, newsButtons, pingText } from "../ui/news"
-import type { Change, Commit, Ping, Story } from "./stories"
+import { type Change, type Commit, type Ping, pipelineVerdict, type Story } from "./stories"
 
 const STEPS = [
   `CREATE TABLE stories (
@@ -104,12 +104,22 @@ export class Newsroom {
     this.db.sql.exec("DELETE FROM stories WHERE updated_at < ?", cutoff)
   }
 
+  /** Every story of one kind, for the reminders and the retro. */
+  stories<K extends Story["kind"]>(kind: K): Extract<Story, { kind: K }>[] {
+    const rows = this.db.sql.exec<{ story: string }>("SELECT story FROM stories").toArray()
+    return rows
+      .map((row): Story => JSON.parse(row.story))
+      .filter((story): story is Extract<Story, { kind: K }> => story.kind === kind)
+  }
+
   private async publishNow(change: Change): Promise<void> {
-    const applied = change.apply(this.story(change.key))
+    const previous = this.story(change.key)
+    const applied = change.apply(previous)
     const story = applied.story
     if (story.kind === "pipeline" && story.commit === undefined) {
       story.commit = await this.lookupCommit(story.repo.fullName, story.sha).catch(() => undefined)
     }
+    const ping = [...applied.ping, ...brokeMain(previous, story)]
     this.db.sql.exec(
       `INSERT INTO stories (key, story, updated_at) VALUES (?, ?, ?)
        ON CONFLICT (key) DO UPDATE SET story = excluded.story, updated_at = excluded.updated_at`,
@@ -121,7 +131,7 @@ export class Newsroom {
       .exec<{ id: number }>("SELECT rowid AS id FROM stories WHERE key = ?", change.key)
       .one().id
     const results = await Promise.allSettled(
-      this.chats.map((chat) => this.show(chat, change.key, id, story, applied.ping)),
+      this.chats.map((chat) => this.show(chat, change.key, id, story, ping)),
     )
     const failed = results.find((result) => result.status === "rejected")
     if (failed !== undefined) throw failed.reason
@@ -162,4 +172,15 @@ export class Newsroom {
       this.now(),
     )
   }
+}
+
+/**
+ * The commit's author, when this change is what turned the default branch red.
+ * Pipelines are only followed on the default branch, so any failure is one.
+ */
+function brokeMain(previous: Story | undefined, story: Story): Ping[] {
+  if (story.kind !== "pipeline" || pipelineVerdict(story) !== false) return []
+  if (previous?.kind === "pipeline" && pipelineVerdict(previous) === false) return []
+  const login = story.commit?.login
+  return login === undefined ? [] : [{ login }]
 }

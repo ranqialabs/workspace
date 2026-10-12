@@ -23,12 +23,20 @@ test("a platform without its secrets answers as if it were not there", async () 
   }
 })
 
-test("the cron leaves the Discord gateway alone without a token", async () => {
-  const started: string[] = []
-  const gateway = { getByName: (name: string) => ({ start: () => void started.push(name) }) }
-  await worker.scheduled({} as ScheduledController, { GATEWAY: gateway } as unknown as Env)
-  expect(started).toEqual([])
-  const withToken = { GATEWAY: gateway, DISCORD_TOKEN: "t" } as unknown as Env
-  await worker.scheduled({} as ScheduledController, withToken)
-  expect(started).toEqual(["discord"])
+test("the cron ticks the Workspace, and starts the Discord gateway only with a token", async () => {
+  const calls: string[] = []
+  const WORKSPACE = {
+    getByName: (name: string) => ({ tick: () => void calls.push(`tick ${name}`) }),
+  }
+  const GATEWAY = {
+    getByName: (name: string) => ({ start: () => void calls.push(`start ${name}`) }),
+  }
+  const base = { WORKSPACE, GATEWAY, GITHUB_ORG: "acme" }
+  await worker.scheduled({} as ScheduledController, base as unknown as Env)
+  expect(calls).toEqual(["tick acme"])
+  await worker.scheduled(
+    {} as ScheduledController,
+    { ...base, DISCORD_TOKEN: "t" } as unknown as Env,
+  )
+  expect(calls).toEqual(["tick acme", "tick acme", "start discord"])
 })

@@ -26,5 +26,8 @@
     "GITHUB_ORG": "ranqialabs",
     // The OpenAI model behind the agent.
     "AGENT_MODEL": "gpt-5.6-terra",
+    // The team's time zone: reminders go out on its working days and hours,
+    // and the retro's days and weeks are its own.
+    "TIMEZONE": "America/Sao_Paulo",
   },
 }

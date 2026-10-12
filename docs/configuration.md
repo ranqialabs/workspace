@@ -47,12 +47,13 @@ cannot get secrets before its first deploy, so the secrets go with
 `wrangler deploy --secrets-file`; on an existing Worker the ones left out stay
 as they are.
 
-`wrangler.jsonc` sets two variables:
+`wrangler.jsonc` sets three variables:
 
-| Variable      | Meaning                                    |
-| :------------ | :----------------------------------------- |
-| `GITHUB_ORG`  | the org whose repos and people bob follows |
-| `AGENT_MODEL` | the OpenAI model behind the agent          |
+| Variable      | Meaning                                                      |
+| :------------ | :----------------------------------------------------------- |
+| `GITHUB_ORG`  | the org whose repos and people bob follows                   |
+| `AGENT_MODEL` | the OpenAI model behind the agent                            |
+| `TIMEZONE`    | the team's time zone, for working hours and the retro's days |
 
 For local work, put the same names in `.dev.vars` and run `bun run dev`.
 

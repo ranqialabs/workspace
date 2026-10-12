@@ -15,6 +15,7 @@ import { pipelineVerdict } from "../news/stories"
 import type { Button } from "../chat/chat"
 import { pressId } from "../chat/press"
 import { BUTTON } from "./replies"
+import { waited } from "../time"
 import { type Card, type Field, type Mentions, type Tone, who } from "./card"
 import { KIND, MARK, outcomeMark, outcomeTone } from "./glyphs"
 import { code, count, oneLine } from "./text"
@@ -31,6 +32,11 @@ export function newsButtons(story: Story, id: number): Button[] {
     return [{ id: pressId("explain", id), label: BUTTON.explain }]
   }
   return []
+}
+
+/** A reply under a pull request's card for a reviewer who has not reviewed yet. */
+export function reviewReminder(mention: string, title: string, number: number, ms: number): string {
+  return `${MARK.waiting} ${mention}, **${title}** #${number} has waited ${waited(ms)} for your review.`
 }
 
 /** The mentions that notify, deduplicated; plain names notify no one and are left out. */

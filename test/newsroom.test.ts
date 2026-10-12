@@ -141,6 +141,18 @@ test("a red checks card offers to explain itself, and loses the button once gree
   expect(discord.edits.get("m1")?.buttons).toEqual([])
 })
 
+test("turning the default branch red pings the commit's author, once", async () => {
+  await newsroom.publish(must(job("lint")))
+  await newsroom.publish(must(job("test", "failure")))
+  await newsroom.publish(must(job("e2e", "failure")))
+  expect(discord.log).toEqual([
+    "post d-web/m1 🚦 Checks passed in web",
+    "edit d-web/m1 🚦 Checks failed in web",
+    "post d-web/m2 ↩m1 <@D-ANA>",
+    "edit d-web/m1 🚦 Checks failed in web",
+  ])
+})
+
 test("a failed lookup still publishes, leading with the sha", async () => {
   newsroom = new Newsroom(memoryDatabase(), config, [discord], () =>
     Promise.reject(new Error("404")),

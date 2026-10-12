@@ -73,6 +73,24 @@ each workflow's jobs as one line each, check runs, and deployments (🚀) with
 their environment. The card is titled with the commit's subject and credits its
 author.
 
+### Why did it fail?
+
+A red 🚦 card has a **Why did it fail?** button. Pressing it asks the agent, in
+the card's thread, as if you had asked there: it reads the failing jobs' errors
+and what the commit changed, and answers with the cause, citing files, and what
+would fix it. The button goes away once the checks pass.
+
+### Reminders
+
+- **The default branch turns red.** The author of the commit that broke it is
+  mentioned under the card, once. Later failures on the same commit stay quiet.
+- **A review waits more than a day.** The reviewer is mentioned under the pull
+  request's card, at most once a day, until they review or the pull request
+  closes.
+
+Reminders go out on working days, 9:00 to 18:00 in `TIMEZONE` (set in
+`wrangler.jsonc`), and only to people bob can mention on that platform.
+
 ### When a card is posted again
 
 A card is edited in place while it is fresh: an hour for issues and pull
