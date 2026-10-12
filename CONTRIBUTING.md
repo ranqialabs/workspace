@@ -1,8 +1,9 @@
 # Setup
 
-1. Have [uv](https://docs.astral.sh/uv/#installation) installed.
-2. Run `uv sync` to install deps.
-3. Run `uv run prek install --prepare-hooks` to install pre-commit hooks.
+1. Have [Bun](https://bun.com) installed.
+2. Run `bun install`. It installs the dependencies and the prek pre-commit hooks.
+3. Run `bun run check` to see that everything passes: `wrangler types --check`,
+   oxlint (type-aware), oxfmt and the tests.
 
 # Contributing
 

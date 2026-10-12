@@ -35,7 +35,7 @@ export class DiscordRest {
           headers: {
             authorization: `Bot ${this.token}`,
             "content-type": "application/json",
-            "user-agent": "DiscordBot (https://github.com/ranqialabs/ranqia-workspace, 2)",
+            "user-agent": "DiscordBot (https://github.com/ranqialabs/workspace, 2)",
           },
           body: body === undefined ? undefined : JSON.stringify(body),
         }),

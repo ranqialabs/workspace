@@ -4,102 +4,81 @@ icon: lucide/lightbulb
 
 # Concepts
 
-The bridge is built on four convictions. None of them are technical trivia —
-each one is a choice about how the tool should feel to use, and each one is why a
-particular piece of friction you'd expect simply isn't here. Understanding them
-is enough to trust what the bot does on its own.
-
-## GitHub is the source of truth
-
-Your org already answers "who can touch which repo" — in GitHub, where that
-information is actually maintained. Asking you to re-answer that question inside
-Discord would mean two copies of the truth, and two copies always drift.
-
-So the bridge only ever reads that state and reflects it. You **map a repo to a
-channel** — the one grouping GitHub can't infer — and the bridge **creates an
-access role for that repo**, fills it with everyone who can reach the repo on
-GitHub (team members, direct collaborators, and org owners alike, since what
-matters is _access_, not how you got it), and makes the **channel visible only to that role**. Grant
-someone access on GitHub and the channel opens up for them; revoke it and it
-closes — you don't touch a role or a permission by hand, because the moment you
-did, GitHub and Discord would disagree.
-
-The rule the bot lives by: it only touches what it created — the access roles and
-the channels you mapped. Anything you set up yourself is off-limits, so "reflect
-GitHub" can never mean "trample your manual work."
-
-## You should never touch an ID
-
-Discord identifies everything by long numeric snowflakes, and most bots make you
-copy them — the server ID, each role ID, a channel ID pasted into a config file.
-It's tedious and it's a silent trap: one wrong digit and the bot misbehaves in a
-way that's miserable to debug.
-
-The bridge refuses that entire category of error. The only thing you configure by
-hand is your GitHub org name. Everything else is either **discovered** (the server
-is the one the bot is in; an admin is anyone with _Manage Server_) or chosen
-through the interface Discord already gives you — you **mention** a channel, you
-**pick** a member, and repo and user names come from autocomplete backed by the
-live GitHub API. If you can't fat-finger an ID, you can't misconfigure the bridge.
-
-## Your configuration lives in Discord
-
-The bridge keeps no database and no disk. The mappings it can't derive from GitHub
-— which repos group into which channel, and who each GitHub user is on Discord —
-are stored as ordinary messages in a private `#bot-config` channel it creates for
-itself.
-
-This isn't a shortcut, it's a feature. There's nothing to back up or pay for, it
-survives every restart and redeploy for nothing, and — best of all — your
-configuration is **something you can read**. Scroll the channel to see every
-mapping in plain text. Above those lines the bot keeps one **live panel**: a
-single message it edits in place (never reposts, so it never floods) showing the
-whole current state with real mentions. The channel is both the storage and the
-audit log, and they can't disagree because they're the same thing.
-
-## A model may propose, only a human disposes
-
-The bridge runs an LLM agent, and you reach it by [mentioning it](agent.md) or
-with `/issue`. Either way it reads your conversation and your code. The obvious
-worry is the obvious one: what happens when it gets something wrong?
-
-The answer isn't a careful system prompt, because a prompt is a request and a
-confused model can decline it. **The agent has no tool that writes to GitHub.**
-It can search code, read files, list commits, look for duplicate issues, and read
-who's mapped to whom. That's the complete list. Creating the issue is done by the
-cog, in a different module, behind a button that only the person who asked can
-press.
-
-So the failure mode of a bad draft is a bad draft — visible in a thread, in front
-of the people who were in the conversation, waiting for someone to press Submit
-or Discard. It cannot be an issue nobody meant to file. That holds for a draft the
-agent proposed because someone asked it to in conversation just as much as for one
-from `/issue`: both land on the same card, behind the same button.
+## One Worker, three kinds of Durable Object
 
 ```mermaid
 flowchart LR
-  C["💬 conversation"] --> A["🤖 agent · read-only tools"]
-  A --> D["📝 draft in a thread"]
-  D -- "Submit · a human click" --> G["🐙 GitHub"]
-  A -. "no path" .-x G
+  GH[GitHub webhooks] --> W[Worker]
+  SL[Slack events, /bob, buttons] --> W
+  DI[Discord slash commands, buttons] --> W
+  DG[Discord gateway] <--> G[Gateway DO]
+  W --> WS[Workspace DO]
+  W --> C[Conversation DO]
+  G --> C
+  C --> WS
 ```
 
-The same instinct runs through the rest of the design: the bot only touches what
-it created, and the one write permission it holds on GitHub is used in exactly
-one place.
+| Object         | How many                        | What it keeps                                                                                        |
+| :------------- | :------------------------------ | :--------------------------------------------------------------------------------------------------- |
+| `Workspace`    | one, named after the GitHub org | the configuration, every news story and the cards drawn from it, the webhook deliveries already seen |
+| `Gateway`      | one, named `discord`            | the Discord gateway session, so a restart resumes instead of reconnecting from scratch               |
+| `Conversation` | one per conversation            | the full history the model saw, tool calls included, the queue of asks, and the drafts               |
 
-## Why this shape
+The Worker itself keeps nothing. It checks signatures and hands each request
+to the object that owns it.
 
-One last idea sits under the code rather than in front of the user, but it's worth
-knowing: the bridge is built to **grow without disturbing what works**. Access
-sync, notifications, issue drafting — each is a self-contained cog, and the ones
-coming later (Google Workspace, voice, knowledge management; see the
-[roadmap](roadmap.md)) slot in the same way, without touching the ones already
-running.
+### Why the Discord gateway needs its own object
 
-`/issue` is the proof it holds. Adding an agent, a thread lifecycle, buttons and
-a whole model integration touched no part of access sync or notifications — it
-arrived as one more cog, and a webhook event it needed already went through the
-same dispatch table everything else uses. That's a promise about the future more
-than a feature you use today, but it's why adding the next capability won't put
-the last one at risk.
+Slack sends everything bob needs over HTTP. Discord sends slash commands and
+button presses over HTTP too, but **messages and mentions only arrive over the
+gateway**, a WebSocket that stays open. The `Gateway` object holds that socket.
+An open outbound socket keeps a Durable Object in memory for at most fifteen
+minutes; the heartbeat alarm, every forty seconds or so, keeps it there for good.
+A cron every five minutes reconnects it after a deploy.
+
+## The configuration lives in SQLite, and you can always see it
+
+The Python version kept its configuration as messages in a `#bot-config`
+channel. That does not work on Slack's Free plan, which hides messages older
+than 90 days, so the configuration moved into the `Workspace` object's SQLite
+database. `/config` (Discord) and `/bob config` (Slack) show all of it, only to
+whoever asked.
+
+What is stored is only what bob cannot ask GitHub:
+
+- **Repo channels.** A repo's _home_ channel on each platform gets its news,
+  and settles which repo an issue drafted there belongs to. An _announce_
+  channel, when set, takes the news instead, so several repos can share a feed.
+- **People.** One row per person, with their GitHub login, Linear email,
+  Discord id and Slack id. Linking a login from Discord and the same login from
+  Slack joins them into one person, so a mention reaches them on both.
+
+## A story per thing, a card per story
+
+Each issue, pull request and commit pipeline is one **story**, stored whole in
+SQLite. A webhook event changes a story, and the card is drawn again from it.
+That is why events that arrive out of order, or twice, still land on one card,
+and why a card for a pipeline shows every workflow and job of a commit as one
+line each.
+
+The card is posted once per platform that follows the repo, and edited after.
+When a card is old enough that an edit would go unnoticed, the next change
+posts a fresh one. Mentions go in a reply under the card, so the card itself
+stays clean and a ping always notifies.
+
+## Platform layer
+
+Everything that differs between Discord and Slack is behind one interface,
+`Chat`: post, edit and read messages. A card is written once, in Markdown, and
+each platform draws it: an embed on Discord, Block Kit on Slack. Buttons carry
+an id like `bob:submit:12:slack:C1:1700.01`, which names the action, its target
+and the conversation that owns it, so either platform routes the press back to
+the right object.
+
+## What GitHub decides
+
+- **Who can be assigned, and which labels exist.** The agent picks from what
+  `repo_labels` and `teammates` return, and GitHub rejects anything else on
+  Submit.
+- **What the agent can read.** Everything goes through the GitHub App's
+  installation token. bob has no clone of any repo and nothing on disk.

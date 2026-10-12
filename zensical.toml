@@ -11,7 +11,7 @@
 # The site_name is shown in the page header and the browser window title
 #
 # Read more: https://zensical.org/docs/setup/basics/#site_name
-site_name = "Ranqia Workspace"
+site_name = "bob"
 
 # The site_description is included in the HTML head and should contain a
 # meaningful description of the site content for use by search engines.
@@ -50,7 +50,7 @@ nav = [
   { "Home" = "index.md" },
   { "Concepts" = "concepts.md" },
   { "Setup" = "configuration.md" },
-  { "Commands & events" = "commands.md" },
+  { "Commands & news" = "commands.md" },
   { "The agent" = "agent.md" },
   { "Roadmap" = "roadmap.md" },
 ]

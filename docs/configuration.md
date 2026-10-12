@@ -1,292 +1,112 @@
 ---
-icon: lucide/settings
+icon: lucide/wrench
 ---
 
 # Setup
 
-Most bots make you hunt for IDs — copy the server ID, copy each role ID, paste a
-channel ID into a config file, keep them in sync forever. This one doesn't. The
-**only** thing you configure by hand is the GitHub org name (plus secrets). The
-server, who's allowed to run admin commands, and every mapping between GitHub and
-Discord are either discovered at runtime or set later with slash commands, using
-autocomplete and mentions. You will not paste a single snowflake ID.
-
-There are four stages, and you do them in order: register the
-[GitHub App](#1-the-github-app), create the [Discord bot](#2-the-discord-bot),
-[deploy](#3-deploy), then [wire everything up from inside Discord](#4-wire-it-up).
-Budget twenty minutes the first time.
+bob needs a GitHub App, a Cloudflare account on **Workers Paid** (the Discord
+gateway keeps one Durable Object in memory around the clock, which the Free plan
+does not allow), and at least one of Discord and Slack. Each platform switches
+on when its secrets are set; leave one out and bob runs on the other alone.
 
 ## 1. The GitHub App
 
-The bridge talks to GitHub as a **GitHub App** installed on your org — not as a
-personal token. That matters: an App gets its own identity, its own fine-grained
-permissions, and its own webhook deliveries, and it keeps working when the person
-who set it up leaves. Create one under **Org Settings → Developer settings →
-GitHub Apps → New GitHub App**.
+Create an app owned by the org and install it on the repos bob should see.
 
-**Identity.** Give it a name (`ranqia-workspace` is fine) and any homepage URL.
-Everything under _Identifying and authorizing users_ — Callback URL, Setup URL,
-the OAuth and Device Flow checkboxes — stays **empty and unchecked**. Those are
-for logging users in, and the bridge never does that; it acts as the installation
-itself.
+| Permission             | Access         | Why                                              |
+| :--------------------- | :------------- | :----------------------------------------------- |
+| Contents               | Read           | the agent reads code and history                 |
+| Issues                 | Read and write | news, and **Submit** creates the issue           |
+| Pull requests          | Read           | news, and the agent reads PRs                    |
+| Checks, Actions        | Read           | pipeline cards, and the agent reads CI failures  |
+| Deployments            | Read           | deploy lines on pipeline cards                   |
+| Members (organization) | Read           | `/map` checks logins, autocomplete lists members |
 
-**Webhook.** Tick **Active**. The **Webhook URL** is
-`https://<your-fly-app>.fly.dev/webhook` — you won't know the exact host until
-[stage 3](#3-deploy), so it's fine to come back and fill it in. Set a **Secret**
-to a long random string and keep it somewhere; it becomes `GITHUB_WEBHOOK_SECRET`
-and is what lets the bridge prove a webhook really came from GitHub.
+Subscribe to **Issues**, **Pull request**, **Pull request review**, **Workflow
+run**, **Check run** and **Deployment status**, with the webhook URL
+`https://<your worker>/github/webhook` and a secret of your choice.
 
-**Permissions.** Read-only everywhere except issues, which the bridge creates
-when someone clicks Submit on an [`/issue`](agent.md) draft:
+The private key GitHub gives you is PKCS#1 (`BEGIN RSA PRIVATE KEY`). bob turns
+it into the PKCS#8 that WebCrypto needs, so paste it as downloaded. A key pasted
+on one line with `\n` in it works too.
 
-| Scope        | Permission                      | Why it's needed                                      |
-| :----------- | :------------------------------ | :--------------------------------------------------- |
-| Repository   | **Issues** → Read **and write** | to hear about issues, and to create one from a draft |
-| Repository   | **Contents** → Read             | `/issue` reads the code to ground a draft in it      |
-| Repository   | **Pull requests** → Read        | to hear about PRs and reviews                        |
-| Repository   | **Actions** → Read              | to hear which workflow finished on the main branch   |
-| Repository   | **Checks** → Read               | the agent reads a failing run's own error messages   |
-| Repository   | **Deployments** → Read          | to hear a deploy start and finish                    |
-| Repository   | **Metadata** → Read             | mandatory; GitHub adds it for you                    |
-| Organization | **Members** → Read              | `/sync roles` reads who can access each repo         |
+## 2. Cloudflare
 
-!!! info "Write is granted to the bot, not to the agent"
-
-    **Issues → Write** is the one non-read permission, and it's used in exactly
-    one place: the cog's Submit handler. The drafting agent has no tool that can
-    reach it. If you'd rather not grant it, everything else still works — you
-    just can't submit a draft from Discord.
-
-**Events.** Subscribe to **Issues**, **Pull request**, **Pull request review**,
-**Workflow run**, **Check run**, and **Deployment status** — the ones the bridge
-listens for. The App has a single webhook (below) that delivers all of them for
-every repo it's installed on.
-
-!!! warning "Workflow run and Check run, not Check suite"
-
-    **Workflow run** names the workflow that finished (`docs`, `checks`, `fly
-    deploy`) and times it, which is what puts `in 24s` on the card. **Check run**
-    names the job inside it (`prek`, `bot`), giving the card's `workflow / job`
-    lines their second half — subscribe to both or every line shows one half.
-
-    A check *suite* is keyed by the app that ran it, and every Actions workflow
-    reports as the same app, so a push running three workflows would arrive as
-    three events all claiming the same name. Both events need **Actions → Read**
-    (Check run also needs **Checks → Read**); subscribing without the permission
-    delivers nothing, which shows up as a workflow silently missing from a card.
-
-**Install it.** Under **Where can this app be installed**, choose _Only on this
-account_, save, then open **Install App** and install it on the org.
-
-Now collect three things the deploy will need:
-
-1. The **App ID** (a number, shown at the top) → `GITHUB_APP_ID`.
-2. A **private key**: scroll to _Private keys_ → **Generate a private key**. A
-   `.pem` file downloads. Its entire contents are `GITHUB_APP_PRIVATE_KEY`.
-3. That **webhook secret** from earlier → `GITHUB_WEBHOOK_SECRET`.
-
-!!! danger "The private key is the `.pem`, not the client secret"
-
-    A GitHub App page shows both a *Client secret* and a *private key*, and it is
-    easy to grab the wrong one. The bridge signs a JWT with the **private key** —
-    the downloaded file that begins with `-----BEGIN ... PRIVATE KEY-----`. The
-    client id and client secret are for OAuth user login and are never used here.
-    If you see `Could not parse the provided public key` in the logs, you almost
-    certainly stored the client secret (or a mangled key) instead.
-
-## 2. The Discord bot
-
-Head to the [Discord Developer Portal] and create an application.
-
-**Get the token.** Open **Bot**, click **Reset Token**, and copy it — Discord
-shows it exactly once. This is `DISCORD_TOKEN`, the credential the bot logs in
-with. Treat it like a password; if it leaks, Reset Token again and the old one
-dies.
-
-**Turn on two privileged intents.** Still on the Bot page, under _Privileged
-Gateway Intents_:
-
-| Intent              | Required for          | What breaks without it                                                                                |
-| :------------------ | :-------------------- | :---------------------------------------------------------------------------------------------------- |
-| **Server Members**  | `/sync roles`         | the bot can't see or change members' roles at all                                                     |
-| **Message Content** | [the agent](agent.md) | message text arrives empty, so a mention carries no request and there's no conversation to draft from |
-
-Leave **Presence** off — the bridge never looks at who's online.
-
-!!! warning "Message Content is why an empty draft happens"
-
-    If `/issue` replies *"I couldn't read any conversation there"* on a channel
-    that plainly has one, or a mention goes unanswered, this intent is the reason
-    nine times out of ten. The bot receives the messages either way; without the
-    intent their `content` is blank, which is indistinguishable from an empty
-    channel — and a mention with blank content reads as nothing being asked.
-
-    Every other feature works fine without it, so the bridge doesn't demand it at
-    boot — you just can't talk to the agent.
-
-**Invite it.** Go to **OAuth2 → URL Generator**, tick the scopes **`bot`** and
-**`applications.commands`**, then under bot permissions tick:
-
-- **Manage Roles** — create and fill the `‹repo› devs` access roles
-- **Manage Channels** — create its own `#bot-config` channel, and gate mapped ones
-- **View Channels**, **Send Messages**, **Embed Links** — post notifications and cards
-- **Read Message History** — read the conversation `/issue` drafts from
-- **Create Public Threads** and **Send Messages in Threads** — every draft lives in a thread
-
-Copy the URL it builds at the bottom, open it, and add the bot to your server.
-
-!!! tip "Put the bot's role near the top"
-
-    Discord only lets a bot assign roles that sit **below its own** in the role
-    list — a safety rule, not a bug. After inviting, drag the bot's role above the
-    access roles it will manage (`‹repo› devs`), or `/sync roles` will fail with
-    *Missing Permissions* even though the permission is granted.
-
-## 3. Deploy
-
-The bridge is one always-on process on [Fly.io]. It can't scale to zero the way a
-web app can, because it holds a live WebSocket to Discord the whole time it's
-running — drop that connection and the bot goes offline. So `fly.toml` pins one
-machine permanently running.
-
-The single non-secret setting lives right in `fly.toml`, in plain sight:
-
-```toml
-[env]
-  GITHUB_ORG = 'ranqialabs'
-  WEBHOOK_PORT = '8080'
+```sh
+bun install
+bunx wrangler secret put GITHUB_APP_ID
+bunx wrangler secret put GITHUB_APP_PRIVATE_KEY
+bunx wrangler secret put GITHUB_WEBHOOK_SECRET
+bunx wrangler secret put OPENAI_API_KEY
+bun run deploy
 ```
 
-The secrets never touch that file — they go through `fly secrets`, which stores
-them encrypted:
+`wrangler.jsonc` sets two variables:
 
-```bash
-fly launch --no-deploy   # first time only: names the app, picks a region
-fly secrets set \
-  DISCORD_TOKEN=... \
-  GITHUB_APP_ID=... \
-  GITHUB_WEBHOOK_SECRET=... \
-  OPENAI_API_KEY=... \
-  GITHUB_APP_PRIVATE_KEY="$(cat ranqia-workspace.*.private-key.pem)"
+| Variable      | Meaning                                    |
+| :------------ | :----------------------------------------- |
+| `GITHUB_ORG`  | the org whose repos and people bob follows |
+| `AGENT_MODEL` | the OpenAI model behind the agent          |
+
+For local work, put the same names in `.dev.vars` and run `bun run dev`.
+
+## 3. Discord
+
+In the [developer portal](https://discord.com/developers/applications):
+
+1. Under **Bot**, turn on the **Message Content** intent. Without it bob sees
+   mentions but not what they say.
+2. Under **General Information**, set the **Interactions Endpoint URL** to
+   `https://<your worker>/discord/interactions`.
+3. Invite the bot with the `bot` and `applications.commands` scopes and the
+   permissions View Channels, Send Messages, Send Messages in Threads, Embed
+   Links and Read Message History.
+
+```sh
+bunx wrangler secret put DISCORD_TOKEN
+bunx wrangler secret put DISCORD_PUBLIC_KEY
+# Optional: register the commands on one server, where they appear at once.
+bunx wrangler secret put DISCORD_GUILD_ID
 ```
 
-Two of these are optional. Without `OPENAI_API_KEY` [the agent](agent.md) is
-switched off and everything else runs unchanged; to run it on a different model, set
-`AGENT_MODEL` to any [pydantic-ai] model string — the matching provider key has to
-be set too. The Linear pair below is the other, and it works the same way.
+The gateway connects within five minutes of the deploy, when the cron first
+runs, and registers the slash commands when Discord says it is ready.
 
-### Linear (optional)
+## 4. Slack
 
-The agent can [read your Linear workspace](agent.md) — teams, projects,
-initiatives, cycles, people, issues and documents — which needs an OAuth2
-application:
+Create an app from [`slack/manifest.json`](https://github.com/ranqialabs/workspace/blob/main/slack/manifest.json)
+after replacing `YOUR-WORKER` with your Worker's host, and install it in the
+workspace. Install it as an app of your own workspace rather than distributing
+it: Slack limits `conversations.history` to one request a minute for apps
+distributed outside the Marketplace, and the agent reads history.
 
-1. Under **Linear → Settings → API → OAuth applications**, create one. Linear
-   recommends a workspace dedicated to managing it, since any admin there can
-   reach it.
-2. Enable **client credentials** on it. That grant issues an _app actor_ token, so
-   the bot acts as itself in the workspace rather than as whoever set it up — no
-   billable seat, and an audit trail that names the app.
-3. Ask for the **`read`** scope and nothing else.
-4. Adjust which teams the app can reach on its details page, whenever you like.
-
-```bash
-fly secrets set \
-  LINEAR_CLIENT_ID=... \
-  LINEAR_CLIENT_SECRET=...
+```sh
+bunx wrangler secret put SLACK_BOT_TOKEN       # xoxb-…, under OAuth & Permissions
+bunx wrangler secret put SLACK_SIGNING_SECRET  # under Basic Information
 ```
 
-Set both or neither — one alone can't mint a token, so the bot logs a warning and
-switches Linear off rather than failing later at somebody's first question. Then
-[`/map linear`](commands.md#map-linear) links each person's Linear account to their
-Discord member.
+Invite bob to the channels it should post to or answer in: `/invite @bob`.
 
-!!! info "Read-only, and nothing to rotate"
+## 5. Tell bob where things go
 
-    `read` is the whole scope, so the read-only promise holds at the credential and
-    not only in which tools exist: the agent physically cannot change anything in
-    Linear. The token lasts 30 days and has no refresh token, which is fine — the
-    bot mints one on first use and mints a new one the moment Linear rejects the old
-    one, so there is no rotation schedule to keep.
+Repos and people are mapped from chat; see [Commands](commands.md).
 
-    On boot the log names the identity it authenticated as. If the credentials are
-    wrong, that line is where you find out, rather than in a failed answer later.
+```text
+/map repo repo:acme/web channel:#web          (Discord)
+/bob map repo acme/web #web                    (Slack)
+/map github login:ana-gh member:@Ana           (Discord)
+/bob map github ana-gh @Ana                    (Slack)
+```
 
-!!! danger "Set the key from the file, with the quotes"
+## Development
 
-    A PEM is multi-line, and pasting it into a shell (or the Fly dashboard)
-    usually collapses the newlines, which makes JWT signing blow up. Reading it
-    with `"$(cat ...pem)"` keeps the line breaks intact. This one detail is the
-    most common reason a first deploy crash-loops.
+```sh
+bun install        # also installs the prek hooks
+bun run check      # wrangler types, oxlint, oxfmt and the tests, as CI runs them
+bun run docs       # this site, at http://localhost:8000
+```
 
-With the app deployed you'll have its hostname — go back to the GitHub App and
-set the **Webhook URL** to `https://<your-fly-app>.fly.dev/webhook`.
-
-**Deploys happen on their own from here.** Every push to `main` that touches the
-bot triggers `.github/workflows/fly-deploy.yml`, which runs `flyctl deploy`. It
-needs exactly one repository secret: create a token with `fly tokens create
-deploy` and add it as `FLY_API_TOKEN` under **Settings → Secrets and variables →
-Actions**.
-
-??? note "Running it locally instead"
-
-    ```bash
-    cp .env.example .env    # fill it in — and never commit it
-    uv sync
-    uv run python -m bridge
-    ```
-
-    `.env.example` lists every variable, including `OPENAI_API_KEY` and the
-    optional `AGENT_MODEL`. `GITHUB_APP_PRIVATE_KEY` accepts either the PEM
-    inline or a **path** to the `.pem`, which is far easier locally.
-
-    GitHub still needs a public URL to deliver webhooks to, so expose the port
-    with a tunnel like [cloudflared] or [ngrok] and point the App's webhook there
-    while you test.
-
-## 4. Wire it up
-
-The first time the bot connects it does three things on its own: it **finds or
-creates a `#bot-config` channel** (hidden from `@everyone`), registers its slash
-commands, and runs a first **sync** to reconcile access from GitHub.
-
-The guiding idea: **GitHub is the source of truth, Discord reflects it.** You
-don't create access roles or juggle channel permissions by hand — the bot derives
-those from who can reach each repo on GitHub. You only tell it the two things
-GitHub can't know: how you want repos grouped into channels, and who each GitHub
-user is on Discord.
-
-Every command requires the **Manage Server** permission, and none ask for an ID —
-repos and users come from GitHub-backed autocomplete, channels and members from
-normal Discord mentions.
-
-| Command                                           | What it does                                                                        |
-| :------------------------------------------------ | :---------------------------------------------------------------------------------- |
-| `/map github github_login:‹login› member:@member` | ties a GitHub user to a Discord member (mentions + role sync)                       |
-| `/map linear linear_user:‹person› member:@member` | ties a Linear member to a Discord member (optional; needs Linear configured)        |
-| `/map repo repo:‹owner/name› channel:#channel`    | routes a repo's notifications to a channel; group several repos into one channel    |
-| `/sync roles`                                     | reconciles access now: per mapped repo, fills its access role and gates the channel |
-
-So the flow is: [link people](commands.md#map-github) with `/map github`,
-[group repos](commands.md#map-repo) into channels with `/map repo`, and let
-`/sync roles` do the rest — for each mapped repo it creates a `‹repo› devs`
-role, adds and removes members to match who can reach the repo on GitHub, and sets
-the channel's permissions so only that role can see it. `/sync roles` also runs
-automatically on every boot.
-
-Do `/map github` before you rely on [`/issue`](agent.md): it's the same mapping
-the agent resolves a first name through when someone says _"assign it to Ana"_.
-
-## Where it keeps state
-
-There's no database and no disk to set up: the `#bot-config` channel the bot
-creates _is_ its storage, and the live panel there shows your whole configuration
-at a glance. You never have to manage it. If you're curious why it works this way,
-[Concepts](concepts.md#your-configuration-lives-in-discord) explains it.
-
-[Discord Developer Portal]: https://discord.com/developers/applications
-[GitHub App]: https://docs.github.com/en/apps/creating-github-apps
-[Fly.io]: https://fly.io/
-[cloudflared]: https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/
-[ngrok]: https://ngrok.com/
-[pydantic-ai]: https://ai.pydantic.dev/models/
+The hooks run oxlint (type-aware), oxfmt and the tests before each commit.
+Tests run on Bun with an in-memory SQLite standing in for Durable Object storage
+and a scripted model standing in for OpenAI, so they need no network and no
+Cloudflare account.
