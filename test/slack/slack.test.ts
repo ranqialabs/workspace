@@ -57,7 +57,7 @@ describe("mrkdwn", () => {
   test("a card is its kicker, linked title, body, fields and footer", () => {
     const blocks = cardBlocks({
       tone: "green",
-      kicker: "🐛 issue · web",
+      kicker: "🐛 Open issue in web",
       title: "Login <loops>",
       url: "https://x/7",
       body: "**now**",
@@ -65,7 +65,7 @@ describe("mrkdwn", () => {
       footer: "opened",
     })
     expect(blocks).toEqual([
-      { type: "context", elements: [{ type: "mrkdwn", text: "🐛 issue · web" }] },
+      { type: "context", elements: [{ type: "mrkdwn", text: "🟢 🐛 Open issue in web" }] },
       { type: "section", text: { type: "mrkdwn", text: "*<https://x/7|Login &lt;loops&gt;>*" } },
       { type: "section", text: { type: "mrkdwn", text: "*now*" } },
       { type: "section", fields: [{ type: "mrkdwn", text: "*Assignee*\n<@U1>" }] },

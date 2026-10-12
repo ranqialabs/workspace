@@ -79,13 +79,6 @@ export const SlashCommand = z.object({
 
 export type SlashCommand = z.infer<typeof SlashCommand>
 
-export const USAGE = `\
-\`/bob config\` shows every mapping.
-\`/bob map repo owner/name #channel\` makes the channel the repo's home.
-\`/bob map announce owner/name #channel\` sends its news there instead.
-\`/bob map github login @person\` and \`/bob map linear email @person\` say who someone is.
-\`/bob unmap repo owner/name [announce]\`, \`/bob unmap github @person\`, \`/bob unmap linear @person\` undo them.`
-
 const CHANNEL = /^<#([CG][A-Z0-9]+)(?:\|[^>]*)?>$/
 const USER = /^<@([UW][A-Z0-9]+)(?:\|([^>]*))?>$/
 

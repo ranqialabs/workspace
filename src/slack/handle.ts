@@ -6,6 +6,7 @@ import { conversationName, type Origin, type Press, parsePress } from "../agent/
 import type { Turn } from "../agent/session"
 import type { Command } from "../commands"
 import type { Reply } from "../ui/commands"
+import { REPLY, SLACK_USAGE } from "../ui/replies"
 import { messageBody } from "./blocks"
 import type { SlackChat } from "./chat"
 import {
@@ -16,7 +17,6 @@ import {
   readSigned,
   SlashCommand,
   toCommand,
-  USAGE,
 } from "./inbound"
 
 export interface SlackBackend {
@@ -101,7 +101,7 @@ function command(
   if (!parsed.success) return new Response("unreadable command", { status: 400 })
   const slash = parsed.data
   const wanted = toCommand(slash)
-  if (wanted === undefined) return Response.json({ response_type: "ephemeral", text: USAGE })
+  if (wanted === undefined) return Response.json({ response_type: "ephemeral", text: SLACK_USAGE })
   input.waitUntil(
     (async () => {
       let reply: Reply
@@ -109,11 +109,11 @@ function command(
         const user = await input.chat.user(slash.user_id)
         reply =
           changes(wanted) && !user.admin
-            ? { text: "Only workspace admins can change bob's mappings." }
+            ? { text: REPLY.adminsOnly }
             : await input.backend.command(wanted)
       } catch (error) {
         console.error("slack command failed", error)
-        reply = { text: "Something went wrong running that. It's in the logs." }
+        reply = { text: REPLY.broke }
       }
       await respond(slash.response_url, { response_type: "ephemeral", ...messageBody(reply) })
     })(),
@@ -140,7 +140,7 @@ function interaction(
         said = await input.backend.press(press, { id: user.id, name: user.name })
       } catch (error) {
         console.error("slack button failed", error)
-        said = "Something went wrong with that button. It's in the logs."
+        said = REPLY.broke
       }
       if (said === undefined || actions.response_url === undefined) return
       await respond(actions.response_url, {
