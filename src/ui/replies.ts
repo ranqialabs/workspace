@@ -25,4 +25,19 @@ export const REPLY = {
   filed: (number: number, url: string, repo: string) =>
     `${MARK.done} Filed [#${number}](${url}) in ${repo.split("/").at(-1)}.`,
   githubRefused: (reason: string) => `GitHub refused the issue: ${reason}`,
+  // What the platform handlers say when bob cannot do what was asked.
+  broke: "That didn't work. The details are in the Worker's logs; try again in a minute.",
+  unknownCommand: "I don't know that command. `/config` lists what bob knows.",
+  foreignButton: "That button isn't one of bob's.",
+  unsupported: "bob doesn't handle that kind of interaction.",
+  adminsOnly: "Only workspace admins can change bob's mappings.",
 } as const
+
+/** The usage of `/bob` on Slack, shown for anything it does not understand. */
+export const SLACK_USAGE = [
+  "`/bob config` shows every mapping.",
+  "`/bob map repo owner/name #channel` makes the channel the repo's home.",
+  "`/bob map announce owner/name #channel` sends its news there instead.",
+  "`/bob map github login @person` and `/bob map linear email @person` say who someone is.",
+  "`/bob unmap repo owner/name [announce]`, `/bob unmap github @person` and `/bob unmap linear @person` undo them.",
+].join("\n")

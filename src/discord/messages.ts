@@ -1,11 +1,12 @@
 // Shared messages as Discord embeds and components. Discord reads Markdown
 // natively, so the card's text passes through; only its limits need care.
-import type { Card, Tone } from "../ui/card"
 import { z } from "zod"
 
 import type { Button, Chat, ChatMessage, MessageRef, Outgoing, ReadOptions } from "../chat/chat"
 import { DiscordMessage, toChatMessage } from "./inbound"
 import type { DiscordRest } from "./rest"
+import type { Card, Tone } from "../ui/card"
+import { cut } from "../ui/text"
 
 const CONTENT_LIMIT = 2000
 
@@ -22,10 +23,6 @@ const STYLES: Record<NonNullable<Button["style"]>, number> = {
   primary: 1,
   secondary: 2,
   danger: 4,
-}
-
-export function cut(text: string, limit: number): string {
-  return text.length <= limit ? text : text.slice(0, limit - 1) + "…"
 }
 
 export interface Embed {

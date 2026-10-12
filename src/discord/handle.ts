@@ -5,6 +5,7 @@ import { type Press, parsePress } from "../agent/conversation"
 import type { Turn } from "../agent/session"
 import type { Command } from "../commands"
 import type { Reply } from "../ui/commands"
+import { REPLY } from "../ui/replies"
 import { messageBody } from "./messages"
 import { DiscordRest } from "./rest"
 import {
@@ -52,20 +53,20 @@ export async function handleInteraction(
       })
     case InteractionType.command: {
       const command = toCommand(interaction)
-      if (command === undefined) return ephemeral("I don't know that command.")
+      if (command === undefined) return ephemeral(REPLY.unknownCommand)
       waitUntil(reply(interaction, rest, () => backend.command(command)))
       return Response.json({ type: ResponseType.deferredMessage, data: { flags: EPHEMERAL } })
     }
     case InteractionType.component: {
       const press = parsePress(interaction.data?.custom_id ?? "")
       const user = interaction.member?.user ?? interaction.user
-      if (press === undefined || user === undefined) return ephemeral("That button isn't bob's.")
+      if (press === undefined || user === undefined) return ephemeral(REPLY.foreignButton)
       const author = { id: user.id, name: user.global_name ?? user.username }
       waitUntil(tell(interaction, rest, () => backend.press(press, author)))
       return Response.json({ type: ResponseType.deferredUpdate })
     }
     default:
-      return ephemeral("bob doesn't handle that kind of interaction.")
+      return ephemeral(REPLY.unsupported)
   }
 }
 
@@ -85,7 +86,7 @@ async function reply(interaction: Interaction, rest: DiscordRest, work: () => Pr
     await rest.patch(route, body)
   } catch (error) {
     console.error("discord command failed", error)
-    await rest.patch(route, { content: "Something went wrong running that. It's in the logs." })
+    await rest.patch(route, { content: REPLY.broke })
   }
 }
 
@@ -100,7 +101,7 @@ async function tell(
     said = await work()
   } catch (error) {
     console.error("discord button failed", error)
-    said = "Something went wrong with that button. It's in the logs."
+    said = REPLY.broke
   }
   if (said === undefined) return
   await rest.post(`/webhooks/${interaction.application_id}/${interaction.token}`, {

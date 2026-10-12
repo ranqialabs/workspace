@@ -2,6 +2,8 @@
 // `mrkdwn` reads differently, so card text is converted; a long answer from
 // the agent goes in a `markdown` block, which takes Markdown as it is.
 import type { Card } from "../ui/card"
+import { DOT } from "../ui/glyphs"
+import { cut } from "../ui/text"
 import type { Button, Outgoing } from "../chat/chat"
 
 const SECTION_LIMIT = 3000
@@ -34,12 +36,10 @@ function link(text: string, url: string | undefined): string {
   return url === undefined ? text : `<${url}|${text}>`
 }
 
-function cut(text: string, limit: number): string {
-  return text.length <= limit ? text : `${text.slice(0, limit - 1)}…`
-}
-
 export function cardBlocks(card: Card): object[] {
-  const kicker = link(escape(card.kicker), card.kickerUrl)
+  // Block Kit has no colour bar, so the tone leads the kicker as a dot.
+  const dot = DOT[card.tone]
+  const kicker = `${dot === "" ? "" : `${dot} `}${link(escape(card.kicker), card.kickerUrl)}`
   const title = `*${link(escape(card.title), card.url)}*`
   const blocks: object[] = [
     { type: "context", elements: [{ type: "mrkdwn", text: cut(kicker, SECTION_LIMIT) }] },

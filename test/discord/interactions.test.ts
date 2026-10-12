@@ -212,7 +212,7 @@ describe("handler", () => {
     )
     await Promise.all(pending)
     console.error = original
-    expect(patched[0]?.body).toMatchObject({ content: expect.stringContaining("went wrong") })
+    expect(patched[0]?.body).toMatchObject({ content: expect.stringContaining("didn't work") })
   })
 
   test("a button press is acknowledged at once and refusals reach only the presser", async () => {
@@ -248,6 +248,8 @@ describe("handler", () => {
       rest([]),
       () => {},
     )
-    expect(await response.json()).toMatchObject({ data: { content: "That button isn't bob's." } })
+    expect(await response.json()).toMatchObject({
+      data: { content: "That button isn't one of bob's." },
+    })
   })
 })
