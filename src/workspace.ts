@@ -24,6 +24,7 @@ import { credentials, type GitHub, installationClient } from "./github/app"
 import { OrgDirectory } from "./github/directory"
 import type { Delivery } from "./github/webhook"
 import { Newsroom } from "./news/newsroom"
+import { Releases } from "./news/releases"
 import { Reminders } from "./news/reminders"
 import { changeFor, type Commit, commitOf } from "./news/stories"
 import { Config, type Person, type Platform } from "./store/config"
@@ -38,6 +39,7 @@ export class Workspace extends DurableObject<Env> {
   private readonly directory: OrgDirectory
   private readonly newsroom: Newsroom
   private readonly reminders: Reminders
+  private readonly releases: Releases
   private client: Promise<GitHub> | undefined
 
   constructor(ctx: DurableObjectState, env: Env) {
@@ -48,6 +50,10 @@ export class Workspace extends DurableObject<Env> {
     this.newsroom = new Newsroom(ctx.storage, this.config, chats(env), (repo, sha) =>
       this.lookupCommit(repo, sha),
     )
+    this.releases = new Releases(ctx.storage, this.newsroom, chats(env), {
+      github: () => this.githubClient(),
+      model: () => modelFor(env),
+    })
     this.reminders = new Reminders(
       ctx.storage,
       this.newsroom,
@@ -75,8 +81,12 @@ export class Workspace extends DurableObject<Env> {
     }
     const change = changeFor(delivery.event, delivery.payload)
     if (change === undefined) return
-    await this.newsroom.publish(change)
+    const published = await this.newsroom.publish(change)
     this.newsroom.prune()
+    // Release notes are extra: their failure must not fail the delivery.
+    await this.releases.after(published).catch((error: unknown) => {
+      console.error("release notes failed", error)
+    })
   }
 
   async command(command: Command, platform: Platform): Promise<Reply> {

@@ -38,6 +38,12 @@ const KEPT = 30 * 24 * 60 * MINUTE
 
 export type CommitLookup = (repo: string, sha: string) => Promise<Commit | undefined>
 
+/** A story before and after a change, for whatever reacts to news. */
+export interface Published {
+  previous: Story | undefined
+  story: Story
+}
+
 export class Newsroom {
   private readonly locks = new Map<string, Promise<void>>()
 
@@ -52,10 +58,13 @@ export class Newsroom {
   }
 
   /** Applies a change and brings its cards up to date; one story at a time. */
-  publish(change: Change): Promise<void> {
+  publish(change: Change): Promise<Published> {
     const previous = this.locks.get(change.key) ?? Promise.resolve()
     const next = previous.then(() => this.publishNow(change))
-    const settled = next.catch(() => undefined)
+    const settled = next.then(
+      () => undefined,
+      () => undefined,
+    )
     this.locks.set(change.key, settled)
     void settled.then(() => {
       if (this.locks.get(change.key) === settled) this.locks.delete(change.key)
@@ -112,7 +121,7 @@ export class Newsroom {
       .filter((story): story is Extract<Story, { kind: K }> => story.kind === kind)
   }
 
-  private async publishNow(change: Change): Promise<void> {
+  private async publishNow(change: Change): Promise<Published> {
     const previous = this.story(change.key)
     const applied = change.apply(previous)
     const story = applied.story
@@ -135,6 +144,7 @@ export class Newsroom {
     )
     const failed = results.find((result) => result.status === "rejected")
     if (failed !== undefined) throw failed.reason
+    return { previous, story }
   }
 
   private async show(

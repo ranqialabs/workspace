@@ -85,6 +85,20 @@ the card's thread, as if you had asked there: it reads the failing jobs' errors
 and what the commit changed, and answers with the cause, citing files, and what
 would fix it. The button goes away once the checks pass.
 
+### What shipped to production
+
+When a deploy to an environment with `prod` in its name succeeds, bob compares
+the commit with the one the previous production deploy shipped and replies under
+the 🚦 card with what went out, in a few plain bullets the model writes from the
+commit subjects. The first deploy bob sees only sets the starting point, and a
+rollback announces nothing.
+
+```text
+🚀 What shipped to production
+- Login no longer loops on Safari (#31)
+- Stripe webhooks retry on failure (#8)
+```
+
 ### Reminders
 
 - **The default branch turns red.** The author of the commit that broke it is

@@ -34,6 +34,11 @@ export function newsButtons(story: Story, id: number): Button[] {
   return []
 }
 
+/** A reply under a commit's checks card once it reached production. */
+export function releaseNote(environment: string, notes: string): string {
+  return `${KIND.deploy} **What shipped to ${environment}**\n${notes}`
+}
+
 /** A reply under a pull request's card for a reviewer who has not reviewed yet. */
 export function reviewReminder(mention: string, title: string, number: number, ms: number): string {
   return `${MARK.waiting} ${mention}, **${title}** #${number} has waited ${waited(ms)} for your review.`

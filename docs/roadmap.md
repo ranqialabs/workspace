@@ -20,6 +20,7 @@ did that this one does not do yet, then what comes after.
 - [x] **Why did it fail?** on a red checks card, and reminders for a broken
       default branch and for reviews waiting more than a day.
 - [x] **Retro**, daily and weekly, with what shipped and what each person did.
+- [x] **Release notes** under the checks card when a deploy reaches production.
 
 ## Not yet back from the Python version
 
