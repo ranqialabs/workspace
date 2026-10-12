@@ -3,6 +3,7 @@ import { describe, expect, test } from "bun:test"
 import { addresses, DiscordMessage, toChatMessage } from "../../src/discord/inbound"
 import { DiscordChat, split } from "../../src/discord/messages"
 import { DiscordRest } from "../../src/discord/rest"
+import { DiscordRouter } from "../../src/discord/route"
 
 const BOT = "900"
 
@@ -71,5 +72,44 @@ describe("long text", () => {
       [true, []],
       [false, [expect.objectContaining({ title: "t" })]],
     ])
+  })
+})
+
+function fakeRouter(channels: Record<string, object>) {
+  const asked: string[] = []
+  const rest = new DiscordRest("t", (request) => {
+    const id = new URL(request.url).pathname.split("/").at(-1) ?? ""
+    asked.push(id)
+    return Promise.resolve(Response.json(channels[id] ?? { type: 0 }))
+  })
+  return { asked, router: new DiscordRouter(rest) }
+}
+
+describe("routing", () => {
+  test("a mention in a thread is that thread's conversation, scoped to its parent too", async () => {
+    const { asked, router: discord } = fakeRouter({ c: { type: 11, parent_id: "p" } })
+    const routed = await discord.route(message({ guild_id: "g" }), BOT)
+    expect(routed).toEqual({
+      name: "discord:c:",
+      origin: {
+        platform: "discord",
+        scope: ["c", "p"],
+        link: "https://discord.com/channels/g/c",
+      },
+      turn: {
+        channel: "c",
+        message: "1",
+        author: { id: "10", name: "Ana Lima" },
+        text: "what does @Beto own?",
+      },
+    })
+    await discord.route(message({ id: "2" }), BOT)
+    expect(asked).toEqual(["c"])
+  })
+
+  test("a message that does not call bob goes nowhere", async () => {
+    const { asked, router: discord } = fakeRouter({})
+    expect(await discord.route(message({ content: "hi", mentions: [] }), BOT)).toBeUndefined()
+    expect(asked).toEqual([])
   })
 })

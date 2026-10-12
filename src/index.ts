@@ -1,10 +1,13 @@
 // The Worker's front door: it checks who is calling and hands the request to
 // the Durable Object that owns it.
+import type { Press } from "./agent/conversation"
+import type { Turn } from "./agent/session"
 import type { Command } from "./commands"
 import { handleInteraction } from "./discord/handle"
 import { DiscordRest } from "./discord/rest"
 import { readDelivery } from "./github/webhook"
 
+export { Conversation } from "./agent/conversation"
 export { Gateway } from "./discord/gateway"
 export { Workspace } from "./workspace"
 
@@ -31,6 +34,13 @@ export default {
       const backend = {
         command: (command: Command) => ws.command(command, "discord"),
         suggest: (field: "repo" | "login", typed: string) => ws.suggest(field, typed),
+        press: (press: Press, user: Turn["author"]) =>
+          env.CONVERSATION.getByName(press.conversation).press(
+            press.conversation,
+            press.action,
+            press.target,
+            user,
+          ),
       }
       const rest = new DiscordRest(env.DISCORD_TOKEN)
       return handleInteraction(request, env.DISCORD_PUBLIC_KEY, backend, rest, (work) =>

@@ -139,6 +139,8 @@ describe("handler", () => {
       return Promise.resolve({ text: "done" })
     },
     suggest: (field, typed) => Promise.resolve([`${field}:${typed}`]),
+    press: (press, user) =>
+      Promise.resolve(press.action === "submit" ? `no, ${user.name}` : undefined),
   }
 
   test("an unsigned request is refused", async () => {
@@ -211,5 +213,41 @@ describe("handler", () => {
     await Promise.all(pending)
     console.error = original
     expect(patched[0]?.body).toMatchObject({ content: expect.stringContaining("went wrong") })
+  })
+
+  test("a button press is acknowledged at once and refusals reach only the presser", async () => {
+    const posted: { url: string; body: unknown }[] = []
+    const pending: Promise<unknown>[] = []
+    const body = {
+      ...interaction(3, { custom_id: "bob:submit:3:discord:c:" }),
+      member: { user: { id: "U1", username: "ana", global_name: "Ana" } },
+    }
+    const response = await handleInteraction(
+      await signed(body),
+      publicKey,
+      backend,
+      rest(posted),
+      (work) => pending.push(work),
+    )
+    expect(await response.json()).toEqual({ type: 6 })
+    await Promise.all(pending)
+    expect(posted).toEqual([
+      {
+        url: "https://discord.com/api/v10/webhooks/app/tok",
+        body: { content: "no, Ana", flags: 64 },
+      },
+    ])
+  })
+
+  test("a button that isn't bob's is refused", async () => {
+    const body = { ...interaction(3, { custom_id: "other" }), user: { id: "U1", username: "ana" } }
+    const response = await handleInteraction(
+      await signed(body),
+      publicKey,
+      backend,
+      rest([]),
+      () => {},
+    )
+    expect(await response.json()).toMatchObject({ data: { content: "That button isn't bob's." } })
   })
 })

@@ -1,6 +1,8 @@
 // Answers Discord's interactions endpoint. Discord wants an answer within three
 // seconds, so a command is acknowledged at once and its reply is filled in
 // once the Workspace has checked GitHub.
+import { type Press, parsePress } from "../agent/conversation"
+import type { Turn } from "../agent/session"
 import type { Command, Reply } from "../commands"
 import { messageBody } from "./messages"
 import { DiscordRest } from "./rest"
@@ -18,6 +20,8 @@ import {
 export interface Backend {
   command(command: Command): Promise<Reply>
   suggest(field: "repo" | "login", typed: string): Promise<string[]>
+  /** A button on one of bob's messages; resolves to what to tell the presser, if anything. */
+  press(press: Press, user: Turn["author"]): Promise<string | undefined>
 }
 
 export async function handleInteraction(
@@ -51,8 +55,16 @@ export async function handleInteraction(
       waitUntil(reply(interaction, rest, () => backend.command(command)))
       return Response.json({ type: ResponseType.deferredMessage, data: { flags: EPHEMERAL } })
     }
+    case InteractionType.component: {
+      const press = parsePress(interaction.data?.custom_id ?? "")
+      const user = interaction.member?.user ?? interaction.user
+      if (press === undefined || user === undefined) return ephemeral("That button isn't bob's.")
+      const author = { id: user.id, name: user.global_name ?? user.username }
+      waitUntil(tell(interaction, rest, () => backend.press(press, author)))
+      return Response.json({ type: ResponseType.deferredUpdate })
+    }
     default:
-      return ephemeral("That button isn't wired to anything yet.")
+      return ephemeral("bob doesn't handle that kind of interaction.")
   }
 }
 
@@ -74,6 +86,26 @@ async function reply(interaction: Interaction, rest: DiscordRest, work: () => Pr
     console.error("discord command failed", error)
     await rest.patch(route, { content: "Something went wrong running that. It's in the logs." })
   }
+}
+
+/** A private follow-up for whoever pressed a button, when there is something to say. */
+async function tell(
+  interaction: Interaction,
+  rest: DiscordRest,
+  work: () => Promise<string | undefined>,
+): Promise<void> {
+  let said: string | undefined
+  try {
+    said = await work()
+  } catch (error) {
+    console.error("discord button failed", error)
+    said = "Something went wrong with that button. It's in the logs."
+  }
+  if (said === undefined) return
+  await rest.post(`/webhooks/${interaction.application_id}/${interaction.token}`, {
+    content: said,
+    flags: EPHEMERAL,
+  })
 }
 
 function ephemeral(content: string): Response {

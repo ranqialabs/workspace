@@ -6,7 +6,9 @@ import { DurableObject } from "cloudflare:workers"
 
 import { migrate } from "../store/migrations"
 import { COMMANDS } from "./commands"
+import { DiscordMessage } from "./inbound"
 import { DiscordRest } from "./rest"
+import { DiscordRouter } from "./route"
 import { GatewaySession, type Resumable, type Socket } from "./session"
 
 const SCHEMA = [
@@ -27,6 +29,7 @@ export class Gateway extends DurableObject<Env> {
     const token = env.DISCORD_TOKEN
     if (token === undefined || token === "") return
     const rest = new DiscordRest(token)
+    const router = new DiscordRouter(rest)
     const sql = ctx.storage.sql
     this.session = new GatewaySession(token, {
       open: openSocket,
@@ -53,7 +56,9 @@ export class Gateway extends DurableObject<Env> {
       schedule(delay) {
         void ctx.storage.setAlarm(Date.now() + delay)
       },
-      async ready({ application }) {
+      ready: async ({ user, application }) => {
+        // A resumed session gets no READY, so the id has to outlive the instance.
+        ctx.storage.kv.put("bot", user)
         const guild = env.DISCORD_GUILD_ID
         const route =
           guild === undefined || guild === ""
@@ -61,7 +66,19 @@ export class Gateway extends DurableObject<Env> {
             : `/applications/${application}/guilds/${guild}/commands`
         await rest.put(route, COMMANDS)
       },
-      dispatch: () => Promise.resolve(),
+      dispatch: async (event, data) => {
+        const bot = ctx.storage.kv.get<string>("bot")
+        if (event !== "MESSAGE_CREATE" || bot === undefined) return
+        const message = DiscordMessage.safeParse(data)
+        if (!message.success) return
+        const routed = await router.route(message.data, bot)
+        if (routed === undefined) return
+        await env.CONVERSATION.getByName(routed.name).mention(
+          routed.name,
+          routed.origin,
+          routed.turn,
+        )
+      },
     })
   }
 
