@@ -35,6 +35,7 @@ says its state, following GitHub's own colours where GitHub has one.
 | The agent at work  | 🤖    | thinking or working 🔵, answered or drafted 🟢, stopped ⚪, failed 🔴 |
 | Issue draft        | 📝    | waiting for review 🔵, filed 🟢, discarded or replaced ⚪             |
 | Configuration      | ⚙️    | Discord's brand colour, no dot                                        |
+| Retro              | 📊    | Discord's brand colour, no dot                                        |
 
 A deploy is a line on its commit's checks card, marked 🚀.
 

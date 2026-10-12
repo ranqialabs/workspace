@@ -17,6 +17,9 @@ did that this one does not do yet, then what comes after.
 - [x] **The agent**: answers grounded in the code, a live progress card, Stop,
       a stored conversation, queued asks, and drafts with File issue and Discard.
 - [x] **Slack**, on the Free plan.
+- [x] **Why did it fail?** on a red checks card, and reminders for a broken
+      default branch and for reviews waiting more than a day.
+- [x] **Retro**, daily and weekly, with what shipped and what each person did.
 
 ## Not yet back from the Python version
 
