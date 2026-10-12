@@ -4,7 +4,8 @@
 import { DurableObject } from "cloudflare:workers"
 
 import type { Chat } from "./chat/chat"
-import { type Command, configCard, type Reply, run } from "./commands"
+import { type Command, type Result, run } from "./commands"
+import { commandReply, type Reply } from "./ui/commands"
 import { applyLines, readLines } from "./discord/legacy"
 import { DiscordChat } from "./discord/messages"
 import { DiscordRest } from "./discord/rest"
@@ -53,15 +54,14 @@ export class Workspace extends DurableObject<Env> {
   }
 
   async command(command: Command, platform: Platform): Promise<Reply> {
+    const result = await this.runCommand(command, platform)
+    return commandReply(result, this.config, platform)
+  }
+
+  private async runCommand(command: Command, platform: Platform): Promise<Result> {
     if (command.name === "import" && platform === "discord" && this.env.DISCORD_TOKEN) {
       const lines = await readLines(new DiscordRest(this.env.DISCORD_TOKEN), command.channel)
-      const got = applyLines(this.config, lines)
-      return {
-        text:
-          `Read <#${command.channel}>: ${got.repos} home channels, ${got.announce} announce ` +
-          `channels, ${got.access} access roles and ${got.accounts} linked accounts.`,
-        cards: [configCard(this.config, platform)],
-      }
+      return { kind: "imported", channel: command.channel, counts: applyLines(this.config, lines) }
     }
     return run(command, platform, this.config, this.directory)
   }

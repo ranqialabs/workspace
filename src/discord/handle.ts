@@ -3,7 +3,8 @@
 // once the Workspace has checked GitHub.
 import { type Press, parsePress } from "../agent/conversation"
 import type { Turn } from "../agent/session"
-import type { Command, Reply } from "../commands"
+import type { Command } from "../commands"
+import type { Reply } from "../ui/commands"
 import { messageBody } from "./messages"
 import { DiscordRest } from "./rest"
 import {

@@ -4,7 +4,8 @@
 // `response_url`, which shows them only to whoever ran or pressed.
 import { conversationName, type Origin, type Press, parsePress } from "../agent/conversation"
 import type { Turn } from "../agent/session"
-import type { Command, Reply } from "../commands"
+import type { Command } from "../commands"
+import type { Reply } from "../ui/commands"
 import { messageBody } from "./blocks"
 import type { SlackChat } from "./chat"
 import {
