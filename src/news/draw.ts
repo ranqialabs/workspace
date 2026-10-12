@@ -116,7 +116,19 @@ function pullCard(story: PullStory, mentions: Mentions): Card {
 }
 
 function stepIcon(ok: boolean | undefined): string {
-  return ok === undefined ? RUNNING : ok ? PASSED : FAILED
+  if (ok === undefined) return RUNNING
+  return ok ? PASSED : FAILED
+}
+
+function pipelineTone(ok: boolean | undefined): Card["tone"] {
+  if (ok === undefined) return "blue"
+  return ok ? "green" : "red"
+}
+
+/** The commit's short sha and who wrote it, for the card's first line. */
+function commitLead(short: string, by: string | undefined): string {
+  if (by === undefined) return `\`${short}\``
+  return `\`${short}\` by ${by}`
 }
 
 function outcomeText(outcome: Outcome): string {
@@ -170,11 +182,10 @@ function pipelineCard(story: PipelineStory, mentions: Mentions): Card {
   const short = story.sha.slice(0, 7)
   const ok = verdict(story)
   const by = commit?.login !== undefined ? who(mentions, commit.login) : (commit?.name ?? undefined)
-  const lead =
-    commit === undefined ? undefined : by === undefined ? `\`${short}\`` : `\`${short}\` by ${by}`
+  const lead = commit === undefined ? undefined : commitLead(short, by)
   const lines = stepLines(story).map((step) => step.line)
   return {
-    tone: ok === undefined ? "blue" : ok ? "green" : "red",
+    tone: pipelineTone(ok),
     kicker: `${stepIcon(ok)} pipeline · ${repo.name}`,
     kickerUrl: repo.url,
     title: commit?.subject ?? `${short} on ${repo.defaultBranch}`,
