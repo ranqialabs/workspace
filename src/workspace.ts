@@ -12,7 +12,7 @@ import { OrgDirectory } from "./github/directory"
 import type { Delivery } from "./github/webhook"
 import { Newsroom } from "./news/newsroom"
 import { changeFor, type Commit, commitOf } from "./news/stories"
-import { Config, type Platform } from "./store/config"
+import { Config, type Person, type Platform } from "./store/config"
 import { migrate } from "./store/migrations"
 
 const DELIVERIES = ["CREATE TABLE deliveries (id TEXT PRIMARY KEY, received_at INTEGER NOT NULL)"]
@@ -51,6 +51,18 @@ export class Workspace extends DurableObject<Env> {
 
   command(command: Command, platform: Platform): Promise<Reply> {
     return run(command, platform, this.config, this.directory)
+  }
+
+  /** What a conversation needs from the configuration: its candidate repos and the people bob knows. */
+  context(
+    platform: Platform,
+    scope: string[],
+  ): { org: string; candidates: string[]; teammates: Person[] } {
+    return {
+      org: this.env.GITHUB_ORG,
+      candidates: this.config.reposFor(platform, ...scope),
+      teammates: this.config.people(),
+    }
   }
 
   suggest(field: "repo" | "login", typed: string): Promise<string[]> {

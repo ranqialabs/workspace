@@ -13,14 +13,18 @@
       { "name": "WORKSPACE", "class_name": "Workspace" },
       // The one Discord gateway connection.
       { "name": "GATEWAY", "class_name": "Gateway" },
+      // One per conversation with the agent: its history, queue and drafts.
+      { "name": "CONVERSATION", "class_name": "Conversation" },
     ],
   },
-  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Workspace", "Gateway"] }],
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Workspace", "Gateway", "Conversation"] }],
   // Reconnects the gateway after a deploy or a fatal close.
   "triggers": { "crons": ["*/5 * * * *"] },
   "secrets": { "required": ["GITHUB_APP_ID", "GITHUB_APP_PRIVATE_KEY", "GITHUB_WEBHOOK_SECRET"] },
   "vars": {
     // The GitHub org whose repos, people and checks bob follows.
     "GITHUB_ORG": "ranqialabs",
+    // The OpenAI model behind the agent.
+    "AGENT_MODEL": "gpt-5.6-terra",
   },
 }
