@@ -8,7 +8,7 @@ Cloudflare Workers.
   are mentioned in a reply.
 - **An agent you mention.** It reads the code on GitHub to answer, showing each
   step on a live card. Ask for an issue and you get a draft; nothing reaches
-  GitHub until whoever asked presses **Submit**, because the model has no tool
+  GitHub until whoever asked presses **File issue**, because the model has no tool
   that writes.
 - **Configuration you can ask for.** Repo channels and people live in SQLite;
   `/config` or `/bob config` shows them at any time.

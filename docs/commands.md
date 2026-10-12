@@ -50,26 +50,27 @@ accounts one person.
 
 GitHub events reach every channel that follows the repo, on each platform. A
 repo's news goes to its announce channel when it has one, and to its home
-channel otherwise.
+channel otherwise. [Cards](cards.md) shows how each card looks and what its
+colours mean.
 
 ### Issues
 
-One card per issue, edited as it changes: opened, assigned, closed as completed
-or not planned, reopened. Opening or reopening mentions the repo's people and
+One 🐛 card per issue, edited as it changes: opened, assigned, closed as
+completed or not planned, reopened. Opening or reopening mentions the repo's people and
 the assignees; assigning mentions the new assignee.
 
 ### Pull requests
 
-One card per pull request. Opening it (or marking a draft ready) mentions the
+One 🔀 card per pull request. Opening it (or marking a draft ready) mentions the
 repo's people; a review request mentions the reviewer; a review mentions the
 author, unless they reviewed their own; merging or closing mentions the author.
 Draft pull requests post nothing until they are ready.
 
 ### Pipelines { #pipeline-card }
 
-One card per commit pushed to a branch, holding everything the push set off:
-each workflow's jobs as one line each, check runs, and deployments with their
-environment. The card is titled with the commit's subject and credits its
+One 🚦 card per commit pushed to a branch, holding everything the push set off:
+each workflow's jobs as one line each, check runs, and deployments (🚀) with
+their environment. The card is titled with the commit's subject and credits its
 author.
 
 ### When a card is posted again

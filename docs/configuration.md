@@ -16,7 +16,7 @@ Create an app owned by the org and install it on the repos bob should see.
 | Permission             | Access         | Why                                              |
 | :--------------------- | :------------- | :----------------------------------------------- |
 | Contents               | Read           | the agent reads code and history                 |
-| Issues                 | Read and write | news, and **Submit** creates the issue           |
+| Issues                 | Read and write | news, and **File issue** creates the issue       |
 | Pull requests          | Read           | news, and the agent reads PRs                    |
 | Checks, Actions        | Read           | pipeline cards, and the agent reads CI failures  |
 | Deployments            | Read           | deploy lines on pipeline cards                   |
