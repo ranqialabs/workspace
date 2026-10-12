@@ -25,6 +25,7 @@ export type DraftState =
   | { kind: "proposed" }
   | { kind: "submitted"; url: string; number: number }
   | { kind: "discarded" }
+  | { kind: "superseded" }
 
 const TONE: Record<IssueDraft["confidence"], Tone> = { high: "green", medium: "blue", low: "grey" }
 const PREVIEW_CHARS = 3_000
@@ -64,13 +65,13 @@ export function draftCard(draft: IssueDraft, state: DraftState, note?: string): 
       footer: "submitted",
     }
   }
-  if (state.kind === "discarded") {
+  if (state.kind === "discarded" || state.kind === "superseded") {
     return {
       tone: "grey",
-      kicker: `📝 discarded draft · ${draft.repo}`,
+      kicker: `📝 ${state.kind} draft · ${draft.repo}`,
       title: draft.title,
       fields,
-      footer: "discarded",
+      footer: state.kind === "discarded" ? "discarded" : "replaced by a newer draft",
     }
   }
   return {
