@@ -4,7 +4,6 @@ import { migrate } from "./migrations"
 import type { SqlDatabase } from "./sql"
 
 export type Platform = "discord" | "slack"
-export const PLATFORMS: readonly Platform[] = ["discord", "slack"]
 
 // `home` gets the notifications and gates access; `announce` takes the
 // notifications instead when set, so several repos can share one feed.
