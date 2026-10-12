@@ -192,6 +192,15 @@ export function took(start: string | null | undefined, end: string | null | unde
 
 const ISSUE_ACTIONS = new Set(["opened", "closed", "reopened", "assigned", "unassigned"])
 
+/** Opening or reopening calls the repo and the assignees; assigning calls the new assignee. */
+function issuePings(payload: IssuesPayload, repo: string, assignees: string[]): Ping[] {
+  if (payload.action === "opened" || payload.action === "reopened") {
+    return [{ repo }, ...assignees.map((login) => ({ login }))]
+  }
+  if (payload.action === "assigned" && payload.assignee) return [{ login: payload.assignee.login }]
+  return []
+}
+
 function issueChange(payload: IssuesPayload): Change | undefined {
   if (!ISSUE_ACTIONS.has(payload.action)) return undefined
   const { issue, repository } = payload
@@ -215,12 +224,7 @@ function issueChange(payload: IssuesPayload): Change | undefined {
           : "not_planned",
     at: issue.updated_at ?? issue.created_at,
   }
-  const ping: Ping[] =
-    payload.action === "opened" || payload.action === "reopened"
-      ? [{ repo: repo.fullName }, ...assignees.map((login) => ({ login }))]
-      : payload.action === "assigned" && payload.assignee
-        ? [{ login: payload.assignee.login }]
-        : []
+  const ping = issuePings(payload, repo.fullName, assignees)
   return {
     key: storyKey("issue", repo.fullName, issue.number),
     repo: repo.fullName,
@@ -301,12 +305,13 @@ function upsertReview(
  * all `commented`, so the card counts them instead of showing one each. A
  * verdict after them keeps the count: it concludes those comments.
  */
+const VERDICTS: Record<string, Verdict> = { approved: "approved", changes_requested: "changes" }
+
 function reviewChange(payload: PullRequestReviewPayload): Change | undefined {
   if (payload.action !== "submitted") return undefined
   const { review, pull_request: pr, repository } = payload
   const state = review.state?.toLowerCase()
-  const verdict: Verdict =
-    state === "approved" ? "approved" : state === "changes_requested" ? "changes" : "commented"
+  const verdict: Verdict = VERDICTS[state ?? ""] ?? "commented"
   const reviewer = review.user.login
   return {
     key: storyKey("pull", repository.full_name, pr.number),
