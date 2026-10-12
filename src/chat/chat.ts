@@ -23,8 +23,27 @@ export interface Outgoing {
   replyTo?: MessageRef
 }
 
+/** A message someone wrote, as the agent reads it back. */
+export interface ChatMessage {
+  id: string
+  author: { id: string; name: string; bot: boolean }
+  text: string
+  /** ISO 8601. */
+  at: string
+}
+
+export interface ReadOptions {
+  /** Slack's thread; Discord threads are channels of their own. */
+  thread?: string
+  /** Only messages older than this one. */
+  before?: string
+  limit: number
+}
+
 export interface Chat {
   readonly platform: Platform
   post(channel: string, message: Outgoing): Promise<MessageRef>
   edit(ref: MessageRef, message: Outgoing): Promise<void>
+  /** Messages before `before`, oldest first. */
+  read(channel: string, options: ReadOptions): Promise<ChatMessage[]>
 }
