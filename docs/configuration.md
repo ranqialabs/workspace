@@ -32,14 +32,20 @@ on one line with `\n` in it works too.
 
 ## 2. Cloudflare
 
+Put the secrets in `.dev.vars`, one `NAME="value"` per line (write a
+multi-line value such as the private key with `\n`), then deploy with them:
+
 ```sh
 bun install
-bunx wrangler secret put GITHUB_APP_ID
-bunx wrangler secret put GITHUB_APP_PRIVATE_KEY
-bunx wrangler secret put GITHUB_WEBHOOK_SECRET
-bunx wrangler secret put OPENAI_API_KEY
-bun run deploy
+bun run secrets:push                  # checks the wrangler login, lists the names, asks
+bun run secrets:push --with-discord   # also sends DISCORD_TOKEN, which starts the gateway
 ```
+
+The script refuses to run unless wrangler is logged in as `admin@ranqia.com`
+(set `CLOUDFLARE_EMAIL` for another login). A Worker that does not exist yet
+cannot get secrets before its first deploy, so the secrets go with
+`wrangler deploy --secrets-file`; on an existing Worker the ones left out stay
+as they are.
 
 `wrangler.jsonc` sets two variables:
 
