@@ -1,7 +1,7 @@
 // One run of the agent: the conversation so far, a new turn, and the tools.
 // It ends one of two ways, and the model picks: prose when it is answering, or
 // a call to `propose_issue` when it was asked for an issue. That call files
-// nothing. It records a draft and ends the run; Submit is a human's click.
+// nothing. It records a draft and ends the run; filing it is a human's click.
 import {
   type LanguageModel,
   type ModelMessage,

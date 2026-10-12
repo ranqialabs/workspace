@@ -52,7 +52,7 @@ function setup(model: ReturnType<typeof scripted>) {
   return { chat, github, session }
 }
 
-/** The Stop, Submit or Discard button's id on the last message that has one. */
+/** The Stop, File issue or Discard button's id on the last message that has one. */
 function button(chat: FakeChat, label: string): { action: string; target: number } {
   const all = [...chat.posts, ...chat.edits.values()].flatMap((message) => message.buttons ?? [])
   const found = all.findLast((candidate) => candidate.label === label)
@@ -110,7 +110,7 @@ describe("answering", () => {
     await Bun.sleep(5)
     await session.mention(turn("q2", "two", beto))
     expect(chat.log).toContain(
-      "post c/m2 ↩q2 💭 queued, I'll pick this up when the current answer lands.",
+      "post c/m2 ↩q2 ⏳ Queued. I'll answer this right after the current one.",
     )
     gate.resolve()
     await first
@@ -137,14 +137,14 @@ describe("answering", () => {
 })
 
 describe("drafts", () => {
-  test("a draft gets Submit and Discard, and Submit files it as drafted", async () => {
+  test("a draft gets File issue and Discard, and File issue files it as drafted", async () => {
     const model = scripted(calls("c1", "propose_issue", draft))
     const { chat, github, session } = setup(model)
     await session.mention(turn("q1", "abre uma issue"))
 
-    const submit = button(chat, "Submit")
+    const submit = button(chat, "File issue")
     expect(await session.press("submit", submit.target, beto)).toBe(
-      "Only whoever asked for this draft can do that.",
+      "Only whoever asked for this draft can file or discard it.",
     )
     expect(await session.press("submit", submit.target, ana)).toBeUndefined()
 
@@ -159,11 +159,11 @@ describe("drafts", () => {
         assignees: ["ana-gh"],
       },
     })
-    expect(chat.edits.get("m2")?.cards?.[0]).toMatchObject({ kicker: "📝 issue #41 · acme/web" })
-    expect(chat.log.at(-1)).toContain("[#41](https://github.com/acme/web/issues/41) created")
-    expect(await session.press("submit", submit.target, ana)).toBe(
-      "This draft was already submitted.",
+    expect(chat.edits.get("m2")?.cards?.[0]).toMatchObject({ kicker: "📝 Filed as #41 in web" })
+    expect(chat.log.at(-1)).toBe(
+      "post c/m3 ↩m2 ✅ Filed [#41](https://github.com/acme/web/issues/41) in web.",
     )
+    expect(await session.press("submit", submit.target, ana)).toBe("This draft was already filed.")
   })
 
   test("a revised draft replaces the open one, which loses its buttons", async () => {
@@ -176,7 +176,7 @@ describe("drafts", () => {
     await session.mention(turn("q2", "it's only Safari"))
     expect(chat.edits.get("m2")).toMatchObject({
       buttons: [],
-      cards: [{ footer: "replaced by a newer draft" }],
+      cards: [{ kicker: "📝 Replaced draft for web" }],
     })
     expect(JSON.stringify(model.doStreamCalls[1]?.prompt)).toContain("An issue draft is open")
   })
@@ -187,7 +187,7 @@ describe("drafts", () => {
     await session.mention(turn("q1", "abre uma issue"))
     expect(await session.press("discard", button(chat, "Discard").target, ana)).toBeUndefined()
     expect(github).toEqual([])
-    expect(chat.edits.get("m2")?.cards?.[0]).toMatchObject({ footer: "discarded" })
+    expect(chat.edits.get("m2")?.cards?.[0]).toMatchObject({ kicker: "📝 Discarded draft for web" })
   })
 })
 

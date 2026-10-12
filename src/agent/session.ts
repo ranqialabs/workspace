@@ -12,7 +12,9 @@ import type { GitHub } from "../github/app"
 import type { Person } from "../store/config"
 import { migrate } from "../store/migrations"
 import type { SqlDatabase } from "../store/sql"
-import { draftCard, type DraftState, IssueDraft } from "./draft"
+import { IssueDraft } from "./draft"
+import { draftCard, type DraftState } from "../ui/draft"
+import { BUTTON, REPLY } from "../ui/replies"
 import { Progress } from "./progress"
 import { progressCard, type RunStatus } from "../ui/progress"
 import { type Ask, turnText } from "./prompt"
@@ -119,7 +121,7 @@ export class Session {
     )
     if (this.running !== undefined) {
       await this.deps.chat.post(turn.channel, {
-        text: "💭 queued, I'll pick this up when the current answer lands.",
+        text: REPLY.queued,
         replyTo: this.replyRef(turn.message),
       })
       return
@@ -131,9 +133,9 @@ export class Session {
   async press(action: Action, target: number, user: Ask["author"]): Promise<string | undefined> {
     if (action === "stop") return this.stop(user)
     const row = this.draftRow(target)
-    if (row === undefined) return "That draft is gone."
-    if (row.requester !== user.id) return "Only whoever asked for this draft can do that."
-    if (row.state !== "proposed") return `This draft was already ${row.state}.`
+    if (row === undefined) return REPLY.draftGone
+    if (row.requester !== user.id) return REPLY.notYourDraft
+    if (row.state !== "proposed") return REPLY.draftEnded(row.state)
     const draft = IssueDraft.parse(JSON.parse(row.draft))
     if (action === "discard") {
       this.setState(row.id, "discarded")
@@ -144,10 +146,8 @@ export class Session {
   }
 
   private stop(user: Ask["author"]): string | undefined {
-    if (this.running === undefined) return "Nothing is running here."
-    if (this.running.requester.id !== user.id) {
-      return `Only ${this.running.requester.name} can stop this answer.`
-    }
+    if (this.running === undefined) return REPLY.nothingRunning
+    if (this.running.requester.id !== user.id) return REPLY.notYourRun(this.running.requester.name)
     this.running.controller.abort(new StopError(user.name))
     return undefined
   }
@@ -174,7 +174,7 @@ export class Session {
     const { chat } = this.deps
     const place = this.place()
     const progress = new Progress()
-    const stop: Button = { id: this.buttonId("stop", 0), label: "Stop", style: "secondary" }
+    const stop: Button = { id: this.buttonId("stop", 0), label: BUTTON.stop, style: "secondary" }
     const card = await chat.post(place.channel, {
       cards: [progressCard(progress.steps, { kind: "thinking" })],
       buttons: [stop],
@@ -226,7 +226,7 @@ export class Session {
 
       if (result.reply.kind === "answer") {
         await chat.post(place.channel, {
-          text: result.reply.text || "(no answer)",
+          text: result.reply.text || REPLY.noAnswer,
           replyTo: this.replyRef(lastMessage),
         })
       } else {
@@ -266,7 +266,7 @@ export class Session {
     const id = this.db.sql.exec<{ id: number }>("SELECT last_insert_rowid() AS id").one().id
     const card = await this.deps.chat.post(place.channel, {
       text: note || undefined,
-      cards: [draftCard(draft, { kind: "proposed" })],
+      cards: [draftCard(draft, { kind: "proposed", requester: requester.name })],
       buttons: this.draftButtons(id),
       replyTo: this.replyRef(replyTo),
     })
@@ -294,17 +294,17 @@ export class Session {
         row.id,
       )
       await this.showDraft(row, draft, {
-        kind: "submitted",
+        kind: "filed",
         number: data.number,
         url: data.html_url,
       })
       await this.deps.chat.post(row.card_channel, {
-        text: `✅ [#${data.number}](${data.html_url}) created in \`${draft.repo}\`.`,
+        text: REPLY.filed(data.number, data.html_url, draft.repo),
         replyTo: this.replyRef(row.card_id),
       })
       return undefined
     } catch (error) {
-      return `GitHub refused the issue: ${explain(error)}`
+      return REPLY.githubRefused(explain(error))
     }
   }
 
@@ -342,8 +342,8 @@ export class Session {
 
   private draftButtons(id: number): Button[] {
     return [
-      { id: this.buttonId("submit", id), label: "Submit", style: "primary" },
-      { id: this.buttonId("discard", id), label: "Discard", style: "danger" },
+      { id: this.buttonId("submit", id), label: BUTTON.file, style: "primary" },
+      { id: this.buttonId("discard", id), label: BUTTON.discard, style: "danger" },
     ]
   }
 
