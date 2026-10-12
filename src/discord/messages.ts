@@ -1,8 +1,13 @@
 // Shared messages as Discord embeds and components. Discord reads Markdown
 // natively, so the card's text passes through; only its limits need care.
 import type { Card, Tone } from "../chat/card"
-import type { Button, Chat, MessageRef, Outgoing } from "../chat/chat"
+import { z } from "zod"
+
+import type { Button, Chat, ChatMessage, MessageRef, Outgoing, ReadOptions } from "../chat/chat"
+import { DiscordMessage, toChatMessage } from "./inbound"
 import type { DiscordRest } from "./rest"
+
+const CONTENT_LIMIT = 2000
 
 export const COLORS: Record<Tone, number> = {
   green: 0x2da44e,
@@ -71,7 +76,7 @@ export function components(buttons: Button[] | undefined) {
 /** The JSON body for a message, as Discord's create and edit endpoints take it. */
 export function messageBody(message: Outgoing) {
   return {
-    content: cut(message.text ?? "", 2000),
+    content: cut(message.text ?? "", CONTENT_LIMIT),
     embeds: (message.cards ?? []).slice(0, 10).map(embed),
     components: components(message.buttons),
     allowed_mentions: { parse: ["users", "roles"] },
@@ -87,15 +92,54 @@ export class DiscordChat implements Chat {
 
   constructor(private readonly rest: DiscordRest) {}
 
+  /** Text past Discord's 2000 characters goes out as several messages; cards ride on the last. */
   async post(channel: string, message: Outgoing): Promise<MessageRef> {
-    const sent = await this.rest.post(`/channels/${channel}/messages`, messageBody(message))
-    return { channel, id: messageId(sent) }
+    const parts = split(message.text ?? "", CONTENT_LIMIT)
+    const last = parts.length - 1
+    let ref: MessageRef = { channel, id: "" }
+    for (const [index, text] of parts.entries()) {
+      const part: Outgoing = {
+        text,
+        replyTo: index === 0 ? message.replyTo : undefined,
+        cards: index === last ? message.cards : undefined,
+        buttons: index === last ? message.buttons : undefined,
+      }
+      const sent = await this.rest.post(`/channels/${channel}/messages`, messageBody(part))
+      ref = { channel, id: messageId(sent) }
+    }
+    return ref
   }
 
   async edit(ref: MessageRef, message: Outgoing): Promise<void> {
     const { message_reference: _, ...body } = messageBody(message)
     await this.rest.patch(`/channels/${ref.channel}/messages/${ref.id}`, body)
   }
+
+  async read(channel: string, options: ReadOptions): Promise<ChatMessage[]> {
+    const query = new URLSearchParams({ limit: String(Math.min(options.limit, 100)) })
+    if (options.before !== undefined) query.set("before", options.before)
+    const raw = await this.rest.get(`/channels/${channel}/messages?${query.toString()}`)
+    const messages = z.array(DiscordMessage).parse(raw)
+    return messages.map(toChatMessage).toReversed()
+  }
+}
+
+/**
+ * `text` in pieces of at most `limit` characters, cut at a line break where
+ * one is near so code blocks and lists stay readable. Empty text is one empty
+ * piece, so a message of cards alone still goes out.
+ */
+export function split(text: string, limit: number): string[] {
+  const pieces: string[] = []
+  let rest = text
+  while (rest.length > limit) {
+    const newline = rest.lastIndexOf("\n", limit)
+    const at = newline > limit / 2 ? newline : limit
+    pieces.push(rest.slice(0, at))
+    rest = rest.slice(at).replace(/^\n/, "")
+  }
+  pieces.push(rest)
+  return pieces
 }
 
 function messageId(sent: unknown): string {

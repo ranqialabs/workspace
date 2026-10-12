@@ -1,34 +1,10 @@
 import { beforeEach, expect, test } from "bun:test"
 
-import type { Chat, MessageRef, Outgoing } from "../src/chat/chat"
 import { Newsroom } from "../src/news/newsroom"
 import { changeFor } from "../src/news/stories"
-import { Config, type Platform } from "../src/store/config"
+import { Config } from "../src/store/config"
+import { FakeChat } from "./fake-chat"
 import { memoryDatabase } from "./memory-database"
-
-class FakeChat implements Chat {
-  readonly log: string[] = []
-  private next = 1
-
-  constructor(readonly platform: Platform) {}
-
-  post(channel: string, message: Outgoing): Promise<MessageRef> {
-    const id = `m${this.next++}`
-    const reply = message.replyTo === undefined ? "" : ` ↩${message.replyTo.id}`
-    this.log.push(`post ${channel}/${id}${reply} ${describe(message)}`)
-    return Promise.resolve({ channel, id })
-  }
-
-  edit(ref: MessageRef, message: Outgoing): Promise<void> {
-    this.log.push(`edit ${ref.channel}/${ref.id} ${describe(message)}`)
-    return Promise.resolve()
-  }
-}
-
-function describe(message: Outgoing): string {
-  const card = message.cards?.[0]
-  return [message.text, card?.kicker].filter((part) => part !== undefined).join(" | ")
-}
 
 const repository = {
   name: "web",
