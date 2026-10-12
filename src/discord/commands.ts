@@ -30,23 +30,23 @@ function subcommand(name: string, description: string, options: object[]) {
 export const COMMANDS = [
   {
     name: "map",
-    description: "Tie repos and people to this server",
+    description: "Map repos to channels and people to their accounts",
     default_member_permissions: MANAGE_GUILD,
     contexts: IN_SERVERS,
     options: [
-      subcommand("repo", "A repo's home channel: its news, access and conversations", [
+      subcommand("repo", "Make a channel a repo's home: its news, and the issues drafted there", [
         repo,
         channel,
       ]),
-      subcommand("announce", "Send a repo's news to another channel than its home", [
+      subcommand("announce", "Send a repo's news to a channel other than its home", [
         repo,
         channel,
       ]),
-      subcommand("github", "Who a GitHub login is here", [
+      subcommand("github", "Say who a GitHub login is on this server", [
         picked("login", "A member of the GitHub org"),
         member,
       ]),
-      subcommand("linear", "Who a Linear account is here", [
+      subcommand("linear", "Say who a Linear account is on this server", [
         picked("email", "Their Linear email"),
         member,
       ]),

@@ -15,6 +15,7 @@ import type { SqlDatabase } from "../store/sql"
 import { IssueDraft } from "./draft"
 import { draftCard, type DraftState } from "../ui/draft"
 import { BUTTON, REPLY } from "../ui/replies"
+import { cut } from "../ui/text"
 import { Progress } from "./progress"
 import { progressCard, type RunStatus } from "../ui/progress"
 import { type Ask, turnText } from "./prompt"
@@ -435,6 +436,5 @@ export function recentTurns(messages: ModelMessage[], turns: number): ModelMessa
 /** One readable line for a failure, without the request dumps providers attach. */
 export function explain(error: unknown): string {
   const message = error instanceof Error ? error.message : String(error)
-  const first = message.split("\n")[0] ?? ""
-  return first.length > 300 ? `${first.slice(0, 299)}…` : first
+  return cut(message.split("\n")[0] ?? "", 300)
 }
