@@ -75,8 +75,6 @@ const headCommit = z.object({
   author: optional(z.object({ name: text, login: text })),
 })
 
-export type HeadCommit = z.infer<typeof headCommit>
-
 const workflowRun = z.object({
   action: z.string(),
   workflow_run: z.object({

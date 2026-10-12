@@ -5,7 +5,6 @@
 import type {
   CheckRunPayload,
   DeploymentStatusPayload,
-  HeadCommit,
   IssuesPayload,
   PullRequest,
   PullRequestPayload,
@@ -378,13 +377,14 @@ function upsertRun(steps: Step[], id: string, update: (run: RunStep) => RunStep)
   return steps.map((step, i) => (i === index && step.type === "run" ? update(step) : step))
 }
 
-export function commitFromHead(
-  head: HeadCommit | null | undefined,
-  actor?: string,
+/** Who to credit for a commit: the login it ran under, else its author's login or name. */
+export function commitOf(
+  message: string | undefined,
+  login: string | undefined,
+  name: string | undefined,
 ): Commit | undefined {
-  const subject = subjectOf(head?.message)
-  if (subject === undefined) return undefined
-  return { subject, login: actor ?? head?.author?.login, name: head?.author?.name }
+  const subject = subjectOf(message)
+  return subject === undefined ? undefined : { subject, login, name }
 }
 
 function workflowRunChange(payload: WorkflowRunPayload): Change | undefined {
@@ -399,7 +399,12 @@ function workflowRunChange(payload: WorkflowRunPayload): Change | undefined {
     url: run.html_url ?? repository.html_url,
     took: took(run.run_started_at, run.updated_at),
   }
-  const commit = commitFromHead(run.head_commit, run.actor?.login)
+  const head = run.head_commit
+  const commit = commitOf(
+    head?.message,
+    run.actor?.login ?? head?.author?.login,
+    head?.author?.name,
+  )
   return pipelineChange(repository, run.head_sha, commit, run.head_commit?.timestamp, (steps) =>
     upsertRun(steps, String(run.id), (step) => ({
       ...step,
