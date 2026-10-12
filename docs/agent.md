@@ -6,7 +6,7 @@ icon: lucide/bot
 
 Mention bob and it answers. It reads the code on GitHub before it says
 anything about it, and cites `path/to/file.ts:line` so you can check. Ask it
-for an issue and it proposes a draft for you to submit.
+for an issue and it proposes a draft for you to file.
 
 ## Talking to it
 
@@ -32,28 +32,30 @@ last twenty turns; older ones stay stored.
 ### The progress card
 
 Each answer starts with a card that lists bob's tool calls, one line each, and
-is edited as they run:
+is edited as they run. A call reads in the present while it runs and in the
+past once it is done:
 
 ```text
 🤖 bob
 Working…
-📄 web reading `src/auth.ts`
-🔎 searching code `useSession`
-⏳ web reading issue #12
+✅ Read `src/auth.ts` in web
+✅ Searched code for `useSession`
+⏳ Reading issue #12 in web
 ```
 
-A line turns ⚠️ with the reason when a call fails. When the run ends the card
-says _Answered_ or _Drafted an issue_, with the tokens it used, and the answer
-arrives as a reply.
+A failed call turns ⚠️ and says why; the agent usually works around it. When
+the run ends the card turns green and says _Answered_ or _Drafted an issue_,
+with the tokens it used, and the answer arrives as a reply. A failed run turns
+red and says why.
 
 **Stop** on the card ends the run. Only whoever asked can press it.
 
 ### One answer at a time
 
 Mention bob while it is still answering in the same conversation and your
-message is queued: it replies `💭 queued` and takes it up when the current
-answer lands. Everything that queued up goes in as one turn. Other
-conversations are not affected.
+message waits: bob replies `⏳ Queued` and takes it up when the current answer
+is posted. Everything that waited goes in as one turn. Other conversations are
+not affected.
 
 ## Drafting an issue
 
@@ -65,13 +67,13 @@ Before drafting, bob reads what the repo published: its
 `.github/ISSUE_TEMPLATE`, `CLAUDE.md` and `CONTRIBUTING.md`. The draft arrives as
 a card:
 
-| Button      | What it does                                                                                                |
-| :---------- | :---------------------------------------------------------------------------------------------------------- |
-| **Submit**  | Creates the issue on GitHub, with a link back to the conversation, and turns the card into the issue's card |
-| **Discard** | Drops the draft; nothing reaches GitHub                                                                     |
+| Button         | What it does                                                                                                    |
+| :------------- | :-------------------------------------------------------------------------------------------------------------- |
+| **File issue** | Creates the issue on GitHub, with a link back to the conversation. The card turns green and says _Filed as #12_ |
+| **Discard**    | Drops the draft. Nothing reaches GitHub                                                                         |
 
-Only whoever asked for the draft can press them. Anyone else gets a private
-note saying so.
+Only whoever asked for the draft can press them, and the card says who that is.
+Anyone else gets a private note.
 
 Keep talking to change it: _"scope it to Safari"_, _"assign it to me"_. Each
 revision is a new card, and the previous one loses its buttons and says it was

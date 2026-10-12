@@ -4,8 +4,8 @@ icon: lucide/cable
 
 # bob
 
-bob connects the **ranqialabs GitHub organization** to the team's chat, on
-**Discord and Slack at the same time**. It runs on Cloudflare Workers: a Worker
+bob connects the ranqialabs GitHub organization to the team's chat, on
+Discord and Slack at the same time. It runs on Cloudflare Workers: a Worker
 receives GitHub webhooks, Slack's requests and Discord's interactions, and a few
 Durable Objects keep the state, each in its own SQLite database.
 
@@ -18,7 +18,7 @@ Durable Objects keep the state, each in its own SQLite database.
   ***
 
   Issues, pull requests, reviews, CI and deploys post a card to the repo's
-  channel. Each issue, pull request and commit keeps **one** card that is edited
+  channel. Each issue, pull request and commit keeps one card that is edited
   as it changes, and the people involved are mentioned in a reply.
 
   [:octicons-arrow-right-24: News](commands.md#news)
@@ -28,8 +28,9 @@ Durable Objects keep the state, each in its own SQLite database.
   ***
 
   Mention bob and it reads the code on GitHub to answer, showing each step it
-  takes on a live card. Ask for an issue and you get a draft with **Submit** and
-  **Discard** buttons. Nothing is filed until whoever asked presses Submit.
+  takes on a live card. Ask for an issue and you get a draft with **File
+  issue** and **Discard** buttons. Nothing reaches GitHub until whoever asked
+  presses File issue.
 
   [:octicons-arrow-right-24: The agent](agent.md)
 
@@ -61,6 +62,7 @@ Durable Objects keep the state, each in its own SQLite database.
 - [Setup](configuration.md) deploys it: the GitHub App, Cloudflare, Discord
   and Slack.
 - [Commands & news](commands.md) lists the commands and every card bob posts.
+- [Cards](cards.md) is the visual language: kinds, colours, marks and wording.
 - [The agent](agent.md) covers talking to bob and drafting issues.
 - [Roadmap](roadmap.md) lists what the Python version did that this one does
   not yet, and what comes next.

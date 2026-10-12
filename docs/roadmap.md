@@ -15,7 +15,7 @@ did that this one does not do yet, then what comes after.
 - [x] **Commands** to map repos and people, and to show the configuration, on
       Discord and Slack.
 - [x] **The agent**: answers grounded in the code, a live progress card, Stop,
-      a stored conversation, queued asks, and drafts with Submit and Discard.
+      a stored conversation, queued asks, and drafts with File issue and Discard.
 - [x] **Slack**, on the Free plan.
 
 ## Not yet back from the Python version
@@ -28,7 +28,7 @@ did that this one does not do yet, then what comes after.
       documents.
 - [ ] **`/issue`** and _Draft issue from here_, to ask for an issue explicitly
       from a message link or a right-click.
-- [ ] **Edit draft**, a form to change a draft by hand before submitting.
+- [ ] **Edit draft**, a form to change a draft by hand before filing it.
 - [ ] **Following a thread** without being mentioned again in it.
 - [ ] **Images** shared in the conversation, passed to the model.
 - [ ] **Cost in dollars** next to the tokens.
@@ -55,7 +55,16 @@ did that this one does not do yet, then what comes after.
 
   ***
 
-  Request a review, label or assign from chat, with the same shape as Submit:
+  Request a review, label or assign from chat, with the same shape as File issue:
   the model proposes, a person presses the button.
+
+- :lucide-code:{ .lg .middle } **Coding from chat**
+
+  ***
+
+  Hand an issue to a coding agent from the thread where it was discussed. It
+  works in a sandbox, posts its plan and its diff as cards, and opens a pull
+  request when someone presses the button. The views go in `src/ui`, next to
+  the ones that exist.
 
 </div>

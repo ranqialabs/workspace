@@ -66,19 +66,37 @@ When a card is old enough that an edit would go unnoticed, the next change
 posts a fresh one. Mentions go in a reply under the card, so the card itself
 stays clean and a ping always notifies.
 
-## Platform layer
+## Three layers: what happened, how it reads, where it shows
 
-Everything that differs between Discord and Slack is behind one interface,
-`Chat`: post, edit and read messages. A card is written once, in Markdown, and
-each platform draws it: an embed on Discord, Block Kit on Slack. Buttons carry
-an id like `bob:submit:12:slack:C1:1700.01`, which names the action, its target
-and the conversation that owns it, so either platform routes the press back to
-the right object.
+```text
+src/news, src/agent, src/commands.ts   what happened: stories, runs, drafts, command results
+src/ui                                 how it reads: cards, replies and button labels
+src/discord, src/slack                 where it shows: events in, embeds or Block Kit out
+```
+
+The domain modules never write a sentence a person reads. A story records that
+an issue closed as not planned; a command reports that it mapped a repo; a run
+reports how it ended. `src/ui` turns those into cards and replies, all in one
+place and in one voice: the colours, the emoji, the verbs. Its functions are
+pure, so the same story always draws the same card and a test can check a card
+without a chat platform.
+
+A card is written once, in Markdown, and each platform draws it: an embed on
+Discord, Block Kit on Slack. Everything else that differs between the two sits
+behind one interface, `Chat`, which posts, edits and reads messages. Buttons
+carry an id like `bob:submit:12:slack:C1:1700.01`, which names the action, its
+target and the conversation that owns it, so either platform routes the press
+back to the right object.
+
+To show something new, such as an agent's plan or a diff, add a view to
+`src/ui` that takes the domain's state and returns a `Card`, reuse the emoji in
+`src/ui/glyphs.ts` (adding a kind there if it is a new kind of thing), and test
+it under `test/ui`. [Cards](cards.md) describes the visual language.
 
 ## What GitHub decides
 
 - **Who can be assigned, and which labels exist.** The agent picks from what
-  `repo_labels` and `teammates` return, and GitHub rejects anything else on
-  Submit.
+  `repo_labels` and `teammates` return, and GitHub rejects anything else when
+  the issue is filed.
 - **What the agent can read.** Everything goes through the GitHub App's
   installation token. bob has no clone of any repo and nothing on disk.
