@@ -12,6 +12,9 @@ import type {
   Story,
 } from "../news/stories"
 import { pipelineVerdict } from "../news/stories"
+import type { Button } from "../chat/chat"
+import { pressId } from "../chat/press"
+import { BUTTON } from "./replies"
 import { type Card, type Field, type Mentions, type Tone, who } from "./card"
 import { KIND, MARK, outcomeMark, outcomeTone } from "./glyphs"
 import { code, count, oneLine } from "./text"
@@ -20,6 +23,14 @@ export function draw(story: Story, mentions: Mentions): Card {
   if (story.kind === "issue") return issueCard(story, mentions)
   if (story.kind === "pull") return pullCard(story, mentions)
   return pipelineCard(story, mentions)
+}
+
+/** The buttons under a story's card; `id` is the story's number in storage. */
+export function newsButtons(story: Story, id: number): Button[] {
+  if (story.kind === "pipeline" && pipelineVerdict(story) === false) {
+    return [{ id: pressId("explain", id), label: BUTTON.explain }]
+  }
+  return []
 }
 
 /** The mentions that notify, deduplicated; plain names notify no one and are left out. */

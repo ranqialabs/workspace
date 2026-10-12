@@ -1,6 +1,7 @@
 // What one turn says to the model: who is asking, what they asked, where a
 // draft may go and, on a conversation's first turn, the messages just before it.
 import type { ChatMessage } from "../chat/chat"
+import { failedSteps, type PipelineStory } from "../news/stories"
 import type { IssueDraft } from "./draft"
 
 export interface Ask {
@@ -51,4 +52,16 @@ function repoLine(candidates: string[]): string {
 function line(message: ChatMessage): string {
   const who = message.author.bot ? `${message.author.name} (bot)` : message.author.name
   return `[${message.at.slice(0, 16).replace("T", " ")}] ${who}: ${message.text}`
+}
+
+/** What someone pressing "Why did it fail?" on a checks card is asking. */
+export function explainFailure(story: PipelineStory): string {
+  const sha = story.sha.slice(0, 7)
+  const subject = story.commit?.subject === undefined ? "" : ` ("${story.commit.subject}")`
+  const failed = failedSteps(story).join(", ") || "some checks"
+  return [
+    `The checks on commit ${sha}${subject} in ${story.repo.fullName} failed: ${failed}.`,
+    `Find out why. Read the failures with \`check_failures\` on ${story.sha} and what the commit changed with \`get_commit\`.`,
+    "Answer in a few lines: the cause, citing `path:line`, and what would fix it. Do not propose an issue.",
+  ].join(" ")
 }

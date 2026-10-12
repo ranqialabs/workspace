@@ -2,7 +2,8 @@
 // and retries otherwise, so each request is acknowledged at once and the work
 // runs after; replies to commands and buttons go to the request's
 // `response_url`, which shows them only to whoever ran or pressed.
-import { conversationName, type Origin, type Press, parsePress } from "../agent/conversation"
+import { conversationName, type Origin } from "../agent/conversation"
+import { type Press, parsePress } from "../chat/press"
 import type { Turn } from "../agent/session"
 import type { Command } from "../commands"
 import type { Reply } from "../ui/commands"

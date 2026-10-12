@@ -7,7 +7,7 @@ import { mentionsFor } from "../chat/mentions"
 import type { Config, Platform } from "../store/config"
 import { migrate } from "../store/migrations"
 import type { SqlDatabase } from "../store/sql"
-import { draw, pingText } from "../ui/news"
+import { draw, newsButtons, pingText } from "../ui/news"
 import type { Change, Commit, Ping, Story } from "./stories"
 
 const STEPS = [
@@ -72,6 +72,16 @@ export class Newsroom {
     return story
   }
 
+  /** A story by its number in storage, which its card's buttons carry. */
+  byId(id: number): { key: string; story: Story } | undefined {
+    const row = this.db.sql
+      .exec<{ key: string; story: string }>("SELECT key, story FROM stories WHERE rowid = ?", id)
+      .next()
+    if (row.done) return undefined
+    const story: Story = JSON.parse(row.value.story)
+    return { key: row.value.key, story }
+  }
+
   card(key: string, platform: Platform): (MessageRef & { postedAt: number }) | undefined {
     const row = this.db.sql
       .exec<{ channel: string; message: string; posted_at: number }>(
@@ -107,18 +117,28 @@ export class Newsroom {
       JSON.stringify(story),
       this.now(),
     )
+    const id = this.db.sql
+      .exec<{ id: number }>("SELECT rowid AS id FROM stories WHERE key = ?", change.key)
+      .one().id
     const results = await Promise.allSettled(
-      this.chats.map((chat) => this.show(chat, change.key, story, applied.ping)),
+      this.chats.map((chat) => this.show(chat, change.key, id, story, applied.ping)),
     )
     const failed = results.find((result) => result.status === "rejected")
     if (failed !== undefined) throw failed.reason
   }
 
-  private async show(chat: Chat, key: string, story: Story, ping: Ping[]): Promise<void> {
+  private async show(
+    chat: Chat,
+    key: string,
+    id: number,
+    story: Story,
+    ping: Ping[],
+  ): Promise<void> {
     const channel = this.config.newsChannel(story.repo.fullName, chat.platform)
     if (channel === undefined) return
     const mentions = mentionsFor(this.config, chat.platform)
     const card = draw(story, mentions)
+    const buttons = newsButtons(story, id)
     const notify = pingText(ping, mentions)
     const live = this.card(key, chat.platform)
     const fresh =
@@ -126,11 +146,11 @@ export class Newsroom {
       live.channel === channel &&
       this.now() - live.postedAt < FRESH[story.kind]
     if (fresh) {
-      await chat.edit(live, { cards: [card] })
+      await chat.edit(live, { cards: [card], buttons })
       if (notify !== undefined) await chat.post(channel, { text: notify, replyTo: live })
       return
     }
-    const posted = await chat.post(channel, { text: notify, cards: [card] })
+    const posted = await chat.post(channel, { text: notify, cards: [card], buttons })
     this.db.sql.exec(
       `INSERT INTO cards (key, platform, channel, message, posted_at) VALUES (?, ?, ?, ?, ?)
        ON CONFLICT (key, platform) DO UPDATE SET

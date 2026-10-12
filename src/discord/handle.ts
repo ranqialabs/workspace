@@ -1,7 +1,7 @@
 // Answers Discord's interactions endpoint. Discord wants an answer within three
 // seconds, so a command is acknowledged at once and its reply is filled in
 // once the Workspace has checked GitHub.
-import { type Press, parsePress } from "../agent/conversation"
+import { type Press, parsePress } from "../chat/press"
 import type { Turn } from "../agent/session"
 import type { Command } from "../commands"
 import type { Reply } from "../ui/commands"

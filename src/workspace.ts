@@ -3,18 +3,19 @@
 // chat channels only show.
 import { DurableObject } from "cloudflare:workers"
 
-import type { Chat } from "./chat/chat"
+import { conversationName, type Origin } from "./agent/conversation"
+import { explainFailure } from "./agent/prompt"
+import type { Turn } from "./agent/session"
+import { chats } from "./chat/platforms"
+import { REPLY } from "./ui/replies"
 import { type Command, type Result, run } from "./commands"
 import { commandReply, type Reply } from "./ui/commands"
 import { applyLines, readLines } from "./discord/legacy"
-import { DiscordChat } from "./discord/messages"
 import { DiscordRest } from "./discord/rest"
 import { credentials, type GitHub, installationClient } from "./github/app"
 import { OrgDirectory } from "./github/directory"
 import type { Delivery } from "./github/webhook"
 import { Newsroom } from "./news/newsroom"
-import { SlackApi } from "./slack/api"
-import { SlackChat } from "./slack/chat"
 import { changeFor, type Commit, commitOf } from "./news/stories"
 import { Config, type Person, type Platform } from "./store/config"
 import { migrate } from "./store/migrations"
@@ -66,6 +67,29 @@ export class Workspace extends DurableObject<Env> {
     return run(command, platform, this.config, this.directory)
   }
 
+  /**
+   * "Why did it fail?" on a checks card: the agent answers in the card's
+   * thread, as if whoever pressed had asked there.
+   */
+  async explain(id: number, platform: Platform, user: Turn["author"]): Promise<string | undefined> {
+    const found = this.newsroom.byId(id)
+    const card = found === undefined ? undefined : this.newsroom.card(found.key, platform)
+    if (found?.story.kind !== "pipeline" || card === undefined) return REPLY.cardGone
+    // A Slack thread hangs off the card; on Discord the channel is the conversation.
+    const thread = platform === "slack" ? card.id : undefined
+    const name = conversationName(platform, card.channel, thread)
+    const origin: Origin = { platform, scope: [card.channel] }
+    const turn: Turn = {
+      channel: card.channel,
+      thread,
+      message: card.id,
+      author: user,
+      text: explainFailure(found.story),
+    }
+    await this.env.CONVERSATION.getByName(name).mention(name, origin, turn)
+    return undefined
+  }
+
   /** What a conversation needs from the configuration: its candidate repos and the people bob knows. */
   context(
     platform: Platform,
@@ -101,9 +125,3 @@ export class Workspace extends DurableObject<Env> {
 }
 
 /** The platforms this deployment has credentials for. */
-export function chats(env: Env): Chat[] {
-  const enabled: Chat[] = []
-  if (env.DISCORD_TOKEN) enabled.push(new DiscordChat(new DiscordRest(env.DISCORD_TOKEN)))
-  if (env.SLACK_BOT_TOKEN) enabled.push(new SlackChat(new SlackApi(env.SLACK_BOT_TOKEN)))
-  return enabled
-}

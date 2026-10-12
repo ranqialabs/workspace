@@ -6,6 +6,7 @@ export const BUTTON = {
   stop: "Stop",
   file: "File issue",
   discard: "Discard",
+  explain: "Why did it fail?",
 } as const
 
 const DRAFT_ENDED: Record<string, string> = {
@@ -25,6 +26,7 @@ export const REPLY = {
   filed: (number: number, url: string, repo: string) =>
     `${MARK.done} Filed [#${number}](${url}) in ${repo.split("/").at(-1)}.`,
   githubRefused: (reason: string) => `GitHub refused the issue: ${reason}`,
+  cardGone: "That card is too old to explain. Mention @bob in its thread instead.",
   // What the platform handlers say when bob cannot do what was asked.
   broke: "That didn't work. The details are in the Worker's logs; try again in a minute.",
   unknownCommand: "I don't know that command. `/config` lists what bob knows.",

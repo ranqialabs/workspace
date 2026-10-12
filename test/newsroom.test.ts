@@ -1,5 +1,6 @@
 import { beforeEach, expect, test } from "bun:test"
 
+import { parsePress } from "../src/chat/press"
 import { Newsroom } from "../src/news/newsroom"
 import { changeFor } from "../src/news/stories"
 import { Config } from "../src/store/config"
@@ -29,14 +30,14 @@ const issue = (action: string, extra: object = {}) =>
     ...extra,
   })
 
-const job = (name: string) =>
+const job = (name: string, conclusion = "success") =>
   changeFor("check_run", {
     action: "completed",
     check_run: {
       name,
       head_sha: "abc1234def",
       details_url: "https://github.com/acme/web/actions/runs/5/job/1",
-      conclusion: "success",
+      conclusion,
       check_suite: { head_branch: "main" },
     },
     repository,
@@ -127,6 +128,17 @@ test("concurrent steps of one commit land on one card, looked up once", async ()
   expect(lookups).toEqual(["acme/web@abc1234def"])
   const story = newsroom.story("pipeline:acme/web:abc1234def")
   expect(story?.kind === "pipeline" && story.steps).toHaveLength(1)
+})
+
+test("a red checks card offers to explain itself, and loses the button once green", async () => {
+  await newsroom.publish(must(job("test", "failure")))
+  const [press] = discord.posts[0]?.buttons ?? []
+  expect(press?.label).toBe("Why did it fail?")
+  const pressed = parsePress(press?.id ?? "")
+  expect(pressed?.action).toBe("explain")
+  expect(newsroom.byId(pressed?.target ?? 0)?.key).toBe("pipeline:acme/web:abc1234def")
+  await newsroom.publish(must(job("test")))
+  expect(discord.edits.get("m1")?.buttons).toEqual([])
 })
 
 test("a failed lookup still publishes, leading with the sha", async () => {

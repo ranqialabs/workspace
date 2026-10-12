@@ -15,6 +15,7 @@ import type { SqlDatabase } from "../store/sql"
 import { IssueDraft } from "./draft"
 import { draftCard, type DraftState } from "../ui/draft"
 import { BUTTON, REPLY } from "../ui/replies"
+import { type ConversationAction, pressId } from "../chat/press"
 import { cut } from "../ui/text"
 import { Progress } from "./progress"
 import { progressCard, type RunStatus } from "../ui/progress"
@@ -75,8 +76,6 @@ export interface SessionDeps {
   surroundings(): Promise<Surroundings>
 }
 
-export type Action = "stop" | "submit" | "discard"
-
 const AskRow = z.object({
   author: z.object({ id: z.string(), name: z.string() }),
   text: z.string(),
@@ -131,7 +130,11 @@ export class Session {
   }
 
   /** A button press. Returns what to tell the presser, privately, if anything. */
-  async press(action: Action, target: number, user: Ask["author"]): Promise<string | undefined> {
+  async press(
+    action: ConversationAction,
+    target: number,
+    user: Ask["author"],
+  ): Promise<string | undefined> {
     if (action === "stop") return this.stop(user)
     const row = this.draftRow(target)
     if (row === undefined) return REPLY.draftGone
@@ -354,8 +357,8 @@ export class Session {
   }
 
   /** `bob:<action>:<target>:<conversation>`; the platform routes it back here. */
-  private buttonId(action: Action, target: number): string {
-    return `bob:${action}:${target}:${this.deps.name}`
+  private buttonId(action: ConversationAction, target: number): string {
+    return pressId(action, target, this.deps.name)
   }
 
   private replyRef(message: string): MessageRef {

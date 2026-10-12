@@ -111,6 +111,19 @@ export interface PipelineStory {
 
 export type Story = IssueStory | PullStory | PipelineStory
 
+/** The names of the steps that stand failed, as GitHub names them. */
+export function failedSteps(story: PipelineStory): string[] {
+  return story.steps.flatMap((step) => {
+    if (step.type === "deploy")
+      return step.outcome.ok === false ? [`deploy to ${step.environment}`] : []
+    const prefix = step.workflow === undefined ? "" : `${step.workflow} / `
+    if (step.jobs.length > 0) {
+      return step.jobs.filter((job) => job.outcome.ok === false).map((job) => prefix + job.name)
+    }
+    return step.outcome?.ok === false ? [step.workflow ?? "a workflow"] : []
+  })
+}
+
 /**
  * Whether a commit's pipeline passed: false while any step stands failed,
  * undefined while any still runs, true otherwise. A run's jobs speak for it
