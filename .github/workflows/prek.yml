@@ -6,4 +6,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+      # The local hooks run oxlint, oxfmt, wrangler and bun test from node_modules.
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install --frozen-lockfile
+        env:
+          CI: "true"
       - uses: j178/prek-action@v2
