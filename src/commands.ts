@@ -1,7 +1,7 @@
 // The admin commands, the same on both platforms. Each platform turns its own
-// input (Discord options, Slack text) into a Command, and shows the reply
-// only to whoever ran it.
-import type { Card } from "./ui/card"
+// input (Discord options, Slack text) into a Command; running it changes the
+// configuration and says what happened, and `ui/commands` words the reply.
+import type { Imported } from "./discord/legacy"
 import type { Account, Config, Platform, Purpose } from "./store/config"
 
 export type Command =
@@ -13,10 +13,17 @@ export type Command =
   /** Discord only: reads the Python version's #bot-config once. */
   | { name: "import"; channel: string }
 
-export interface Reply {
-  text: string
-  cards?: Card[]
-}
+/** What a command did. `ui/commands` says it back to whoever ran it. */
+export type Result =
+  | { kind: "repo-mapped"; repo: string; channel: string; purpose: Purpose }
+  | { kind: "repo-unknown"; name: string }
+  | { kind: "repo-unmapped"; repo: string; purpose: Purpose }
+  | { kind: "person-linked"; user: string; account: Account; value: string }
+  | { kind: "not-a-member"; login: string }
+  | { kind: "person-unlinked"; user: string; account: Account }
+  | { kind: "imported"; channel: string; counts: Imported }
+  | { kind: "discord-only" }
+  | { kind: "config" }
 
 /** What the commands need checked against the outside world before saving. */
 export interface Directory {
@@ -31,72 +38,32 @@ export async function run(
   platform: Platform,
   config: Config,
   directory: Directory,
-): Promise<Reply> {
+): Promise<Result> {
   switch (command.name) {
     case "map-repo": {
       const repo = await directory.repo(command.repo)
-      if (repo === undefined) return { text: `I can't find a repo called \`${command.repo}\`.` }
+      if (repo === undefined) return { kind: "repo-unknown", name: command.repo }
       config.mapChannel(repo, platform, command.purpose, command.channel)
-      const role = command.purpose === "home" ? "news and conversations" : "news"
-      return { text: `\`${repo}\` now sends its ${role} to <#${command.channel}>.` }
+      return { kind: "repo-mapped", repo, channel: command.channel, purpose: command.purpose }
     }
-    case "unmap-repo": {
+    case "unmap-repo":
       config.unmapChannel(command.repo, platform, command.purpose)
-      const what = command.purpose === "home" ? "home channel" : "announce channel"
-      return { text: `\`${command.repo}\` has no ${what} here anymore.` }
-    }
+      return { kind: "repo-unmapped", repo: command.repo, purpose: command.purpose }
     case "map-person": {
       const value =
         command.account === "github" ? await directory.member(command.value) : command.value
-      if (value === undefined) {
-        return { text: `\`${command.value}\` is not a member of the GitHub org.` }
-      }
+      if (value === undefined) return { kind: "not-a-member", login: command.value }
       config.link(platform, command.user, command.account, value, command.userName)
-      const label = command.account === "github" ? "GitHub" : "Linear"
-      return { text: `<@${command.user}> is \`${value}\` on ${label}.` }
+      return { kind: "person-linked", user: command.user, account: command.account, value }
     }
-    case "unmap-person": {
+    case "unmap-person":
       config.unlink(platform, command.user, command.account)
-      const label = command.account === "github" ? "GitHub" : "Linear"
-      return { text: `<@${command.user}> has no ${label} account linked anymore.` }
-    }
+      return { kind: "person-unlinked", user: command.user, account: command.account }
     case "import":
-      return { text: "Importing only works on Discord, from the old #bot-config channel." }
+      // Reading Discord history needs the bot's token, so the Workspace does it.
+      return { kind: "discord-only" }
     case "config":
       break
   }
-  return { text: "", cards: [configCard(config, platform)] }
-}
-
-/** Everything bob knows, as one card; it is drawn from the database every time. */
-export function configCard(config: Config, platform: Platform): Card {
-  const repos = new Map<string, { home?: string; announce?: string }>()
-  for (const mapping of config.channels(platform)) {
-    repos.set(mapping.repo, { ...repos.get(mapping.repo), [mapping.purpose]: mapping.channel })
-  }
-  const repoLines = [...repos].map(([repo, channels]) => {
-    const parts = [`**${repo}**`]
-    if (channels.home !== undefined) parts.push(`<#${channels.home}>`)
-    if (channels.announce !== undefined) parts.push(`news in <#${channels.announce}>`)
-    const group = config.accessGroup(repo, platform)
-    if (group !== undefined && platform === "discord") parts.push(`<@&${group}>`)
-    return parts.join(" · ")
-  })
-  const peopleLines = config
-    .people()
-    .filter((person) => person[platform] !== null)
-    .map((person) => {
-      const parts = [`<@${person[platform]}>`]
-      if (person.github !== null) parts.push(`GitHub \`${person.github}\``)
-      if (person.linear !== null) parts.push(`Linear \`${person.linear}\``)
-      return parts.join(" · ")
-    })
-  const body = [
-    "**Repos**",
-    ...(repoLines.length > 0 ? repoLines : ["None yet. Map one with `map repo`."]),
-    "",
-    "**People**",
-    ...(peopleLines.length > 0 ? peopleLines : ["Nobody yet. Link someone with `map github`."]),
-  ].join("\n")
-  return { tone: "brand", kicker: "bob · configuration", title: "What bob knows", body }
+  return { kind: "config" }
 }
