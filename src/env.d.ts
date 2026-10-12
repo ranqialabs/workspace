@@ -3,7 +3,6 @@
 // Discord alone, and the other way round.
 interface Env {
   DISCORD_TOKEN?: string
-  DISCORD_APPLICATION_ID?: string
   DISCORD_PUBLIC_KEY?: string
   DISCORD_GUILD_ID?: string
   SLACK_BOT_TOKEN?: string
