@@ -121,35 +121,35 @@ draft got there.
 
 - :lucide-lightbulb:{ .lg .middle } **New here?**
 
-    ---
+  ***
 
-    Three convictions explain every design decision, and why friction you'd
-    expect isn't here.
+  Three convictions explain every design decision, and why friction you'd
+  expect isn't here.
 
-    [:octicons-arrow-right-24: Concepts](concepts.md)
+  [:octicons-arrow-right-24: Concepts](concepts.md)
 
 - :lucide-settings:{ .lg .middle } **Setting it up?**
 
-    ---
+  ***
 
-    GitHub App, Discord bot, deploy, wiring. Twenty minutes the first time.
+  GitHub App, Discord bot, deploy, wiring. Twenty minutes the first time.
 
-    [:octicons-arrow-right-24: Setup](configuration.md)
+  [:octicons-arrow-right-24: Setup](configuration.md)
 
 - :lucide-terminal:{ .lg .middle } **Using it?**
 
-    ---
+  ***
 
-    Every slash command and every webhook event the bridge reacts to.
+  Every slash command and every webhook event the bridge reacts to.
 
-    [:octicons-arrow-right-24: Commands & events](commands.md)
+  [:octicons-arrow-right-24: Commands & events](commands.md)
 
 - :lucide-map:{ .lg .middle } **What's next?**
 
-    ---
+  ***
 
-    What's planned, and the limits worth knowing about today.
+  What's planned, and the limits worth knowing about today.
 
-    [:octicons-arrow-right-24: Roadmap](roadmap.md)
+  [:octicons-arrow-right-24: Roadmap](roadmap.md)
 
 </div>

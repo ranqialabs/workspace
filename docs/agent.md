@@ -169,31 +169,31 @@ It reads the conversation, then uses read-only tools to ground what it says in
 the code — because an answer or an issue that cites `path/to/file.py:41` is one
 you can check, and one that paraphrases a hunch isn't.
 
-| Tool | What it's for |
-| :--- | :------------ |
-| `read_conversation` | read further back in this channel, when what you meant isn't in what it was given |
-| `list_repos` | which repos it can actually read — the only tool that settles "do you have access to X" |
-| `search_code` | find a symbol or string across the org |
-| `read_file` | read a file, optionally at a branch, tag or commit |
-| `list_dir` | get oriented before reading |
-| `recent_commits` | did this regress? who touched it last? |
-| `similar_issues` | is this already filed? |
-| `list_issues` | the board, filtered by assignee, creator, mentioned or label |
-| `repo_labels` | the labels this repo actually has |
-| `teammates` | who is who here: the name people use, and the GitHub and Linear accounts it maps to |
+| Tool                | What it's for                                                                           |
+| :------------------ | :-------------------------------------------------------------------------------------- |
+| `read_conversation` | read further back in this channel, when what you meant isn't in what it was given       |
+| `list_repos`        | which repos it can actually read — the only tool that settles "do you have access to X" |
+| `search_code`       | find a symbol or string across the org                                                  |
+| `read_file`         | read a file, optionally at a branch, tag or commit                                      |
+| `list_dir`          | get oriented before reading                                                             |
+| `recent_commits`    | did this regress? who touched it last?                                                  |
+| `similar_issues`    | is this already filed?                                                                  |
+| `list_issues`       | the board, filtered by assignee, creator, mentioned or label                            |
+| `repo_labels`       | the labels this repo actually has                                                       |
+| `teammates`         | who is who here: the name people use, and the GitHub and Linear accounts it maps to     |
 
-A question about people — *"tem alguma issue pra mim?"*, *"o que está livre pra
-pegar?"* — is a filter, so `list_issues` asks GitHub for that slice rather than
+A question about people — _"tem alguma issue pra mim?"_, _"o que está livre pra
+pegar?"_ — is a filter, so `list_issues` asks GitHub for that slice rather than
 listing a page and sifting it by eye. A listing that didn't fit says so and can be
 paged, so a partial board never gets reported as the whole one.
 
 It may **read any repository the app was granted**, not just the one the issue
 gets filed against — following a bug from a client into its service is often the
-whole job. Where it gets *filed* is restricted to the candidate repos.
+whole job. Where it gets _filed_ is restricted to the candidate repos.
 
 That grant is a fact it can check rather than assume. `list_repos` asks the
-installation what it can reach, which is the difference between *"that repo
-doesn't exist"* and *"nothing I searched found it"* — asked whether it can see
+installation what it can reach, which is the difference between _"that repo
+doesn't exist"_ and _"nothing I searched found it"_ — asked whether it can see
 some repo, it reads the list instead of inferring absence from an empty search.
 An unindexed private repo answers a search exactly like an empty one, so
 inferring is how it used to send people looking for a repo that was there all
@@ -204,20 +204,20 @@ along.
 With [Linear configured](configuration.md), it reads the board too — the same
 read-only shape, no writes:
 
-| Tool | What it's for |
-| :--- | :------------ |
-| `linear_teams` | the shape of the workspace, and the only tool that settles "can you see X" |
-| `linear_vocabulary` | this workspace's own words for status and label — they aren't GitHub's |
-| `linear_projects` | projects with their lead, health, progress and target date |
-| `linear_initiatives` | the widest container: what the quarter is about |
-| `linear_cycles` | what a team is meant to finish in this stretch |
-| `linear_members` | everyone in the workspace, marking who is mapped to Discord |
-| `linear_issues` | the board, filtered by team, project, assignee, status, label or recency |
-| `linear_issue` | one issue in full — including the GitHub links it points at |
-| `linear_documents`, `linear_document` | specs and decisions written down rather than tracked |
+| Tool                                  | What it's for                                                              |
+| :------------------------------------ | :------------------------------------------------------------------------- |
+| `linear_teams`                        | the shape of the workspace, and the only tool that settles "can you see X" |
+| `linear_vocabulary`                   | this workspace's own words for status and label — they aren't GitHub's     |
+| `linear_projects`                     | projects with their lead, health, progress and target date                 |
+| `linear_initiatives`                  | the widest container: what the quarter is about                            |
+| `linear_cycles`                       | what a team is meant to finish in this stretch                             |
+| `linear_members`                      | everyone in the workspace, marking who is mapped to Discord                |
+| `linear_issues`                       | the board, filtered by team, project, assignee, status, label or recency   |
+| `linear_issue`                        | one issue in full — including the GitHub links it points at                |
+| `linear_documents`, `linear_document` | specs and decisions written down rather than tracked                       |
 
 **Code goes to GitHub; Linear holds the rest.** The work that isn't directly code,
-and the issue that *groups* several that are — so a Linear issue often points at
+and the issue that _groups_ several that are — so a Linear issue often points at
 GitHub rather than containing anything, and `linear_issue` hands back those links so
 the agent can follow them and read that side too. Plenty of questions span both, and
 answering half of one as though it were the whole thing is the mistake this split is
@@ -225,15 +225,15 @@ meant to prevent.
 
 Reading Linear is mostly about **situating** something: which team owns it, which
 project it's under, who's holding it. That's why the vocabulary tools matter — a
-status name is per-team and arbitrary, so one team's *In Review* is another's
-*Reviewing*, and a guessed status is a filter that matches nothing and reads like an
+status name is per-team and arbitrary, so one team's _In Review_ is another's
+_Reviewing_, and a guessed status is a filter that matches nothing and reads like an
 empty board.
 
 An empty listing is more ambiguous here than on GitHub, and the agent is told to say
 so. The app's token reaches only the teams it was granted, so a missing name is one
 of three things — absent, ungranted, or filtered out — and `linear_teams` is what
-tells them apart. It should never report *"that project doesn't exist"* when the
-honest answer is *"I can't see it"*.
+tells them apart. It should never report _"that project doesn't exist"_ when the
+honest answer is _"I can't see it"_.
 
 !!! info "Two directions on people"
 
@@ -325,7 +325,7 @@ of one without disturbing it.
 
 ## Asking it for an issue
 
-Say so and you get a draft: *"vamos escrever uma issue sobre isso"*, or `/issue`
+Say so and you get a draft: _"vamos escrever uma issue sobre isso"_, or `/issue`
 if you'd rather be explicit. The agent opens a thread, proposes the issue there,
 and the thread becomes the conversation where it gets its final shape.
 
@@ -352,41 +352,41 @@ whatever the agent couldn't work out.
 
 - :lucide-badge-check:{ .lg .middle } **Confidence**
 
-    ---
+  ***
 
-    Green, blue or grey, by how well the conversation actually specifies the
-    work. `high` only when someone could start on it as written.
+  Green, blue or grey, by how well the conversation actually specifies the
+  work. `high` only when someone could start on it as written.
 
 - :lucide-circle-help:{ .lg .middle } **Open questions**
 
-    ---
+  ***
 
-    What blocks someone from starting — not design choices whose answer *is* the
-    work. A short draft with honest questions beats a confident wrong one.
+  What blocks someone from starting — not design choices whose answer _is_ the
+  work. A short draft with honest questions beats a confident wrong one.
 
 - :lucide-triangle-alert:{ .lg .middle } **Assignee warning**
 
-    ---
+  ***
 
-    If the proposed assignee isn't a mapped login, the card says so — GitHub may
-    reject the assignment.
+  If the proposed assignee isn't a mapped login, the card says so — GitHub may
+  reject the assignment.
 
 - :lucide-copy:{ .lg .middle } **Duplicate note**
 
-    ---
+  ***
 
-    If `similar_issues` turned up a real duplicate, it's called out at the top of
-    the body, with a link.
+  If `similar_issues` turned up a real duplicate, it's called out at the top of
+  the body, with a link.
 
 </div>
 
 #### Acting on it
 
-| Button | What happens |
-| :----- | :----------- |
-| **Submit** | Creates the issue on GitHub, leaves the draft card in place as the thread's record, confirms with a separate `#XX created` message, posts a card in the repo channel, archives the thread |
-| **Edit** | A modal with the title and body, pre-filled — your text is taken verbatim, no model round trip |
-| **Discard** | Drops the draft and archives the thread |
+| Button      | What happens                                                                                                                                                                              |
+| :---------- | :---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Submit**  | Creates the issue on GitHub, leaves the draft card in place as the thread's record, confirms with a separate `#XX created` message, posts a card in the repo channel, archives the thread |
+| **Edit**    | A modal with the title and body, pre-filled — your text is taken verbatim, no model round trip                                                                                            |
+| **Discard** | Drops the draft and archives the thread                                                                                                                                                   |
 
 Only whoever asked for the draft can press them. Everyone else in the thread is
 commenting on the draft, not steering it. Who that is rides in the buttons' own
