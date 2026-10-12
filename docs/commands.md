@@ -12,11 +12,11 @@ lives under a name that says what it's for. Alongside them,
 [**`/issue`**](agent.md) is the one command anyone can run — and you can skip it
 entirely by [just mentioning the bot](agent.md).
 
-| Command | Who can run it |
-| :------ | :------------- |
-| [`/map repo`](#map-repo), [`/map announce`](#map-announce), [`/map github`](#map-github), [`/map linear`](#map-linear) | Manage Server |
-| [`/sync roles`](#sync-roles), [`/config`](#config) | Manage Server |
-| [`/issue`](agent.md), *Draft issue from here*, and [`@`mentioning the bot](agent.md) | anyone in the server |
+| Command                                                                                                                | Who can run it       |
+| :--------------------------------------------------------------------------------------------------------------------- | :------------------- |
+| [`/map repo`](#map-repo), [`/map announce`](#map-announce), [`/map github`](#map-github), [`/map linear`](#map-linear) | Manage Server        |
+| [`/sync roles`](#sync-roles), [`/config`](#config)                                                                     | Manage Server        |
+| [`/issue`](agent.md), _Draft issue from here_, and [`@`mentioning the bot](agent.md)                                   | anyone in the server |
 
 Admin commands require Discord's **Manage Server** permission; that's the entire
 access model, so there's no admin role to create. Discord greys them out for
@@ -50,10 +50,10 @@ Tie a GitHub repo to a Discord channel.
 /map repo repo:‹owner/name› channel:#channel
 ```
 
-| Parameter | Description |
-| :-------- | :---------- |
-| `repo` | Autocompletes from the org's repos, private ones included — pick one |
-| `channel` | Where that repo's PR and issue notifications should land |
+| Parameter | Description                                                          |
+| :-------- | :------------------------------------------------------------------- |
+| `repo`    | Autocompletes from the org's repos, private ones included — pick one |
+| `channel` | Where that repo's PR and issue notifications should land             |
 
 A repo with no mapping is simply skipped — its events arrive and are ignored, no
 error.
@@ -67,10 +67,10 @@ notifications.
 /map announce repo:‹owner/name› channel:#channel
 ```
 
-| Parameter | Description |
-| :-------- | :---------- |
-| `repo` | Autocompletes from the org's repos — pick one |
-| `channel` | Where that repo's announcements land |
+| Parameter | Description                                   |
+| :-------- | :-------------------------------------------- |
+| `repo`    | Autocompletes from the org's repos — pick one |
+| `channel` | Where that repo's announcements land          |
 
 **Optional.** With no announce channel mapped, announcements fall back to the
 repo's [notifications channel](#map-repo) — so a single `/map repo` still gets
@@ -85,17 +85,17 @@ Tie a GitHub user to a Discord member.
 /map github github_login:‹login› member:@member
 ```
 
-| Parameter | Description |
-| :-------- | :---------- |
+| Parameter      | Description                                     |
+| :------------- | :---------------------------------------------- |
 | `github_login` | Autocompletes from the org's members — pick one |
-| `member` | The Discord member behind that account |
+| `member`       | The Discord member behind that account          |
 
 This is the join that makes mentions and access sync work: it's how the bridge
 knows a PR by `itsmeale` should ping a particular person. The bot confirms with a
 small embed showing the GitHub avatar and profile, so you can see at a glance you
 picked the right account. Re-mapping a login overwrites the old link.
 
-It does one more job: [`/issue`](agent.md) resolves *"assign it to Ana"* to a
+It does one more job: [`/issue`](agent.md) resolves _"assign it to Ana"_ to a
 GitHub login through these mappings. An unmapped person can't be assigned by
 name — the agent will ask who takes it instead of guessing.
 
@@ -107,14 +107,14 @@ Tie a Linear workspace member to a Discord member.
 /map linear linear_user:‹person› member:@member
 ```
 
-| Parameter | Description |
-| :-------- | :---------- |
+| Parameter     | Description                                                       |
+| :------------ | :---------------------------------------------------------------- |
 | `linear_user` | Autocompletes from the workspace — pick a person; stored by email |
-| `member` | The Discord member behind that account |
+| `member`      | The Discord member behind that account                            |
 
 The same shape as `/map github`, for the other side. The Discord member is the key
 the two meet through, so one person can be mapped on both sides and a question
-about them reaches either system: *"o que a Ana está fazendo?"* becomes her Linear
+about them reaches either system: _"o que a Ana está fazendo?"_ becomes her Linear
 email, and then her issues.
 
 The two are independent. Somebody mapped in GitHub and not in Linear is normal, and
@@ -145,12 +145,12 @@ own. `/issue` is for when you want to say exactly which messages to read.
 /issue [prompt:‹what it's about›] [since_message:‹link›] [last:20] [repo:‹owner/name›]
 ```
 
-| Parameter | Description |
-| :-------- | :---------- |
-| `prompt` | What the issue is about — steers the draft. Optional |
-| `since_message` | A message **link**; reads from there forward |
-| `last` | How many messages to read (default 20, max 100) |
-| `repo` | Force the target repo instead of inferring it from the channel |
+| Parameter       | Description                                                    |
+| :-------------- | :------------------------------------------------------------- |
+| `prompt`        | What the issue is about — steers the draft. Optional           |
+| `since_message` | A message **link**; reads from there forward                   |
+| `last`          | How many messages to read (default 20, max 100)                |
+| `repo`          | Force the target repo instead of inferring it from the channel |
 
 Also available as **right-click a message → Apps → Draft issue from here**.
 
@@ -173,8 +173,8 @@ For each repo you've [mapped to a channel](#map-repo), the bridge:
 1. **Ensures an access role** named `‹repo› devs` exists, creating it if missing.
 2. **Reconciles membership** against the [linked users](#map-github): it reads
    everyone with effective access to the repo on GitHub — team members, direct
-   collaborators, and org owners alike — then *adds* the role to those people and
-   *removes* it from
+   collaborators, and org owners alike — then _adds_ the role to those people and
+   _removes_ it from
    anyone who no longer has access, so the role always reflects GitHub.
 3. **Gates the channel**: it sets permissions so the channel is visible only to
    that access role, and hidden from everyone else.
@@ -215,20 +215,20 @@ get an `@mention`; otherwise their GitHub login shows up as plain text, so the
 message still makes sense. New issues and PRs-ready also ping the repo's
 [`@<repo> devs`](#sync-roles) role.
 
-| Event | Trigger | Message |
-| :---- | :------ | :------ |
-| `issues` (`opened`/`reopened`) | an issue is opened | title, body, author, assignees, labels — pings `@<repo> devs` + assignees |
-| `issues` (`assigned`) | someone is assigned | the card, updated — pings the assignee |
-| `issues` (`closed`/`unassigned`) | issue closed or unassigned | the card, updated (✅ completed / 🚫 not planned) — no ping |
-| `pull_request` (`opened` non-draft / `ready_for_review`) | a PR is ready for review | title, body, author — pings `@<repo> devs` |
-| `pull_request` (`review_requested`) | a review is requested | who wants whom to review — pings the reviewer |
-| `pull_request` (`closed`) | a PR is merged or closed | 🟣 merged / 🔴 closed, who did it — pings the author |
-| `pull_request_review` (`submitted`) | a review is submitted | reviewer, verdict (✅ approved / 🔴 changes / 💬 comment) + body, on one live card per reviewer counting their comments — pings the PR author, unless they are the reviewer |
-| `workflow_run` (`completed`) | a workflow on the default branch finishes | a line on the commit's [pipeline card](#pipeline-card), titled with the commit's subject: the workflow's name, ✅ passed / ❌ failed, and how long it took |
-| `check_run` (`completed`) | a job within that workflow finishes | the job's name on the same line, so it reads `workflow / job` the way GitHub names a check; the payload names only the sha, so the commit's message is looked up |
-| `deployment_status` | a deploy changes state | a line on the same card, titled with the commit's subject: 🚀 the environment deployed to, 🕒 deploying → ✅ deployed / ❌ failed, linking the live URL and the logs when they differ |
+| Event                                                    | Trigger                                   | Message                                                                                                                                                                               |
+| :------------------------------------------------------- | :---------------------------------------- | :------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `issues` (`opened`/`reopened`)                           | an issue is opened                        | title, body, author, assignees, labels — pings `@<repo> devs` + assignees                                                                                                             |
+| `issues` (`assigned`)                                    | someone is assigned                       | the card, updated — pings the assignee                                                                                                                                                |
+| `issues` (`closed`/`unassigned`)                         | issue closed or unassigned                | the card, updated (✅ completed / 🚫 not planned) — no ping                                                                                                                           |
+| `pull_request` (`opened` non-draft / `ready_for_review`) | a PR is ready for review                  | title, body, author — pings `@<repo> devs`                                                                                                                                            |
+| `pull_request` (`review_requested`)                      | a review is requested                     | who wants whom to review — pings the reviewer                                                                                                                                         |
+| `pull_request` (`closed`)                                | a PR is merged or closed                  | 🟣 merged / 🔴 closed, who did it — pings the author                                                                                                                                  |
+| `pull_request_review` (`submitted`)                      | a review is submitted                     | reviewer, verdict (✅ approved / 🔴 changes / 💬 comment) + body, on one live card per reviewer counting their comments — pings the PR author, unless they are the reviewer           |
+| `workflow_run` (`completed`)                             | a workflow on the default branch finishes | a line on the commit's [pipeline card](#pipeline-card), titled with the commit's subject: the workflow's name, ✅ passed / ❌ failed, and how long it took                            |
+| `check_run` (`completed`)                                | a job within that workflow finishes       | the job's name on the same line, so it reads `workflow / job` the way GitHub names a check; the payload names only the sha, so the commit's message is looked up                      |
+| `deployment_status`                                      | a deploy changes state                    | a line on the same card, titled with the commit's subject: 🚀 the environment deployed to, 🕒 deploying → ✅ deployed / ❌ failed, linking the live URL and the logs when they differ |
 
-Where each message *looks like* is defined in `bridge/render.py` — one pure
+Where each message _looks like_ is defined in `bridge/render.py` — one pure
 function per event — so restyling or adding an event is a self-contained change.
 
 !!! info "Live messages — edited, not repeated"
@@ -261,7 +261,7 @@ function per event — so restyling or adding an event is a self-contained chang
 
 A push runs every workflow that matches it, plus any deploy they trigger, and
 each one finishing is its own webhook. Posting a message apiece buried the
-channel in near-identical lines that didn't even say *which* check had passed.
+channel in near-identical lines that didn't even say _which_ check had passed.
 
 So they all write to **one card per commit**, keyed on the repo and the sha, with
 a line per step naming it and how long it took:

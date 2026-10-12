@@ -25,7 +25,7 @@ who set it up leaves. Create one under **Org Settings → Developer settings →
 GitHub Apps → New GitHub App**.
 
 **Identity.** Give it a name (`ranqia-workspace` is fine) and any homepage URL.
-Everything under *Identifying and authorizing users* — Callback URL, Setup URL,
+Everything under _Identifying and authorizing users_ — Callback URL, Setup URL,
 the OAuth and Device Flow checkboxes — stays **empty and unchecked**. Those are
 for logging users in, and the bridge never does that; it acts as the installation
 itself.
@@ -39,16 +39,16 @@ and is what lets the bridge prove a webhook really came from GitHub.
 **Permissions.** Read-only everywhere except issues, which the bridge creates
 when someone clicks Submit on an [`/issue`](agent.md) draft:
 
-| Scope | Permission | Why it's needed |
-| :---- | :--------- | :-------------- |
-| Repository | **Issues** → Read **and write** | to hear about issues, and to create one from a draft |
-| Repository | **Contents** → Read | `/issue` reads the code to ground a draft in it |
-| Repository | **Pull requests** → Read | to hear about PRs and reviews |
-| Repository | **Actions** → Read | to hear which workflow finished on the main branch |
-| Repository | **Checks** → Read | the agent reads a failing run's own error messages |
-| Repository | **Deployments** → Read | to hear a deploy start and finish |
-| Repository | **Metadata** → Read | mandatory; GitHub adds it for you |
-| Organization | **Members** → Read | `/sync roles` reads who can access each repo |
+| Scope        | Permission                      | Why it's needed                                      |
+| :----------- | :------------------------------ | :--------------------------------------------------- |
+| Repository   | **Issues** → Read **and write** | to hear about issues, and to create one from a draft |
+| Repository   | **Contents** → Read             | `/issue` reads the code to ground a draft in it      |
+| Repository   | **Pull requests** → Read        | to hear about PRs and reviews                        |
+| Repository   | **Actions** → Read              | to hear which workflow finished on the main branch   |
+| Repository   | **Checks** → Read               | the agent reads a failing run's own error messages   |
+| Repository   | **Deployments** → Read          | to hear a deploy start and finish                    |
+| Repository   | **Metadata** → Read             | mandatory; GitHub adds it for you                    |
+| Organization | **Members** → Read              | `/sync roles` reads who can access each repo         |
 
 !!! info "Write is granted to the bot, not to the agent"
 
@@ -75,13 +75,13 @@ every repo it's installed on.
     (Check run also needs **Checks → Read**); subscribing without the permission
     delivers nothing, which shows up as a workflow silently missing from a card.
 
-**Install it.** Under **Where can this app be installed**, choose *Only on this
-account*, save, then open **Install App** and install it on the org.
+**Install it.** Under **Where can this app be installed**, choose _Only on this
+account_, save, then open **Install App** and install it on the org.
 
 Now collect three things the deploy will need:
 
 1. The **App ID** (a number, shown at the top) → `GITHUB_APP_ID`.
-2. A **private key**: scroll to *Private keys* → **Generate a private key**. A
+2. A **private key**: scroll to _Private keys_ → **Generate a private key**. A
    `.pem` file downloads. Its entire contents are `GITHUB_APP_PRIVATE_KEY`.
 3. That **webhook secret** from earlier → `GITHUB_WEBHOOK_SECRET`.
 
@@ -103,12 +103,12 @@ shows it exactly once. This is `DISCORD_TOKEN`, the credential the bot logs in
 with. Treat it like a password; if it leaks, Reset Token again and the old one
 dies.
 
-**Turn on two privileged intents.** Still on the Bot page, under *Privileged
-Gateway Intents*:
+**Turn on two privileged intents.** Still on the Bot page, under _Privileged
+Gateway Intents_:
 
-| Intent | Required for | What breaks without it |
-| :----- | :----------- | :--------------------- |
-| **Server Members** | `/sync roles` | the bot can't see or change members' roles at all |
+| Intent              | Required for          | What breaks without it                                                                                |
+| :------------------ | :-------------------- | :---------------------------------------------------------------------------------------------------- |
+| **Server Members**  | `/sync roles`         | the bot can't see or change members' roles at all                                                     |
 | **Message Content** | [the agent](agent.md) | message text arrives empty, so a mention carries no request and there's no conversation to draft from |
 
 Leave **Presence** off — the bridge never looks at who's online.
@@ -184,7 +184,7 @@ application:
 1. Under **Linear → Settings → API → OAuth applications**, create one. Linear
    recommends a workspace dedicated to managing it, since any admin there can
    reach it.
-2. Enable **client credentials** on it. That grant issues an *app actor* token, so
+2. Enable **client credentials** on it. That grant issues an _app actor_ token, so
    the bot acts as itself in the workspace rather than as whoever set it up — no
    billable seat, and an audit trail that names the app.
 3. Ask for the **`read`** scope and nothing else.
@@ -260,12 +260,12 @@ Every command requires the **Manage Server** permission, and none ask for an ID 
 repos and users come from GitHub-backed autocomplete, channels and members from
 normal Discord mentions.
 
-| Command | What it does |
-| :------ | :----------- |
-| `/map github github_login:‹login› member:@member` | ties a GitHub user to a Discord member (mentions + role sync) |
-| `/map linear linear_user:‹person› member:@member` | ties a Linear member to a Discord member (optional; needs Linear configured) |
-| `/map repo repo:‹owner/name› channel:#channel` | routes a repo's notifications to a channel; group several repos into one channel |
-| `/sync roles` | reconciles access now: per mapped repo, fills its access role and gates the channel |
+| Command                                           | What it does                                                                        |
+| :------------------------------------------------ | :---------------------------------------------------------------------------------- |
+| `/map github github_login:‹login› member:@member` | ties a GitHub user to a Discord member (mentions + role sync)                       |
+| `/map linear linear_user:‹person› member:@member` | ties a Linear member to a Discord member (optional; needs Linear configured)        |
+| `/map repo repo:‹owner/name› channel:#channel`    | routes a repo's notifications to a channel; group several repos into one channel    |
+| `/sync roles`                                     | reconciles access now: per mapped repo, fills its access role and gates the channel |
 
 So the flow is: [link people](commands.md#map-github) with `/map github`,
 [group repos](commands.md#map-repo) into channels with `/map repo`, and let
@@ -275,12 +275,12 @@ the channel's permissions so only that role can see it. `/sync roles` also runs
 automatically on every boot.
 
 Do `/map github` before you rely on [`/issue`](agent.md): it's the same mapping
-the agent resolves a first name through when someone says *"assign it to Ana"*.
+the agent resolves a first name through when someone says _"assign it to Ana"_.
 
 ## Where it keeps state
 
 There's no database and no disk to set up: the `#bot-config` channel the bot
-creates *is* its storage, and the live panel there shows your whole configuration
+creates _is_ its storage, and the live panel there shows your whole configuration
 at a glance. You never have to manage it. If you're curious why it works this way,
 [Concepts](concepts.md#your-configuration-lives-in-discord) explains it.
 

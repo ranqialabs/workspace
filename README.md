@@ -21,7 +21,7 @@ channel opens; revoke it and it closes.
 
 **GitHub activity lands in Discord.** Issues, pull requests, reviews, CI and
 deploys post rich embeds to the repo's channel, `@mentioning` the people
-involved. Issues and deploys keep one message that gets *edited* in place rather
+involved. Issues and deploys keep one message that gets _edited_ in place rather
 than stacking a new one per state change.
 
 **`@` the bot and it answers.** It reads the conversation, greps the actual code

@@ -19,7 +19,7 @@ So the bridge only ever reads that state and reflects it. You **map a repo to a
 channel** — the one grouping GitHub can't infer — and the bridge **creates an
 access role for that repo**, fills it with everyone who can reach the repo on
 GitHub (team members, direct collaborators, and org owners alike, since what
-matters is *access*, not how you got it), and makes the **channel visible only to that role**. Grant
+matters is _access_, not how you got it), and makes the **channel visible only to that role**. Grant
 someone access on GitHub and the channel opens up for them; revoke it and it
 closes — you don't touch a role or a permission by hand, because the moment you
 did, GitHub and Discord would disagree.
@@ -37,7 +37,7 @@ way that's miserable to debug.
 
 The bridge refuses that entire category of error. The only thing you configure by
 hand is your GitHub org name. Everything else is either **discovered** (the server
-is the one the bot is in; an admin is anyone with *Manage Server*) or chosen
+is the one the bot is in; an admin is anyone with _Manage Server_) or chosen
 through the interface Discord already gives you — you **mention** a channel, you
 **pick** a member, and repo and user names come from autocomplete backed by the
 live GitHub API. If you can't fat-finger an ID, you can't misconfigure the bridge.
