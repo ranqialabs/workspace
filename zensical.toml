@@ -17,7 +17,7 @@ site_name = "Ranqia Workspace"
 # meaningful description of the site content for use by search engines.
 #
 # Read more: https://zensical.org/docs/setup/basics/#site_description
-site_description = "Bridge between the ranqialabs GitHub org and Discord server."
+site_description = "Bob: GitHub, Linear and an LLM agent in Discord and Slack, on Cloudflare Workers."
 
 # The site_author attribute. This is used in the HTML head element.
 #

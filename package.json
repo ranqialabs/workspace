@@ -14,7 +14,9 @@
     "fmt:check": "oxfmt --check",
     "check": "wrangler types --check && oxlint && oxfmt --check && bun test",
     "postinstall": "[ -n \"$CI\" ] || prek install",
-    "test": "bun test"
+    "test": "bun test",
+    "docs": "uvx zensical@0.0.70 serve",
+    "docs:build": "uvx zensical@0.0.70 build --clean"
   },
   "dependencies": {
     "@octokit/auth-app": "^8.3.1",
