@@ -4,13 +4,15 @@
 import { DurableObject } from "cloudflare:workers"
 
 import type { Chat } from "./chat/chat"
+import { type Command, type Reply, run } from "./commands"
 import { DiscordChat } from "./discord/messages"
 import { DiscordRest } from "./discord/rest"
 import { credentials, type GitHub, installationClient } from "./github/app"
+import { OrgDirectory } from "./github/directory"
 import type { Delivery } from "./github/webhook"
 import { Newsroom } from "./news/newsroom"
 import { changeFor, type Commit, commitOf } from "./news/stories"
-import { Config } from "./store/config"
+import { Config, type Platform } from "./store/config"
 import { migrate } from "./store/migrations"
 
 const DELIVERIES = ["CREATE TABLE deliveries (id TEXT PRIMARY KEY, received_at INTEGER NOT NULL)"]
@@ -18,6 +20,7 @@ const DAY = 24 * 60 * 60 * 1000
 
 export class Workspace extends DurableObject<Env> {
   readonly config: Config
+  private readonly directory: OrgDirectory
   private readonly newsroom: Newsroom
   private client: Promise<GitHub> | undefined
 
@@ -25,6 +28,7 @@ export class Workspace extends DurableObject<Env> {
     super(ctx, env)
     migrate(ctx.storage, "deliveries", DELIVERIES)
     this.config = new Config(ctx.storage)
+    this.directory = new OrgDirectory(env.GITHUB_ORG, () => this.githubClient())
     this.newsroom = new Newsroom(ctx.storage, this.config, chats(env), (repo, sha) =>
       this.lookupCommit(repo, sha),
     )
@@ -43,6 +47,16 @@ export class Workspace extends DurableObject<Env> {
     if (change === undefined) return
     await this.newsroom.publish(change)
     this.newsroom.prune()
+  }
+
+  command(command: Command, platform: Platform): Promise<Reply> {
+    return run(command, platform, this.config, this.directory)
+  }
+
+  suggest(field: "repo" | "login", typed: string): Promise<string[]> {
+    return field === "repo"
+      ? this.directory.suggestRepos(typed)
+      : this.directory.suggestMembers(typed)
   }
 
   githubClient(): Promise<GitHub> {
