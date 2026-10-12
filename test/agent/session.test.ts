@@ -128,7 +128,10 @@ describe("answering", () => {
     expect(await session.press("stop", stop.target, beto)).toBe("Only Ana can stop this answer.")
     expect(await session.press("stop", stop.target, ana)).toBeUndefined()
     await run
-    expect(chat.edits.get("m1")?.cards?.[0]).toMatchObject({ title: "Stopped by Ana", tone: "red" })
+    expect(chat.edits.get("m1")?.cards?.[0]).toMatchObject({
+      title: "Stopped by Ana",
+      tone: "grey",
+    })
     expect(await session.press("stop", 0, ana)).toBe("Nothing is running here.")
   })
 })
