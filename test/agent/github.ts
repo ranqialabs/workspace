@@ -1,4 +1,4 @@
-// An Octokit whose endpoints answer from a table, for tools and Submit.
+// An Octokit whose endpoints answer from a table, for tools and filing issues.
 import type { GitHub } from "../../src/github/app"
 
 export type Calls = { method: string; params: Record<string, unknown> }[]

@@ -1,5 +1,5 @@
 // The agent's GitHub tools. All of them read; none writes. Filing an issue is
-// the Submit button's job, behind a human click, so a confused model can waste
+// the File issue button's job, behind a human click, so a confused model can waste
 // tokens but never change anything on GitHub.
 import { tool } from "ai"
 import { z } from "zod"
