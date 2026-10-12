@@ -13,7 +13,8 @@ import type { Person } from "../store/config"
 import { migrate } from "../store/migrations"
 import type { SqlDatabase } from "../store/sql"
 import { draftCard, type DraftState, IssueDraft } from "./draft"
-import { footnote, Progress } from "./progress"
+import { Progress } from "./progress"
+import { progressCard, type RunStatus } from "../ui/progress"
 import { type Ask, turnText } from "./prompt"
 import { runAgent } from "./run"
 import { GITHUB_INSTRUCTIONS, githubTools } from "./tools/github"
@@ -175,7 +176,7 @@ export class Session {
     const progress = new Progress()
     const stop: Button = { id: this.buttonId("stop", 0), label: "Stop", style: "secondary" }
     const card = await chat.post(place.channel, {
-      cards: [progress.card("Thinking…")],
+      cards: [progressCard(progress.steps, { kind: "thinking" })],
       buttons: [stop],
       replyTo: this.replyRef(lastMessage),
     })
@@ -210,20 +211,18 @@ export class Session {
         events: {
           toolStarted(id, name, input) {
             progress.started(id, name, input)
-            live.update(progress.card("Working…"))
+            live.update(progressCard(progress.steps, { kind: "working" }))
           },
           toolFinished(id, error) {
             progress.finished(id, error)
-            live.update(progress.card("Working…"))
+            live.update(progressCard(progress.steps, { kind: "working" }))
           },
         },
       })
       this.remember(result.messages)
-      const status = result.reply.kind === "draft" ? "Drafted an issue" : "Answered"
+      const status: RunStatus = { kind: result.reply.kind === "draft" ? "drafted" : "answered" }
       await live.settle()
-      await chat.edit(card, {
-        cards: [{ ...progress.card(status), footer: footnote(result.usage) }],
-      })
+      await chat.edit(card, { cards: [progressCard(progress.steps, status, result.usage)] })
 
       if (result.reply.kind === "answer") {
         await chat.post(place.channel, {
@@ -234,13 +233,13 @@ export class Session {
         await this.propose(result.reply.draft, requester, result.reply.text, lastMessage)
       }
     } catch (error) {
-      let status = `Stopped by ${stoppedBy(controller.signal)}`
+      let status: RunStatus = { kind: "stopped", by: stoppedBy(controller.signal) }
       if (!controller.signal.aborted) {
         console.error("agent run failed", error)
-        status = `Failed: ${explain(error)}`
+        status = { kind: "failed", reason: explain(error) }
       }
       await live.settle()
-      await chat.edit(card, { cards: [{ ...progress.card(status), tone: "red" }] })
+      await chat.edit(card, { cards: [progressCard(progress.steps, status)] })
     } finally {
       this.running = undefined
     }

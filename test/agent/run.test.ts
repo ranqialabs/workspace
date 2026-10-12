@@ -3,6 +3,7 @@ import { tool } from "ai"
 import { z } from "zod"
 
 import { Progress } from "../../src/agent/progress"
+import { stepLine } from "../../src/ui/progress"
 import { runAgent } from "../../src/agent/run"
 import { calls, says, scripted } from "./model"
 
@@ -52,7 +53,7 @@ describe("runAgent", () => {
       },
     })
     expect(result.reply.kind).toBe("answer")
-    expect(progress.card("done").body).toBe("📄 reading `auth.ts`")
+    expect(progress.steps.map(stepLine)).toEqual(["✅ Read `auth.ts`"])
   })
 
   test("a draft for a repo outside the candidates goes back to the model to fix", async () => {
@@ -75,7 +76,7 @@ describe("runAgent", () => {
     })
     expect(result.reply).toMatchObject({ kind: "draft", draft: { repo: "acme/web" } })
     expect(model.requests).toBe(2)
-    expect(progress.card("done").body).toContain("isn't one of the candidates")
+    expect(progress.steps.map(stepLine).join("\n")).toContain("isn't one of the candidates")
   })
 
   test("an aborted run stops with the abort reason", async () => {
