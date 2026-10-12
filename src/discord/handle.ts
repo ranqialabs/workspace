@@ -1,0 +1,81 @@
+// Answers Discord's interactions endpoint. Discord wants an answer within three
+// seconds, so a command is acknowledged at once and its reply is filled in
+// once the Workspace has checked GitHub.
+import type { Command, Reply } from "../commands"
+import { messageBody } from "./messages"
+import { DiscordRest } from "./rest"
+import {
+  EPHEMERAL,
+  focused,
+  Interaction,
+  InteractionType,
+  ResponseType,
+  signatureMatches,
+  toCommand,
+} from "./interactions"
+
+/** What the handler needs from the Workspace; a stub in tests. */
+export interface Backend {
+  command(command: Command): Promise<Reply>
+  suggest(field: "repo" | "login", typed: string): Promise<string[]>
+}
+
+export async function handleInteraction(
+  request: Request,
+  publicKey: string,
+  backend: Backend,
+  rest: DiscordRest,
+  waitUntil: (work: Promise<unknown>) => void,
+): Promise<Response> {
+  const body = await request.text()
+  const signature = request.headers.get("x-signature-ed25519")
+  const timestamp = request.headers.get("x-signature-timestamp")
+  if (!(await signatureMatches(publicKey, body, signature, timestamp))) {
+    return new Response("bad signature", { status: 401 })
+  }
+  const parsed = Interaction.safeParse(JSON.parse(body))
+  if (!parsed.success) return new Response("unreadable interaction", { status: 400 })
+  const interaction = parsed.data
+
+  switch (interaction.type) {
+    case InteractionType.ping:
+      return Response.json({ type: ResponseType.pong })
+    case InteractionType.autocomplete:
+      return Response.json({
+        type: ResponseType.autocomplete,
+        data: { choices: await choices(interaction, backend) },
+      })
+    case InteractionType.command: {
+      const command = toCommand(interaction)
+      if (command === undefined) return ephemeral("I don't know that command.")
+      waitUntil(reply(interaction, rest, () => backend.command(command)))
+      return Response.json({ type: ResponseType.deferredMessage, data: { flags: EPHEMERAL } })
+    }
+    default:
+      return ephemeral("That button isn't wired to anything yet.")
+  }
+}
+
+async function choices(interaction: Interaction, backend: Backend) {
+  const field = focused(interaction)
+  if (field?.name !== "repo" && field?.name !== "login") return []
+  const names = await backend.suggest(field.name, field.value)
+  return names.map((name) => ({ name, value: name }))
+}
+
+/** Fills in the deferred answer; a failure is said there rather than left spinning. */
+async function reply(interaction: Interaction, rest: DiscordRest, work: () => Promise<Reply>) {
+  const route = `/webhooks/${interaction.application_id}/${interaction.token}/messages/@original`
+  try {
+    const { text, cards } = await work()
+    const { message_reference: _, ...body } = messageBody({ text, cards })
+    await rest.patch(route, body)
+  } catch (error) {
+    console.error("discord command failed", error)
+    await rest.patch(route, { content: "Something went wrong running that. It's in the logs." })
+  }
+}
+
+function ephemeral(content: string): Response {
+  return Response.json({ type: ResponseType.message, data: { content, flags: EPHEMERAL } })
+}

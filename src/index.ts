@@ -1,5 +1,8 @@
 // The Worker's front door: it checks who is calling and hands the request to
 // the Durable Object that owns it.
+import type { Command } from "./commands"
+import { handleInteraction } from "./discord/handle"
+import { DiscordRest } from "./discord/rest"
 import { readDelivery } from "./github/webhook"
 
 export { Workspace } from "./workspace"
@@ -18,6 +21,20 @@ export default {
       // GitHub gives up after ten seconds; the cards can take longer than that.
       ctx.waitUntil(workspace(env).github(delivery))
       return new Response("accepted", { status: 202 })
+    }
+    if (url.pathname === "/discord/interactions" && request.method === "POST") {
+      if (!env.DISCORD_PUBLIC_KEY || !env.DISCORD_TOKEN) {
+        return new Response("Discord is not configured", { status: 404 })
+      }
+      const ws = workspace(env)
+      const backend = {
+        command: (command: Command) => ws.command(command, "discord"),
+        suggest: (field: "repo" | "login", typed: string) => ws.suggest(field, typed),
+      }
+      const rest = new DiscordRest(env.DISCORD_TOKEN)
+      return handleInteraction(request, env.DISCORD_PUBLIC_KEY, backend, rest, (work) =>
+        ctx.waitUntil(work),
+      )
     }
     return new Response("not found", { status: 404 })
   },
