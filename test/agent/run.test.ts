@@ -1,50 +1,10 @@
 import { describe, expect, test } from "bun:test"
-import { simulateReadableStream, tool } from "ai"
-import { MockLanguageModelV4 } from "ai/test"
+import { tool } from "ai"
 import { z } from "zod"
 
 import { Progress } from "../../src/agent/progress"
 import { runAgent } from "../../src/agent/run"
-
-const usage = {
-  inputTokens: { total: 100, noCache: 60, cacheRead: 40, cacheWrite: undefined },
-  outputTokens: { total: 20, text: 20, reasoning: undefined },
-}
-
-type Chunk = Record<string, unknown> & { type: string }
-
-function finish(reason: "stop" | "tool-calls"): Chunk {
-  return { type: "finish", finishReason: { unified: reason, raw: undefined }, usage }
-}
-
-function says(text: string): Chunk[] {
-  return [
-    { type: "text-start", id: "t" },
-    { type: "text-delta", id: "t", delta: text },
-    { type: "text-end", id: "t" },
-    finish("stop"),
-  ]
-}
-
-function calls(id: string, name: string, input: object): Chunk[] {
-  return [
-    { type: "tool-call", toolCallId: id, toolName: name, input: JSON.stringify(input) },
-    finish("tool-calls"),
-  ]
-}
-
-/** A model that answers each request with the next script, and counts the requests. */
-function scripted(...scripts: Chunk[][]): MockLanguageModelV4 & { requests: number } {
-  let requests = 0
-  const model = new MockLanguageModelV4({
-    doStream: () => {
-      const chunks = scripts[requests] ?? says("(out of script)")
-      requests += 1
-      return Promise.resolve({ stream: simulateReadableStream({ chunks }) as never })
-    },
-  })
-  return Object.defineProperty(model, "requests", { get: () => requests }) as never
-}
+import { calls, says, scripted } from "./model"
 
 const draft = {
   title: "fix: login loops",

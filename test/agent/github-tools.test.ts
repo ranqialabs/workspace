@@ -2,31 +2,7 @@ import { describe, expect, test } from "bun:test"
 
 import { githubTools } from "../../src/agent/tools/github"
 import type { GitHub } from "../../src/github/app"
-
-type Calls = { method: string; params: Record<string, unknown> }[]
-
-/** An Octokit whose endpoints answer from `answers` and record what they were asked. */
-function fakeGitHub(answers: Record<string, unknown>, calls: Calls = []): GitHub {
-  const rest = new Proxy(
-    {},
-    {
-      get: (_, namespace: string) =>
-        new Proxy(
-          {},
-          {
-            get: (__, name: string) => (params: Record<string, unknown>) => {
-              const method = `${namespace}.${name}`
-              calls.push({ method, params })
-              const answer = answers[method]
-              if (answer instanceof Error) return Promise.reject(answer)
-              return Promise.resolve({ data: answer })
-            },
-          },
-        ),
-    },
-  )
-  return { rest } as unknown as GitHub
-}
+import { type Calls, fakeGitHub } from "./github"
 
 async function call(
   github: GitHub,
