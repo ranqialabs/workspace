@@ -16,7 +16,8 @@
     "postinstall": "[ -n \"$CI\" ] || prek install",
     "test": "bun test",
     "docs": "uvx zensical@0.0.70 serve",
-    "docs:build": "uvx zensical@0.0.70 build --clean"
+    "docs:build": "uvx zensical@0.0.70 build --clean",
+    "secrets:push": "bash scripts/push-secrets.sh"
   },
   "dependencies": {
     "@ai-sdk/openai": "^4.0.92",
