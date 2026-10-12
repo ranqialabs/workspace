@@ -5,6 +5,7 @@ import { handleInteraction } from "./discord/handle"
 import { DiscordRest } from "./discord/rest"
 import { readDelivery } from "./github/webhook"
 
+export { Gateway } from "./discord/gateway"
 export { Workspace } from "./workspace"
 
 export function workspace(env: Env) {
@@ -37,5 +38,9 @@ export default {
       )
     }
     return new Response("not found", { status: 404 })
+  },
+
+  async scheduled(_controller, env): Promise<void> {
+    if (env.DISCORD_TOKEN) await env.GATEWAY.getByName("discord").start()
   },
 } satisfies ExportedHandler<Env>

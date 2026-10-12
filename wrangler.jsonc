@@ -11,9 +11,13 @@
     "bindings": [
       // One per org: configuration, news cards and access.
       { "name": "WORKSPACE", "class_name": "Workspace" },
+      // The one Discord gateway connection.
+      { "name": "GATEWAY", "class_name": "Gateway" },
     ],
   },
-  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Workspace"] }],
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Workspace", "Gateway"] }],
+  // Reconnects the gateway after a deploy or a fatal close.
+  "triggers": { "crons": ["*/5 * * * *"] },
   "secrets": { "required": ["GITHUB_APP_ID", "GITHUB_APP_PRIVATE_KEY", "GITHUB_WEBHOOK_SECRET"] },
   "vars": {
     // The GitHub org whose repos, people and checks bob follows.
