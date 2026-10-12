@@ -11,6 +11,8 @@ import { credentials, type GitHub, installationClient } from "./github/app"
 import { OrgDirectory } from "./github/directory"
 import type { Delivery } from "./github/webhook"
 import { Newsroom } from "./news/newsroom"
+import { SlackApi } from "./slack/api"
+import { SlackChat } from "./slack/chat"
 import { changeFor, type Commit, commitOf } from "./news/stories"
 import { Config, type Person, type Platform } from "./store/config"
 import { migrate } from "./store/migrations"
@@ -91,5 +93,6 @@ export class Workspace extends DurableObject<Env> {
 export function chats(env: Env): Chat[] {
   const enabled: Chat[] = []
   if (env.DISCORD_TOKEN) enabled.push(new DiscordChat(new DiscordRest(env.DISCORD_TOKEN)))
+  if (env.SLACK_BOT_TOKEN) enabled.push(new SlackChat(new SlackApi(env.SLACK_BOT_TOKEN)))
   return enabled
 }
