@@ -20,8 +20,12 @@ with autocomplete for repos and GitHub logins. On Slack they are subcommands of
 | `/unmap repo repo: [announce:]` | `/bob unmap repo owner/name [announce]`   | Forgets the home channel, or the announce channel                                            |
 | `/unmap github member:`         | `/bob unmap github @person`               | Forgets someone's GitHub login                                                               |
 | `/unmap linear member:`         | `/bob unmap linear @person`               | Forgets someone's Linear account                                                             |
+| `/map retro channel:`           | `/bob map retro [#channel]`               | Posts the daily and weekly [retros](#retro) in the channel                                   |
+| `/unmap retro`                  | `/bob unmap retro`                        | Stops posting the retros                                                                     |
+| `/retro [period:]`              | `/bob retro [week]`                       | Posts what shipped today, or this week so far, in the channel you are in                     |
 
-On Slack, leaving the channel out of `map repo` means the channel you run it in.
+On Slack, leaving the channel out of `map repo` or `map retro` means the
+channel you run it in.
 
 ### Coming from the Python version
 
@@ -34,9 +38,10 @@ touched and can be archived afterwards.
 ### Who can run them
 
 - **Discord.** `/map` and `/unmap` need the **Manage Server** permission;
-  Discord greys them out for everyone else. `/config` is open to everyone.
+  Discord greys them out for everyone else. `/config` and `/retro` are open to
+  everyone.
 - **Slack.** Changing a mapping needs a workspace admin or owner. `/bob config`
-  is open to everyone.
+  and `/bob retro` are open to everyone.
 
 ### What gets checked
 
@@ -100,3 +105,41 @@ forgotten.
 
 Mentions always go in a reply under the card, not in the card, so editing a card
 never pings anyone twice and a ping always notifies.
+
+## Retro { #retro }
+
+A 📊 card for a channel the whole org reads, saying what shipped across every
+project. On working days at 18:00 in `TIMEZONE` it goes to the channel set with
+`map retro`: the day's retro Monday to Thursday, the week's on Friday. A day
+where nothing was merged, closed or deployed posts nothing. `/retro` posts one
+at any time, in the channel you run it in.
+
+```text
+▌ 📊 Daily retro
+▌ What shipped on Wednesday, October 14
+▌ **web**
+▌ - Login no longer loops on Safari (#31, #34)
+▌ **ada-api**
+▌ - Stripe webhooks retry on failure (#8)
+▌ Merged 3 pull requests   Closed 2 issues   Opened 4 pull requests, 1 issue
+▌ Deploys  2 to production: 1 in web and 1 in ada-api
+▌ People
+▌ @beto 2 merged, 3 reviewed
+▌ @ana 1 merged, 2 closed
+```
+
+- **What shipped** is the model's rewording of the merged pull requests' and
+  closed issues' titles, per project, for readers who are not engineers. It is
+  told to invent nothing. Without an OpenAI key the titles are listed as they
+  are.
+- **The counts** come from GitHub's search, so anyone can check them: pull
+  requests merged and issues closed as completed in the period, and what was
+  opened.
+- **Deploys** are successful deploys to an environment with `prod` in its name,
+  from the pipelines bob followed.
+- **People**, most active first: pull requests merged, others' pull requests
+  reviewed, and issues closed while assigned to them. On Discord they are
+  mentions, which notify no one inside a card; on Slack, names.
+
+A day is the team's calendar day in `TIMEZONE`, and a week runs Monday to
+Sunday.

@@ -91,6 +91,14 @@ export function toCommand(command: SlashCommand): Command | undefined {
   const words = command.text.trim().split(/\s+/).filter(Boolean)
   const [verb, kind, first, second] = words
   if (verb === "config" || verb === undefined) return { name: "config" }
+  if (verb === "retro") {
+    return { name: "retro", period: kind === "week" ? "week" : "day", channel: command.channel_id }
+  }
+  if (verb === "map" && kind === "retro") {
+    const channel = first === undefined ? command.channel_id : CHANNEL.exec(first)?.[1]
+    return channel === undefined ? undefined : { name: "map-place", place: "retro", channel }
+  }
+  if (verb === "unmap" && kind === "retro") return { name: "unmap-place", place: "retro" }
 
   if (verb === "map" && (kind === "repo" || kind === "announce") && first !== undefined) {
     const channel = second === undefined ? command.channel_id : CHANNEL.exec(second)?.[1]
@@ -119,5 +127,5 @@ export function toCommand(command: SlashCommand): Command | undefined {
 
 /** Whether a command changes the configuration, which only workspace admins may do. */
 export function changes(command: Command): boolean {
-  return command.name !== "config"
+  return command.name !== "config" && command.name !== "retro"
 }

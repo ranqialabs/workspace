@@ -11,6 +11,9 @@ export type Purpose = "home" | "announce"
 
 export type Account = "github" | "linear"
 
+/** A channel for the whole org rather than one repo. */
+export type Place = "retro"
+
 export interface Person {
   id: number
   name: string | null
@@ -57,6 +60,12 @@ const STEPS = [
     platform TEXT NOT NULL CHECK (platform IN ('discord', 'slack')),
     group_id TEXT NOT NULL,
     PRIMARY KEY (repo, platform)
+  )`,
+  `CREATE TABLE places (
+    place TEXT NOT NULL CHECK (place IN ('retro')),
+    platform TEXT NOT NULL CHECK (platform IN ('discord', 'slack')),
+    channel TEXT NOT NULL,
+    PRIMARY KEY (place, platform)
   )`,
 ]
 
@@ -245,6 +254,31 @@ export class Config {
     for (const field of FIELDS) {
       if (into[field] === null && from[field] !== null) this.set(into.id, field, from[field])
     }
+  }
+
+  setPlace(place: Place, platform: Platform, channel: string): void {
+    this.db.sql.exec(
+      `INSERT INTO places (place, platform, channel) VALUES (?, ?, ?)
+       ON CONFLICT (place, platform) DO UPDATE SET channel = excluded.channel`,
+      place,
+      platform,
+      channel,
+    )
+  }
+
+  forgetPlace(place: Place, platform: Platform): void {
+    this.db.sql.exec("DELETE FROM places WHERE place = ? AND platform = ?", place, platform)
+  }
+
+  place(place: Place, platform: Platform): string | undefined {
+    const row = this.db.sql
+      .exec<{ channel: string }>(
+        "SELECT channel FROM places WHERE place = ? AND platform = ?",
+        place,
+        platform,
+      )
+      .next()
+    return row.done ? undefined : row.value.channel
   }
 
   // Someone with neither a login nor an email is nobody the agent can name.

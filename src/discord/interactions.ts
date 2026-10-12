@@ -113,8 +113,16 @@ export function toCommand(interaction: Interaction): Command | undefined {
 
   if (name === "config") return { name: "config" }
   if (name === "import") return channel === undefined ? undefined : { name: "import", channel }
+  if (name === "retro") {
+    const here = interaction.channel_id
+    const period = textOption(values, "period") === "week" ? "week" : "day"
+    return here === undefined ? undefined : { name: "retro", period, channel: here }
+  }
 
   if (name === "map") {
+    if (sub === "retro") {
+      return channel === undefined ? undefined : { name: "map-place", place: "retro", channel }
+    }
     if (sub === "repo" || sub === "announce") {
       if (repo === undefined || channel === undefined) return undefined
       const purpose = sub === "repo" ? "home" : "announce"
@@ -130,6 +138,7 @@ export function toCommand(interaction: Interaction): Command | undefined {
   }
 
   if (name === "unmap") {
+    if (sub === "retro") return { name: "unmap-place", place: "retro" }
     if (sub === "repo" && repo !== undefined) {
       const purpose = values.get("announce")?.value === true ? "announce" : "home"
       return { name: "unmap-repo", repo, purpose }

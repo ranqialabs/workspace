@@ -92,6 +92,22 @@ describe("commands", () => {
     expect(toCommand(sub("map", "announce", options))).toMatchObject({ purpose: "announce" })
   })
 
+  test("retro posts in the channel it runs in; map retro picks the retro channel", () => {
+    const here = { ...interaction(2, { name: "retro" }), channel_id: "c7" }
+    expect(toCommand(here)).toEqual({ name: "retro", period: "day", channel: "c7" })
+    const week = {
+      ...interaction(2, { name: "retro", options: [{ type: 3, name: "period", value: "week" }] }),
+      channel_id: "c7",
+    }
+    expect(toCommand(week)).toMatchObject({ period: "week" })
+    expect(toCommand(sub("map", "retro", [{ type: 7, name: "channel", value: "g1" }]))).toEqual({
+      name: "map-place",
+      place: "retro",
+      channel: "g1",
+    })
+    expect(toCommand(sub("unmap", "retro", []))).toEqual({ name: "unmap-place", place: "retro" })
+  })
+
   test("map github takes the member's display name from the resolved users", () => {
     const command = toCommand({
       ...sub("map", "github", [

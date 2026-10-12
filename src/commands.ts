@@ -2,16 +2,26 @@
 // input (Discord options, Slack text) into a Command; running it changes the
 // configuration and says what happened, and `ui/commands` words the reply.
 import type { Imported } from "./discord/legacy"
-import type { Account, Config, Platform, Purpose } from "./store/config"
+import type { PeriodKind } from "./retro/period"
+import type { Account, Config, Place, Platform, Purpose } from "./store/config"
 
-export type Command =
+/** The commands that only read or change the configuration; `run` does them. */
+export type ConfigCommand =
   | { name: "map-repo"; repo: string; channel: string; purpose: Purpose }
   | { name: "unmap-repo"; repo: string; purpose: Purpose }
   | { name: "map-person"; account: Account; value: string; user: string; userName?: string }
   | { name: "unmap-person"; account: Account; user: string }
+  | { name: "map-place"; place: Place; channel: string }
+  | { name: "unmap-place"; place: Place }
   | { name: "config" }
+
+/** The Workspace does these, since they need GitHub, Discord or the model. */
+export type Command =
+  | ConfigCommand
   /** Discord only: reads the Python version's #bot-config once. */
   | { name: "import"; channel: string }
+  /** Posts a retro of the day or the week so far in `channel`. */
+  | { name: "retro"; period: PeriodKind; channel: string }
 
 /** What a command did. `ui/commands` says it back to whoever ran it. */
 export type Result =
@@ -21,7 +31,10 @@ export type Result =
   | { kind: "person-linked"; user: string; account: Account; value: string }
   | { kind: "not-a-member"; login: string }
   | { kind: "person-unlinked"; user: string; account: Account }
+  | { kind: "place-mapped"; place: Place; channel: string }
+  | { kind: "place-unmapped"; place: Place }
   | { kind: "imported"; channel: string; counts: Imported }
+  | { kind: "retro-posted"; channel: string; period: PeriodKind }
   | { kind: "discord-only" }
   | { kind: "config" }
 
@@ -34,7 +47,7 @@ export interface Directory {
 }
 
 export async function run(
-  command: Command,
+  command: ConfigCommand,
   platform: Platform,
   config: Config,
   directory: Directory,
@@ -59,9 +72,12 @@ export async function run(
     case "unmap-person":
       config.unlink(platform, command.user, command.account)
       return { kind: "person-unlinked", user: command.user, account: command.account }
-    case "import":
-      // Reading Discord history needs the bot's token, so the Workspace does it.
-      return { kind: "discord-only" }
+    case "map-place":
+      config.setPlace(command.place, platform, command.channel)
+      return { kind: "place-mapped", place: command.place, channel: command.channel }
+    case "unmap-place":
+      config.forgetPlace(command.place, platform)
+      return { kind: "place-unmapped", place: command.place }
     case "config":
       break
   }

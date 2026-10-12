@@ -4,7 +4,7 @@ import { SlackApi } from "../../src/slack/api"
 import { cardBlocks, messageBody, mrkdwn } from "../../src/slack/blocks"
 import { SlackChat } from "../../src/slack/chat"
 import { type SlackBackend, handleSlack } from "../../src/slack/handle"
-import { signatureMatches, type SlashCommand, toCommand } from "../../src/slack/inbound"
+import { changes, signatureMatches, type SlashCommand, toCommand } from "../../src/slack/inbound"
 
 const SECRET = "shh"
 const NOW = 1_760_000_000_000
@@ -107,6 +107,21 @@ const slash = (text: string): SlashCommand => ({
 })
 
 describe("/bob", () => {
+  test("retro posts here, for today or the week, and anyone may ask for one", () => {
+    expect(toCommand(slash("retro"))).toEqual({ name: "retro", period: "day", channel: "C1" })
+    expect(toCommand(slash("retro week"))).toMatchObject({ period: "week" })
+    expect(changes({ name: "retro", period: "day", channel: "C1" })).toBe(false)
+  })
+
+  test("map retro picks the channel the retros go to", () => {
+    expect(toCommand(slash("map retro <#C9|general>"))).toEqual({
+      name: "map-place",
+      place: "retro",
+      channel: "C9",
+    })
+    expect(toCommand(slash("unmap retro"))).toEqual({ name: "unmap-place", place: "retro" })
+  })
+
   test("map repo defaults to the channel it runs in", () => {
     expect(toCommand(slash("map repo acme/web"))).toEqual({
       name: "map-repo",

@@ -2,7 +2,7 @@
 // It answers RPC from the Discord gateway and from Slack's events, and wires
 // the platform, GitHub, the model and the Workspace's configuration into a
 // Session, which does the work.
-import { createOpenAI } from "@ai-sdk/openai"
+import { modelFor } from "./model"
 import { DurableObject } from "cloudflare:workers"
 
 import { credentials, type GitHub, installationClient } from "../github/app"
@@ -52,8 +52,9 @@ export class Conversation extends DurableObject<Env> {
       chat: chatFor(this.env, origin.platform),
       github: () => this.github(),
       model: () => {
-        const openai = createOpenAI({ apiKey: this.env.OPENAI_API_KEY })
-        return openai(this.env.AGENT_MODEL)
+        const model = modelFor(this.env)
+        if (model === undefined) throw new Error("OPENAI_API_KEY is not set")
+        return model
       },
       surroundings: async () => {
         const stored = this.ctx.storage.kv.get<Origin>("origin") ?? origin

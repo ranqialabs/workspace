@@ -42,4 +42,6 @@ export const SLACK_USAGE = [
   "`/bob map announce owner/name #channel` sends its news there instead.",
   "`/bob map github login @person` and `/bob map linear email @person` say who someone is.",
   "`/bob unmap repo owner/name [announce]`, `/bob unmap github @person` and `/bob unmap linear @person` undo them.",
+  "`/bob retro` posts what shipped today here; `/bob retro week`, this week.",
+  "`/bob map retro #channel` posts the retros there on working days; `/bob unmap retro` stops them.",
 ].join("\n")

@@ -50,6 +50,7 @@ export const COMMANDS = [
         picked("email", "Their Linear email"),
         member,
       ]),
+      subcommand("retro", "Post the daily and weekly retros in a channel", [channel]),
     ],
   },
   {
@@ -69,6 +70,7 @@ export const COMMANDS = [
       ]),
       subcommand("github", "Forget someone's GitHub login", [member]),
       subcommand("linear", "Forget someone's Linear account", [member]),
+      subcommand("retro", "Stop posting the retros", []),
     ],
   },
   {
@@ -77,6 +79,23 @@ export const COMMANDS = [
     contexts: IN_SERVERS,
     default_member_permissions: MANAGE_GUILD,
     options: [{ ...channel, description: "The old #bot-config channel" }],
+  },
+  {
+    name: "retro",
+    description: "Post what shipped today, or this week, in this channel",
+    contexts: IN_SERVERS,
+    options: [
+      {
+        type: STRING,
+        name: "period",
+        description: "Today, or this week so far",
+        required: false,
+        choices: [
+          { name: "today", value: "day" },
+          { name: "this week", value: "week" },
+        ],
+      },
+    ],
   },
   {
     name: "config",

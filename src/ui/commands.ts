@@ -62,6 +62,16 @@ export function commandReply(result: Result, config: Config, platform: Platform)
         cards: [configCard(config, platform)],
       }
     }
+    case "place-mapped":
+      return {
+        text: `${MARK.done} The daily and weekly retros now go to <#${result.channel}>, on working days at 18:00.`,
+      }
+    case "place-unmapped":
+      return { text: `The retro has no channel on ${PLATFORM[platform]} anymore.` }
+    case "retro-posted":
+      return {
+        text: `${MARK.done} Posted the ${result.period === "day" ? "daily" : "weekly"} retro.`,
+      }
     case "discord-only":
       return { text: "Importing works on Discord only, from the old #bot-config channel." }
     case "config":
@@ -94,6 +104,7 @@ export function configCard(config: Config, platform: Platform): Card {
       return `<@${person[platform]}> is ${listed(accounts)}`
     })
   const slash = SLASH[platform]
+  const retro = config.place("retro", platform)
   const body = [
     "**Repos**",
     ...(repoLines.length > 0 ? repoLines : [`None yet. Add one with ${code(`${slash}map repo`)}.`]),
@@ -102,6 +113,11 @@ export function configCard(config: Config, platform: Platform): Card {
     ...(peopleLines.length > 0
       ? peopleLines
       : [`Nobody yet. Link someone with ${code(`${slash}map github`)}.`]),
+    "",
+    "**Retro**",
+    retro === undefined
+      ? `Not posted. Choose a channel with ${code(`${slash}map retro`)}.`
+      : `<#${retro}>, on working days at 18:00`,
   ].join("\n")
   return {
     tone: "brand",

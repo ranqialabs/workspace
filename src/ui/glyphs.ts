@@ -12,6 +12,7 @@ export const KIND = {
   bob: "🤖",
   draft: "📝",
   config: "⚙️",
+  retro: "📊",
 } as const
 
 export const MARK = {

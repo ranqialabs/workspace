@@ -45,3 +45,20 @@ export function waited(ms: number): string {
   if (hours < 48) return `${hours} hours`
   return `${Math.floor(hours / 24)} days`
 }
+
+/** `-03:00`: the zone's offset from UTC at that instant. */
+export function offset(at: number, timeZone: string): string {
+  const name =
+    new Intl.DateTimeFormat("en-US", { timeZone, timeZoneName: "longOffset" })
+      .formatToParts(new Date(at))
+      .find((part) => part.type === "timeZoneName")?.value ?? "GMT"
+  const match = /GMT([+-]\d{2}:\d{2})/.exec(name)
+  return match?.[1] ?? "+00:00"
+}
+
+/** A calendar day `days` after `date`, both as `2026-10-12`. */
+export function addDays(date: string, days: number): string {
+  const at = new Date(`${date}T00:00:00Z`)
+  at.setUTCDate(at.getUTCDate() + days)
+  return at.toISOString().slice(0, 10)
+}

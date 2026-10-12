@@ -6,7 +6,15 @@ import { DurableObject } from "cloudflare:workers"
 import { conversationName, type Origin } from "./agent/conversation"
 import { explainFailure } from "./agent/prompt"
 import type { Turn } from "./agent/session"
+import { modelFor } from "./agent/model"
+import { mentionsFor } from "./chat/mentions"
 import { chats } from "./chat/platforms"
+import { collect, productionDeploys } from "./retro/collect"
+import { type PeriodKind, periodAt } from "./retro/period"
+import { summarize } from "./retro/summary"
+import { localTime } from "./time"
+import { retroCard } from "./ui/retro"
+import { code } from "./ui/text"
 import { REPLY } from "./ui/replies"
 import { type Command, type Result, run } from "./commands"
 import { commandReply, type Reply } from "./ui/commands"
@@ -23,6 +31,7 @@ import { migrate } from "./store/migrations"
 
 const DELIVERIES = ["CREATE TABLE deliveries (id TEXT PRIMARY KEY, received_at INTEGER NOT NULL)"]
 const DAY = 24 * 60 * 60 * 1000
+const RETRO_HOUR = 18
 
 export class Workspace extends DurableObject<Env> {
   readonly config: Config
@@ -50,7 +59,9 @@ export class Workspace extends DurableObject<Env> {
 
   /** The cron's tick: whatever is due. */
   async tick(): Promise<void> {
-    await this.reminders.run()
+    const results = await Promise.allSettled([this.reminders.run(), this.retroIfDue()])
+    const failed = results.find((result) => result.status === "rejected")
+    if (failed !== undefined) throw failed.reason
   }
 
   /** A verified webhook delivery. GitHub redelivers on timeouts, so each id counts once. */
@@ -74,11 +85,69 @@ export class Workspace extends DurableObject<Env> {
   }
 
   private async runCommand(command: Command, platform: Platform): Promise<Result> {
-    if (command.name === "import" && platform === "discord" && this.env.DISCORD_TOKEN) {
+    if (command.name === "import") {
+      if (platform !== "discord" || !this.env.DISCORD_TOKEN) return { kind: "discord-only" }
       const lines = await readLines(new DiscordRest(this.env.DISCORD_TOKEN), command.channel)
       return { kind: "imported", channel: command.channel, counts: applyLines(this.config, lines) }
     }
+    if (command.name === "retro") {
+      await this.postRetro(command.period, [{ platform, channel: command.channel }], false)
+      return { kind: "retro-posted", channel: command.channel, period: command.period }
+    }
     return run(command, platform, this.config, this.directory)
+  }
+
+  /**
+   * Gathers a retro and posts it to each target. The cron skips a day where
+   * nothing was merged, closed or deployed; someone asking always gets one.
+   */
+  private async postRetro(
+    kind: PeriodKind,
+    targets: { platform: Platform; channel: string }[],
+    skipQuiet: boolean,
+  ): Promise<void> {
+    const period = periodAt(kind, Date.now(), this.env.TIMEZONE)
+    const logins = this.config.people().flatMap((person) => person.github ?? [])
+    const retro = await collect(
+      await this.githubClient(),
+      this.env.GITHUB_ORG,
+      logins,
+      period,
+      productionDeploys(this.newsroom.stories("pipeline"), period),
+    )
+    const quiet = retro.merged.length + retro.closed.length + retro.deploys.length === 0
+    if (skipQuiet && quiet) return
+    const summary = await summarize(modelFor(this.env), retro)
+    for (const target of targets) {
+      const chat = chats(this.env).find((candidate) => candidate.platform === target.platform)
+      if (chat === undefined) continue
+      const card = retroCard(retro, summary, this.personLabel(target.platform))
+      await chat.post(target.channel, { cards: [card] })
+    }
+  }
+
+  /** On Discord a mention in a card notifies no one; Slack's would, so it gets a name. */
+  private personLabel(platform: Platform): (login: string) => string {
+    const mentions = mentionsFor(this.config, platform)
+    return (login) => {
+      if (platform === "discord") return mentions.person(login) ?? code(login)
+      return this.config.personBy("github", login)?.name ?? code(login)
+    }
+  }
+
+  /** On working days at 18:00 the retro goes out: the week's on Friday, the day's otherwise. */
+  private async retroIfDue(): Promise<void> {
+    const now = localTime(Date.now(), this.env.TIMEZONE)
+    if (now.weekday < 1 || now.weekday > 5 || now.hour < RETRO_HOUR) return
+    if (this.ctx.storage.kv.get<string>("retro-posted") === now.date) return
+    // Marked first: a failing retro is retried tomorrow, not every five minutes.
+    this.ctx.storage.kv.put("retro-posted", now.date)
+    const targets = (["discord", "slack"] as const).flatMap((platform) => {
+      const channel = this.config.place("retro", platform)
+      return channel === undefined ? [] : [{ platform, channel }]
+    })
+    if (targets.length === 0) return
+    await this.postRetro(now.weekday === 5 ? "week" : "day", targets, true)
   }
 
   /**
