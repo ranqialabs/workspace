@@ -1,0 +1,45 @@
+{
+  "_metadata": { "major_version": 2, "minor_version": 1 },
+  "display_information": {
+    "name": "bob",
+    "description": "GitHub news, and an agent that reads your code and drafts issues.",
+    "background_color": "#24292f"
+  },
+  "features": {
+    "bot_user": { "display_name": "bob", "always_online": true },
+    "slash_commands": [
+      {
+        "command": "/bob",
+        "url": "https://YOUR-WORKER.workers.dev/slack/commands",
+        "description": "Show or change bob's mappings",
+        "usage_hint": "config | map repo owner/name #channel | map github login @person",
+        "should_escape": true
+      }
+    ]
+  },
+  "oauth_config": {
+    "scopes": {
+      "bot": [
+        "app_mentions:read",
+        "channels:history",
+        "groups:history",
+        "chat:write",
+        "commands",
+        "users:read"
+      ]
+    }
+  },
+  "settings": {
+    "event_subscriptions": {
+      "request_url": "https://YOUR-WORKER.workers.dev/slack/events",
+      "bot_events": ["app_mention"]
+    },
+    "interactivity": {
+      "is_enabled": true,
+      "request_url": "https://YOUR-WORKER.workers.dev/slack/interactions"
+    },
+    "org_deploy_enabled": false,
+    "socket_mode_enabled": false,
+    "token_rotation_enabled": false
+  }
+}

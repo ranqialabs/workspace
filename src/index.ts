@@ -6,6 +6,9 @@ import type { Command } from "./commands"
 import { handleInteraction } from "./discord/handle"
 import { DiscordRest } from "./discord/rest"
 import { readDelivery } from "./github/webhook"
+import { SlackApi } from "./slack/api"
+import { SlackChat } from "./slack/chat"
+import { handleSlack, SLACK_PATHS } from "./slack/handle"
 
 export { Conversation } from "./agent/conversation"
 export { Gateway } from "./discord/gateway"
@@ -13,6 +16,11 @@ export { Workspace } from "./workspace"
 
 export function workspace(env: Env) {
   return env.WORKSPACE.getByName(env.GITHUB_ORG)
+}
+
+function pressIn(env: Env, press: Press, user: Turn["author"]): Promise<string | undefined> {
+  const conversation = env.CONVERSATION.getByName(press.conversation)
+  return conversation.press(press.conversation, press.action, press.target, user)
 }
 
 export default {
@@ -34,18 +42,31 @@ export default {
       const backend = {
         command: (command: Command) => ws.command(command, "discord"),
         suggest: (field: "repo" | "login", typed: string) => ws.suggest(field, typed),
-        press: (press: Press, user: Turn["author"]) =>
-          env.CONVERSATION.getByName(press.conversation).press(
-            press.conversation,
-            press.action,
-            press.target,
-            user,
-          ),
+        press: (press: Press, user: Turn["author"]) => pressIn(env, press, user),
       }
       const rest = new DiscordRest(env.DISCORD_TOKEN)
       return handleInteraction(request, env.DISCORD_PUBLIC_KEY, backend, rest, (work) =>
         ctx.waitUntil(work),
       )
+    }
+    const slack = SLACK_PATHS.get(url.pathname)
+    if (slack !== undefined && request.method === "POST") {
+      if (!env.SLACK_BOT_TOKEN || !env.SLACK_SIGNING_SECRET) {
+        return new Response("Slack is not configured", { status: 404 })
+      }
+      const ws = workspace(env)
+      return handleSlack(slack, {
+        request,
+        secret: env.SLACK_SIGNING_SECRET,
+        chat: new SlackChat(new SlackApi(env.SLACK_BOT_TOKEN)),
+        waitUntil: (work) => ctx.waitUntil(work),
+        backend: {
+          mention: (name, origin, turn) =>
+            env.CONVERSATION.getByName(name).mention(name, origin, turn),
+          command: (command) => ws.command(command, "slack"),
+          press: (press, user) => pressIn(env, press, user),
+        },
+      })
     }
     return new Response("not found", { status: 404 })
   },
