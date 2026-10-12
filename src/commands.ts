@@ -1,7 +1,7 @@
 // The admin commands, the same on both platforms. Each platform turns its own
 // input (Discord options, Slack text) into a Command, and shows the reply
 // only to whoever ran it.
-import type { Card } from "./chat/card"
+import type { Card } from "./ui/card"
 import type { Account, Config, Platform, Purpose } from "./store/config"
 
 export type Command =

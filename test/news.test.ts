@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 
-import type { Mentions } from "../src/chat/card"
-import { draw, pingText } from "../src/news/draw"
+import type { Mentions } from "../src/ui/card"
+import { draw, pingText } from "../src/ui/news"
 import { changeFor, type Ping, type Story } from "../src/news/stories"
 
 const repository = {
@@ -53,8 +53,8 @@ describe("issues", () => {
     const { story, pings } = play(["issues", issue("opened")])
     expect(pingText(pings[0] ?? [], mentions)).toBe("<@&9> <@2>")
     const card = draw(story, mentions)
-    expect(card.kicker).toBe("🐛 issue · web")
-    expect(card.title).toBe("#7 · Login loops")
+    expect(card.kicker).toBe("🐛 Open issue in web")
+    expect(card.title).toBe("Login loops #7")
     expect(card.body).toBe("Steps:\n1. log in")
     expect(card.fields).toEqual([
       { name: "Opened by", value: "<@1>", inline: true },
@@ -63,14 +63,15 @@ describe("issues", () => {
     ])
   })
 
-  test("closing as completed turns the card green and pings no one", () => {
+  test("closing as completed turns the card purple and pings no one", () => {
     const { story, pings } = play(
       ["issues", issue("opened")],
       ["issues", issue("closed", { state: "closed", state_reason: "completed" })],
     )
     expect(pings[1]).toEqual([])
     const card = draw(story, mentions)
-    expect(card.kicker).toBe("✅ closed · web")
+    expect(card.kicker).toBe("🐛 Closed issue in web")
+    expect(card.tone).toBe("purple")
     expect(card.body).toBeUndefined()
   })
 
@@ -152,12 +153,12 @@ describe("pull requests", () => {
       "<@1>",
     ])
     const card = draw(story, mentions)
-    expect(card.kicker).toBe("🟣 PR merged · web")
+    expect(card.kicker).toBe("🔀 Merged pull request in web")
     expect(card.tone).toBe("purple")
     expect(card.fields).toEqual([
       { name: "Opened by", value: "<@1>", inline: true },
       { name: "Merged by", value: "<@2>", inline: true },
-      { name: "Reviews", value: "✅ <@2> approved · 2 comments", inline: false },
+      { name: "Reviews", value: "✅ Approved by <@2>, with 2 comments", inline: false },
     ])
   })
 
@@ -225,7 +226,7 @@ describe("pipelines", () => {
     const card = draw(story, mentions)
     expect(card.title).toBe("fix: stop the login loop")
     expect(card.body).toBe(
-      "`1ab46d1` by <@1>\n✅ checks / lint · [passed](https://github.com/acme/web/actions/runs/99/job/lint) in 44s",
+      "`1ab46d1` by <@1>\n✅ checks / lint [passed](https://github.com/acme/web/actions/runs/99/job/lint) in 44s",
     )
     expect(card.tone).toBe("green")
   })
@@ -238,7 +239,7 @@ describe("pipelines", () => {
   test("a run without jobs shows its own line, with the retry", () => {
     const { story } = play(["workflow_run", run("failure", { run_attempt: 2 })])
     expect(draw(story, mentions).body).toBe(
-      "`1ab46d1` by <@1>\n❌ checks · [failed](https://github.com/acme/web/actions/runs/99) in 3m 12s, attempt 2",
+      "`1ab46d1` by <@1>\n❌ checks [failed](https://github.com/acme/web/actions/runs/99) in 3m 12s, attempt 2",
     )
   })
 
@@ -250,7 +251,7 @@ describe("pipelines", () => {
     )
     const card = draw(story, mentions)
     expect(card.body?.split("\n").at(-1)).toBe(
-      "✅ 🚀 deploy: production · [deployed](https://web.acme.dev) ([logs](https://github.com/acme/web/actions/runs/100))",
+      "✅ 🚀 production [deployed](https://web.acme.dev), [logs](https://github.com/acme/web/actions/runs/100)",
     )
     expect(card.body?.split("\n")).toHaveLength(3)
   })
@@ -263,7 +264,7 @@ describe("pipelines", () => {
     )
     const card = draw(story, mentions)
     expect(card.tone).toBe("red")
-    expect(card.kicker).toBe("❌ pipeline · web")
+    expect(card.kicker).toBe("🚦 Checks failed in web")
   })
 
   test("a re-run that passes clears the red", () => {

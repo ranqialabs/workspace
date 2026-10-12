@@ -1,6 +1,6 @@
 // Shared messages as Discord embeds and components. Discord reads Markdown
 // natively, so the card's text passes through; only its limits need care.
-import type { Card, Tone } from "../chat/card"
+import type { Card, Tone } from "../ui/card"
 import { z } from "zod"
 
 import type { Button, Chat, ChatMessage, MessageRef, Outgoing, ReadOptions } from "../chat/chat"

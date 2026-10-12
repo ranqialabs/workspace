@@ -1,7 +1,7 @@
 // Shared messages as Block Kit. Cards are written in Markdown, which Slack's
 // `mrkdwn` reads differently, so card text is converted; a long answer from
 // the agent goes in a `markdown` block, which takes Markdown as it is.
-import type { Card } from "../chat/card"
+import type { Card } from "../ui/card"
 import type { Button, Outgoing } from "../chat/chat"
 
 const SECTION_LIMIT = 3000
