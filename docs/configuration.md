@@ -76,8 +76,10 @@ bunx wrangler secret put DISCORD_PUBLIC_KEY
 bunx wrangler secret put DISCORD_GUILD_ID
 ```
 
-The gateway connects within five minutes of the deploy, when the cron first
-runs, and registers the slash commands when Discord says it is ready.
+The gateway connects within five minutes of the first deploy, when the cron
+first runs, and registers the slash commands when Discord says it is ready.
+After later deploys, changed commands reach Discord within a heartbeat, about
+forty seconds.
 
 ## 4. Slack
 
