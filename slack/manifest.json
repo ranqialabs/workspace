@@ -1,12 +1,18 @@
 {
-  "_metadata": { "major_version": 2, "minor_version": 1 },
+  "_metadata": {
+    "major_version": 2,
+    "minor_version": 1
+  },
   "display_information": {
     "name": "bob",
     "description": "GitHub news, and an agent that reads your code and drafts issues.",
     "background_color": "#24292f"
   },
   "features": {
-    "bot_user": { "display_name": "bob", "always_online": true },
+    "bot_user": {
+      "display_name": "bob",
+      "always_online": true
+    },
     "slash_commands": [
       {
         "command": "/bob",
@@ -25,7 +31,8 @@
         "groups:history",
         "chat:write",
         "commands",
-        "users:read"
+        "users:read",
+        "files:write"
       ]
     }
   },

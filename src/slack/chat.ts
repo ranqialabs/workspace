@@ -3,11 +3,12 @@
 // a conversation stays in the thread it started in.
 import { z } from "zod"
 
-import type { Chat, ChatMessage, MessageRef, Outgoing, ReadOptions } from "../chat/chat"
+import type { Attachment, Chat, ChatMessage, MessageRef, Outgoing, ReadOptions } from "../chat/chat"
 import type { SlackApi } from "./api"
 import { messageBody } from "./blocks"
 
 const Posted = z.object({ ts: z.string(), channel: z.string() })
+const UploadUrl = z.object({ upload_url: z.string(), file_id: z.string() })
 
 const Message = z.object({
   ts: z.string(),
@@ -51,7 +52,27 @@ export class SlackChat implements Chat {
       unfurl_links: false,
     })
     const posted = Posted.parse(answer)
+    // Block Kit cannot show a file sent alongside, so the image follows as its own message.
+    if (message.attachment !== undefined) {
+      await this.upload(posted.channel, message.attachment, message.replyTo?.id)
+    }
     return { channel: posted.channel, id: posted.ts }
+  }
+
+  private async upload(channel: string, file: Attachment, thread?: string): Promise<void> {
+    const target = UploadUrl.parse(
+      await this.api.call("files.getUploadURLExternal", {
+        filename: file.name,
+        length: file.data.length,
+        alt_txt: file.alt,
+      }),
+    )
+    await this.api.upload(target.upload_url, file.data)
+    await this.api.call("files.completeUploadExternal", {
+      files: [{ id: target.file_id, title: file.alt }],
+      channel_id: channel,
+      thread_ts: thread,
+    })
   }
 
   async edit(ref: MessageRef, message: Outgoing): Promise<void> {

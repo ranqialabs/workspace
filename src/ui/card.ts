@@ -18,6 +18,8 @@ export interface Card {
   title: string
   url?: string
   body?: string
+  /** The name of an image sent with the message, shown at the card's foot. */
+  image?: string
   fields?: Field[]
   footer?: string
   /** ISO 8601; shown as the platform's relative time. */

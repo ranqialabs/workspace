@@ -15,8 +15,17 @@ export interface Button {
   style?: "primary" | "secondary" | "danger"
 }
 
+/** A file sent with a message; a card shows it by naming it in `image`. */
+export interface Attachment {
+  name: string
+  data: Uint8Array
+  /** What the image shows, for people who can't see it. */
+  alt: string
+}
+
 export interface Outgoing {
   text?: string
+  attachment?: Attachment
   cards?: Card[]
   buttons?: Button[]
   /** Answer in the thread of this message (Slack) or as a reply to it (Discord). */

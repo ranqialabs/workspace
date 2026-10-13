@@ -33,6 +33,7 @@ export interface Embed {
   description?: string
   fields?: { name: string; value: string; inline: boolean }[]
   footer?: { text: string }
+  image?: { url: string }
   timestamp?: string
 }
 
@@ -49,6 +50,8 @@ export function embed(card: Card): Embed {
       inline: field.inline ?? false,
     })),
     footer: card.footer === undefined ? undefined : { text: cut(card.footer, 2048) },
+    // An attached file is addressed by name from inside the same message.
+    image: card.image === undefined ? undefined : { url: `attachment://${card.image}` },
     timestamp: card.at,
   }
 }
@@ -100,8 +103,9 @@ export class DiscordChat implements Chat {
         replyTo: index === 0 ? message.replyTo : undefined,
         cards: index === last ? message.cards : undefined,
         buttons: index === last ? message.buttons : undefined,
+        attachment: index === last ? message.attachment : undefined,
       }
-      const sent = await this.rest.post(`/channels/${channel}/messages`, messageBody(part))
+      const sent = await this.rest.post(`/channels/${channel}/messages`, withFiles(part))
       ref = { channel, id: messageId(sent) }
     }
     return ref
@@ -119,6 +123,18 @@ export class DiscordChat implements Chat {
     const messages = z.array(DiscordMessage).parse(raw)
     return messages.map(toChatMessage).toReversed()
   }
+}
+
+/** The message as JSON, or as multipart with its file when it carries one. */
+export function withFiles(message: Outgoing): unknown {
+  const body = messageBody(message)
+  const file = message.attachment
+  if (file === undefined) return body
+  const form = new FormData()
+  const attachments = [{ id: 0, filename: file.name, description: cut(file.alt, 1024) }]
+  form.set("payload_json", JSON.stringify({ ...body, attachments }))
+  form.set("files[0]", new Blob([file.data], { type: "image/png" }), file.name)
+  return form
 }
 
 /**

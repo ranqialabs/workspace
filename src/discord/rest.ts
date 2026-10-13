@@ -17,6 +17,12 @@ export class DiscordError extends Error {
   }
 }
 
+function encode(body: unknown): BodyInit | undefined {
+  if (body === undefined) return undefined
+  if (body instanceof FormData) return body
+  return JSON.stringify(body)
+}
+
 const RateLimited = z.object({ retry_after: z.number() })
 
 export class DiscordRest {
@@ -27,17 +33,21 @@ export class DiscordRest {
       new Promise((resolve) => setTimeout(resolve, ms)),
   ) {}
 
+  /** `body` goes as JSON, or as multipart when it is a FormData carrying files. */
   async request(method: string, route: string, body?: unknown): Promise<unknown> {
+    const form = body instanceof FormData
     for (let attempt = 1; ; attempt += 1) {
+      const headers: Record<string, string> = {
+        authorization: `Bot ${this.token}`,
+        "user-agent": "DiscordBot (https://github.com/ranqialabs/workspace, 2)",
+      }
+      // FormData sets its own content type, with the boundary.
+      if (!form) headers["content-type"] = "application/json"
       const response = await this.fetcher(
         new Request(API + route, {
           method,
-          headers: {
-            authorization: `Bot ${this.token}`,
-            "content-type": "application/json",
-            "user-agent": "DiscordBot (https://github.com/ranqialabs/workspace, 2)",
-          },
-          body: body === undefined ? undefined : JSON.stringify(body),
+          headers,
+          body: encode(body),
         }),
       )
       if (response.status === 204) return undefined

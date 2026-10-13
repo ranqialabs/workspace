@@ -49,6 +49,12 @@ export class SlackApi {
       return answer
     }
   }
+
+  /** Sends a file's bytes to the URL `files.getUploadURLExternal` handed out. */
+  async upload(url: string, data: Uint8Array): Promise<void> {
+    const response = await this.fetcher(new Request(url, { method: "POST", body: data }))
+    if (!response.ok) throw new SlackError("file upload", `HTTP ${response.status}`)
+  }
 }
 
 function form(body: object): URLSearchParams {
