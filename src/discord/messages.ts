@@ -116,6 +116,10 @@ export class DiscordChat implements Chat {
     await this.rest.patch(`/channels/${ref.channel}/messages/${ref.id}`, body)
   }
 
+  async delete(ref: MessageRef): Promise<void> {
+    await this.rest.delete(`/channels/${ref.channel}/messages/${ref.id}`)
+  }
+
   async read(channel: string, options: ReadOptions): Promise<ChatMessage[]> {
     const query = new URLSearchParams({ limit: String(Math.min(options.limit, 100)) })
     if (options.before !== undefined) query.set("before", options.before)

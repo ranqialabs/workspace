@@ -25,6 +25,11 @@ export class FakeChat implements Chat {
     return Promise.resolve()
   }
 
+  delete(ref: MessageRef): Promise<void> {
+    this.log.push(`delete ${ref.channel}/${ref.id}`)
+    return Promise.resolve()
+  }
+
   read(channel: string, options: ReadOptions): Promise<ChatMessage[]> {
     this.log.push(`read ${channel} before ${options.before ?? "-"}`)
     return Promise.resolve(this.history.slice(-options.limit))

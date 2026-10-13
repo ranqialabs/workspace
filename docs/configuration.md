@@ -47,13 +47,20 @@ cannot get secrets before its first deploy, so the secrets go with
 `wrangler deploy --secrets-file`; on an existing Worker the ones left out stay
 as they are.
 
-`wrangler.jsonc` sets three variables:
+`wrangler.jsonc` sets four variables:
 
-| Variable      | Meaning                                                      |
-| :------------ | :----------------------------------------------------------- |
-| `GITHUB_ORG`  | the org whose repos and people bob follows                   |
-| `AGENT_MODEL` | the OpenAI model behind the agent                            |
-| `TIMEZONE`    | the team's time zone, for working hours and the retro's days |
+| Variable      | Meaning                                                          |
+| :------------ | :--------------------------------------------------------------- |
+| `GITHUB_ORG`  | the org whose repos and people bob follows                       |
+| `BOB_REPO`    | bob's own repo, whose home channel hears about bob's own deploys |
+| `AGENT_MODEL` | the OpenAI model behind the agent                                |
+| `TIMEZONE`    | the team's time zone, for working hours and the retro's days     |
+
+When a new version of bob runs, a card in `BOB_REPO`'s home channel says how
+long it took from the commit to the build, to running, and to the slash
+commands; it deletes itself after five minutes. bob takes the head of the
+default branch as the deployed commit. To make it exact, have Workers Builds
+deploy with `npx wrangler deploy --tag $WORKERS_CI_COMMIT_SHA`.
 
 For local work, put the same names in `.dev.vars` and run `bun run dev`.
 

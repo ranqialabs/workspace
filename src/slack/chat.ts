@@ -83,6 +83,10 @@ export class SlackChat implements Chat {
     })
   }
 
+  async delete(ref: MessageRef): Promise<void> {
+    await this.api.call("chat.delete", { channel: ref.channel, ts: ref.id })
+  }
+
   async read(channel: string, options: ReadOptions): Promise<ChatMessage[]> {
     const limit = Math.min(options.limit, 100)
     const answer =

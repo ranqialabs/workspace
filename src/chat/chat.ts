@@ -53,6 +53,7 @@ export interface Chat {
   readonly platform: Platform
   post(channel: string, message: Outgoing): Promise<MessageRef>
   edit(ref: MessageRef, message: Outgoing): Promise<void>
+  delete(ref: MessageRef): Promise<void>
   /** Messages before `before`, oldest first. */
   read(channel: string, options: ReadOptions): Promise<ChatMessage[]>
 }

@@ -19,6 +19,7 @@ import { FONTS } from "./ui/fonts"
 import { png } from "./ui/render"
 import { RETRO_IMAGE, retroAlt, retroCard } from "./ui/retro"
 import { retroImage, WIDTH } from "./ui/retro-image"
+import type { Rollout } from "./ui/rollout"
 import { code } from "./ui/text"
 import { REPLY } from "./ui/replies"
 import { type Command, type Result, run } from "./commands"
@@ -31,6 +32,7 @@ import type { Delivery } from "./github/webhook"
 import { Newsroom } from "./news/newsroom"
 import { Releases } from "./news/releases"
 import { Reminders } from "./news/reminders"
+import { type DeployedVersion, Rollouts } from "./news/rollouts"
 import { changeFor, type Commit, commitOf } from "./news/stories"
 import { Config, type Person, type Platform } from "./store/config"
 import { migrate } from "./store/migrations"
@@ -45,6 +47,7 @@ export class Workspace extends DurableObject<Env> {
   private readonly newsroom: Newsroom
   private readonly reminders: Reminders
   private readonly releases: Releases
+  private readonly rollouts: Rollouts
   private client: Promise<GitHub> | undefined
 
   constructor(ctx: DurableObjectState, env: Env) {
@@ -59,6 +62,7 @@ export class Workspace extends DurableObject<Env> {
       github: () => this.githubClient(),
       model: () => modelFor(env),
     })
+    this.rollouts = new Rollouts(ctx.storage, this.config, chats(env))
     this.reminders = new Reminders(
       ctx.storage,
       this.newsroom,
@@ -70,9 +74,65 @@ export class Workspace extends DurableObject<Env> {
 
   /** The cron's tick: whatever is due. */
   async tick(): Promise<void> {
-    const results = await Promise.allSettled([this.reminders.run(), this.retroIfDue()])
+    const results = await Promise.allSettled([
+      this.reminders.run(),
+      this.retroIfDue(),
+      this.rollouts.sweep(Date.now()),
+    ])
     const failed = results.find((result) => result.status === "rejected")
     if (failed !== undefined) throw failed.reason
+  }
+
+  /**
+   * A new version of bob is running. `tag` is the commit it was built from when
+   * the deploy tagged it; otherwise it is taken to be the head of the default
+   * branch, which is what Workers Builds deploys.
+   */
+  async rolledOut(version: DeployedVersion): Promise<void> {
+    const repo = this.env.BOB_REPO
+    const commit = await this.deployedCommit(repo, version.tag).catch((error: unknown) => {
+      console.error("finding the deployed commit failed", error)
+      return undefined
+    })
+    const now = Date.now()
+    await this.rollouts.announce(
+      repo,
+      {
+        commit,
+        uploadedAt: version.uploadedAt,
+        liveAt: version.liveAt,
+        commandsAt: version.commandsAt,
+      },
+      now,
+    )
+    await this.scheduleSweep()
+  }
+
+  override async alarm(): Promise<void> {
+    await this.rollouts.sweep(Date.now())
+    await this.scheduleSweep()
+  }
+
+  private async scheduleSweep(): Promise<void> {
+    const at = this.rollouts.nextSweep()
+    if (at !== undefined) await this.ctx.storage.setAlarm(at)
+  }
+
+  private async deployedCommit(repo: string, tag: string): Promise<Rollout["commit"]> {
+    const [owner = "", name = ""] = repo.split("/")
+    const github = await this.githubClient()
+    const ref = /^[0-9a-f]{7,40}$/.test(tag)
+      ? tag
+      : (await github.rest.repos.get({ owner, repo: name })).data.default_branch
+    const { data } = await github.rest.repos.getCommit({ owner, repo: name, ref })
+    const at = data.commit.committer?.date ?? data.commit.author?.date
+    if (at === undefined) return undefined
+    return {
+      sha: data.sha,
+      subject: data.commit.message.split("\n")[0] ?? "",
+      url: data.html_url,
+      at: Date.parse(at),
+    }
   }
 
   /** A verified webhook delivery. GitHub redelivers on timeouts, so each id counts once. */

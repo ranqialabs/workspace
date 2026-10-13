@@ -7,6 +7,8 @@
   "workers_dev": true,
   "preview_urls": false,
   "observability": { "enabled": true },
+  // Which version is running, so bob can say when a deploy of its own is live.
+  "version_metadata": { "binding": "VERSION" },
   "durable_objects": {
     "bindings": [
       // One per org: configuration, news cards and access.
@@ -26,6 +28,8 @@
   "vars": {
     // The GitHub org whose repos, people and checks bob follows.
     "GITHUB_ORG": "ranqialabs",
+    // bob's own repo: its deploys are announced, for a few minutes, in its home channel.
+    "BOB_REPO": "ranqialabs/workspace",
     // The OpenAI model behind the agent.
     "AGENT_MODEL": "gpt-5.6-terra",
     // The team's time zone: reminders go out on its working days and hours,

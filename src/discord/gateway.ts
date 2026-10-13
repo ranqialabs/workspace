@@ -26,6 +26,8 @@ const SCHEMA = [
 export class Gateway extends DurableObject<Env> {
   private readonly session: GatewaySession | undefined
   private readonly rest: DiscordRest | undefined
+  /** A deploy restarts the instance, so this is when its code started running. */
+  private readonly startedAt = Date.now()
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env)
@@ -90,6 +92,7 @@ export class Gateway extends DurableObject<Env> {
   async start(): Promise<void> {
     if (this.session?.connected === false) await this.session.tick()
     await this.registerCommands(false)
+    await this.announceVersion()
   }
 
   /** Overwrites the slash commands when they changed since the last time, or when `always`. */
@@ -109,7 +112,31 @@ export class Gateway extends DurableObject<Env> {
         ? `/applications/${application}/commands`
         : `/applications/${application}/guilds/${guild}/commands`
     await rest.put(route, COMMANDS)
+    if (this.ctx.storage.kv.get<string>("commands") !== wanted) {
+      this.ctx.storage.kv.put("commands_at", Date.now())
+    }
     this.ctx.storage.kv.put("commands", wanted)
+  }
+
+  /**
+   * Tells the workspace once per version that it is running, after its slash
+   * commands are in. The first run of new code here is the heartbeat after the
+   * deploy, so this is about when people can use it.
+   */
+  private async announceVersion(): Promise<void> {
+    const version = this.env.VERSION
+    const kv = this.ctx.storage.kv
+    if (version.id === "" || kv.get<string>("version") === version.id) return
+    // Marked first: the cron and the heartbeat may both get here.
+    kv.put("version", version.id)
+    const uploadedAt = Date.parse(version.timestamp)
+    const commandsAt = kv.get<number>("commands_at")
+    await this.env.WORKSPACE.getByName(this.env.GITHUB_ORG).rolledOut({
+      tag: version.tag,
+      uploadedAt,
+      liveAt: this.startedAt,
+      commandsAt: commandsAt !== undefined && commandsAt >= uploadedAt ? commandsAt : undefined,
+    })
   }
 
   /**
@@ -119,9 +146,12 @@ export class Gateway extends DurableObject<Env> {
    */
   override async alarm(): Promise<void> {
     await this.session?.tick()
-    // A failure here must not fail the heartbeat; the cron tries again.
+    // Failures here must not fail the heartbeat; the cron tries again.
     await this.registerCommands(false).catch((error: unknown) => {
       console.error("registering the slash commands failed", error)
+    })
+    await this.announceVersion().catch((error: unknown) => {
+      console.error("announcing the version failed", error)
     })
   }
 }
