@@ -84,9 +84,8 @@ export class Gateway extends DurableObject<Env> {
   }
 
   /**
-   * Connects if nothing is connected; the cron calls it so a deploy reconnects.
-   * A deploy usually resumes the old session, which brings no READY, so this is
-   * also where a changed set of slash commands reaches Discord.
+   * Connects if nothing is connected; the cron calls it so a deploy reconnects
+   * even when no alarm is set.
    */
   async start(): Promise<void> {
     if (this.session?.connected === false) await this.session.tick()
@@ -113,8 +112,17 @@ export class Gateway extends DurableObject<Env> {
     this.ctx.storage.kv.put("commands", wanted)
   }
 
+  /**
+   * The heartbeat. A deploy keeps the alarm, so this is also the first thing
+   * new code runs here: checking the slash commands now brings a changed one
+   * to Discord within a heartbeat instead of at the next cron.
+   */
   override async alarm(): Promise<void> {
     await this.session?.tick()
+    // A failure here must not fail the heartbeat; the cron tries again.
+    await this.registerCommands(false).catch((error: unknown) => {
+      console.error("registering the slash commands failed", error)
+    })
   }
 }
 
