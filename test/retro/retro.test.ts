@@ -1,11 +1,12 @@
 import { describe, expect, test } from "bun:test"
 
 import type { PipelineStory } from "../../src/news/stories"
-import { collect, peopleStats, productionDeploys, type Retro } from "../../src/retro/collect"
+import { collect, productionDeploys } from "../../src/retro/collect"
 import { periodAt } from "../../src/retro/period"
-import { summarize } from "../../src/retro/summary"
+import { changelog, highlights, peopleStats, totals } from "../../src/retro/stats"
 import { retroCard } from "../../src/ui/retro"
 import { type Calls, fakeGitHub } from "../agent/github"
+import { SAMPLE } from "./sample"
 
 const TZ = "America/Sao_Paulo"
 // Wednesday 2026-10-14, 18:30 in São Paulo.
@@ -54,7 +55,7 @@ function deployStory(environment: string, ok: boolean, at: string): PipelineStor
 }
 
 describe("collecting", () => {
-  test("merged, closed, opened and reviewed come from GitHub's search", async () => {
+  test("search finds the work, then each merged pull request gets its numbers", async () => {
     const calls: Calls = []
     const github = fakeGitHub(
       {
@@ -67,6 +68,8 @@ describe("collecting", () => {
                 item("api", 8, "feat: retries", "beto"),
               ],
             }
+          if (q.includes("is:open"))
+            return { total_count: 1, items: [item("web", 40, "wip", "ana")] }
           if (q.includes("reason:completed"))
             return { total_count: 1, items: [item("web", 12, "Login loops", "cris", ["ana"])] }
           if (q.includes("reviewed-by:beto")) return { total_count: 3, items: [] }
@@ -74,19 +77,53 @@ describe("collecting", () => {
           if (q.includes("is:pr created")) return { total_count: 4, items: [] }
           return { total_count: 5, items: [] }
         },
+        "pulls.get": ({ pull_number }: { pull_number: number }) => ({
+          commits: pull_number === 31 ? 3 : 1,
+          additions: 100,
+          deletions: 20,
+          changed_files: 4,
+          comments: 2,
+          review_comments: 1,
+          created_at: "2026-10-14T10:00:00Z",
+          merged_at: "2026-10-14T12:00:00Z",
+          merge_commit_sha: `m${pull_number}`,
+        }),
+        "pulls.listReviews": [{ id: 1 }, { id: 2 }],
+        "repos.listDeployments": ({ repo }: { repo: string }) =>
+          repo === "web" ? [{ id: 9, environment: "production", sha: "prod-head" }] : [],
+        "repos.listDeploymentStatuses": [{ state: "success" }],
+        "repos.compareCommits": { status: "ahead" },
+        "actions.listWorkflowRunsForRepo": {
+          workflow_runs: [
+            {
+              status: "completed",
+              conclusion: "failure",
+              run_started_at: "2026-10-14T10:00:00Z",
+              updated_at: "2026-10-14T10:06:00Z",
+            },
+          ],
+        },
       },
       calls,
     )
     const period = periodAt("day", WEDNESDAY, TZ)
-    const retro = await collect(github, "acme", ["ana", "beto"], period, [])
-    expect(retro.merged.map((pr) => `${pr.repo}#${pr.number}`)).toEqual(["web#31", "api#8"])
+    const retro = await collect(github, "acme", ["ana", "beto"], ["acme/web"], period, [])
+    expect(calls[0]?.params.q).toBe(`org:acme is:pr is:merged merged:${period.range}`)
+    expect(retro.merged.map((pr) => `${pr.repo}#${pr.number} ${pr.shipped}`)).toEqual([
+      "acme/web#31 production",
+      "acme/api#8 no-deploys",
+    ])
+    expect(retro.merged[0]).toMatchObject({
+      commits: 3,
+      comments: 3,
+      reviews: 2,
+      minutesToMerge: 120,
+    })
+    expect(retro.open.map((pr) => pr.number)).toEqual([40])
     expect(retro.opened).toEqual({ pulls: 4, issues: 5 })
     expect(retro.reviewed).toEqual({ beto: 3 })
-    expect(calls[0]?.params.q).toBe(`org:acme is:pr is:merged merged:${period.range}`)
-    expect(peopleStats(retro)).toEqual([
-      { login: "beto", merged: 1, reviewed: 3, closed: 0 },
-      { login: "ana", merged: 1, reviewed: 0, closed: 1 },
-    ])
+    // CI is read for the mapped repo and for each repo that merged something.
+    expect(retro.ci).toEqual({ runs: 2, failed: 2, minutes: 12 })
   })
 
   test("only production deploys that succeeded in the period count", () => {
@@ -104,45 +141,60 @@ describe("collecting", () => {
   })
 })
 
-const retro: Retro = {
-  period: periodAt("day", WEDNESDAY, TZ),
-  merged: [
-    { repo: "web", number: 31, title: "fix: login loops", url: "", author: "ana", assignees: [] },
-  ],
-  closed: [],
-  opened: { pulls: 1, issues: 0 },
-  reviewed: { beto: 2 },
-  deploys: [{ repo: "web", environment: "production" }],
-}
-
-describe("the card", () => {
-  test("without a model the summary lists the titles per project", async () => {
-    expect(await summarize(undefined, retro)).toBe("**web**\n- #31: fix: login loops")
+describe("stats", () => {
+  test("totals add the merged pull requests up", () => {
+    expect(totals(SAMPLE)).toMatchObject({
+      merged: 4,
+      commits: 34,
+      additions: 8634,
+      inProduction: 2,
+      waiting: 1,
+      medianMinutesToMerge: 175,
+    })
   })
 
-  test("it says what shipped, the counts, and what each person did", () => {
-    const card = retroCard(retro, "**web**\n- Login no longer loops (#31)", (login) => `@${login}`)
-    expect(card.kicker).toBe("📊 Daily retro")
-    expect(card.title).toBe("What shipped on Wednesday, October 14")
-    expect(card.fields).toEqual([
-      { name: "Merged", value: "1 pull request", inline: true },
-      { name: "Closed", value: "0 issues", inline: true },
-      { name: "Opened", value: "1 pull request, 0 issues", inline: true },
-      { name: "Deploys", value: "1 to production: 1 in web", inline: false },
-      { name: "People", value: "@beto 2 reviewed\n@ana 1 merged", inline: false },
+  test("people are ordered by what they did", () => {
+    expect(peopleStats(SAMPLE).map((person) => person.login)).toEqual([
+      "felipeadeildo",
+      "itsmeale",
+      "lverissimo9",
     ])
   })
 
+  test("the highlights are the biggest, the most talked about and the fastest", () => {
+    expect(highlights(SAMPLE).map(({ kind, pull }) => `${kind} #${pull.number}`)).toEqual([
+      "biggest #32",
+      "talked #118",
+      "fastest #87",
+    ])
+  })
+
+  test("the changelog groups by conventional commit, a ! being breaking", () => {
+    const groups = changelog(SAMPLE)
+    expect([...groups.keys()]).toEqual(["breaking", "features", "fixes", "maintenance"])
+    expect(groups.get("fixes")?.[0]?.subject).toBe("keep the session after a password reset")
+  })
+})
+
+describe("the card", () => {
+  test("it is a linked changelog, marked by whether each change reached production", () => {
+    const card = retroCard(SAMPLE, (login) => `@${login}`, true)
+    expect(card.kicker).toBe("📊 Daily retro")
+    expect(card.image).toBe("retro.png")
+    expect(card.body).toContain(
+      "**💥 Breaking changes**\n- **workspace** rewrite bob on Cloudflare Workers with Discord and Slack [#32](https://github.com/ranqialabs/workspace/pull/32) 🚀",
+    )
+    expect(card.body).toContain(
+      "- **ada-api** keep the session after a password reset [#118](https://github.com/ranqialabs/ada-api/pull/118) ⏳",
+    )
+    expect(card.body).toContain("**🔀 Still open, 1 pull request**")
+    expect(card.body).toContain("by @milenaveiga18 (draft)")
+  })
+
   test("a quiet period says so", () => {
-    const quiet = {
-      ...retro,
-      merged: [],
-      deploys: [],
-      reviewed: {},
-      period: periodAt("week", WEDNESDAY, TZ),
-    }
-    const card = retroCard(quiet, undefined, (login) => login)
-    expect(card.title).toBe("What shipped the week of October 12")
-    expect(card.body).toBe("A quiet week. Nothing was merged or closed.")
+    const quiet = { ...SAMPLE, merged: [], open: [], period: periodAt("week", WEDNESDAY, TZ) }
+    const card = retroCard(quiet, (login) => login, false)
+    expect(card.body).toBe("A quiet week. Nothing was merged.")
+    expect(card.image).toBeUndefined()
   })
 })

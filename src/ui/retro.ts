@@ -1,10 +1,37 @@
-// The retro card: what shipped in a day or a week, across projects, and what
-// each person did. It goes to a channel the whole org reads, so the summary is
-// plain English and the numbers are counts anyone can check on GitHub.
-import { peopleStats, type Retro } from "../retro/collect"
-import type { Card, Field } from "./card"
-import { KIND } from "./glyphs"
-import { count, listed } from "./text"
+// The retro's text: what shipped as a changelog, grouped the way release-please
+// groups it, with every pull request linked and marked by whether it reached
+// production, then what is still open. The numbers are in the image below it.
+import type { Item, Retro } from "../retro/collect"
+import { type ChangeGroup, changelog, totals } from "../retro/stats"
+import type { Card } from "./card"
+import { KIND, MARK } from "./glyphs"
+import { count, cut } from "./text"
+
+export const RETRO_IMAGE = "retro.png"
+
+const GROUP_TITLE: Record<ChangeGroup, string> = {
+  breaking: "💥 Breaking changes",
+  features: "✨ Features",
+  fixes: "🐛 Fixes",
+  performance: "⚡ Performance",
+  maintenance: "🧹 Maintenance",
+}
+// Features and fixes are the news; housekeeping gets fewer lines.
+const GROUP_LIMIT: Record<ChangeGroup, number> = {
+  breaking: 8,
+  features: 8,
+  fixes: 8,
+  performance: 5,
+  maintenance: 4,
+}
+const OPEN_LIMIT = 6
+const DESCRIPTION_LIMIT = 4000
+
+const SHIPPED_MARK = {
+  production: ` ${KIND.deploy}`,
+  waiting: ` ${MARK.waiting}`,
+  "no-deploys": "",
+}
 
 const DAY = new Intl.DateTimeFormat("en-US", {
   timeZone: "UTC",
@@ -18,52 +45,86 @@ const MONTH_DAY = new Intl.DateTimeFormat("en-US", {
   day: "numeric",
 })
 
-/** `label` names a person by GitHub login: a mention that does not notify, or a name. */
-export function retroCard(
-  retro: Retro,
-  summary: string | undefined,
-  label: (login: string) => string,
-): Card {
-  const { period } = retro
-  const start = new Date(`${period.first}T00:00:00Z`)
-  const title =
-    period.kind === "day"
-      ? `What shipped on ${DAY.format(start)}`
-      : `What shipped the week of ${MONTH_DAY.format(start)}`
-  const fields: Field[] = [
-    { name: "Merged", value: count(retro.merged.length, "pull request"), inline: true },
-    { name: "Closed", value: count(retro.closed.length, "issue"), inline: true },
-    {
-      name: "Opened",
-      value: `${count(retro.opened.pulls, "pull request")}, ${count(retro.opened.issues, "issue")}`,
-      inline: true,
-    },
-  ]
-  if (retro.deploys.length > 0) {
-    fields.push({ name: "Deploys", value: deployLine(retro), inline: false })
+/** `Monday, October 12`, or `Week of October 12`. */
+export function periodName(retro: Retro): string {
+  const start = new Date(`${retro.period.first}T00:00:00Z`)
+  return retro.period.kind === "day" ? DAY.format(start) : `Week of ${MONTH_DAY.format(start)}`
+}
+
+function title(retro: Retro): string {
+  const start = new Date(`${retro.period.first}T00:00:00Z`)
+  return retro.period.kind === "day"
+    ? `What shipped on ${DAY.format(start)}`
+    : `What shipped the week of ${MONTH_DAY.format(start)}`
+}
+
+/** GitHub's own search for the same thing, so a count can be checked. */
+export function searchUrl(query: string): string {
+  return `https://github.com/search?q=${encodeURIComponent(query)}&type=pullrequests`
+}
+
+/** `label` names a person by GitHub login, as a mention that does not notify or as a name. */
+export function retroCard(retro: Retro, label: (login: string) => string, image: boolean): Card {
+  const sections: string[] = []
+  for (const [group, changes] of changelog(retro)) {
+    const shown = changes
+      .slice(0, GROUP_LIMIT[group])
+      .map(
+        ({ pull, subject }) =>
+          `- **${short(pull.repo)}** ${subject} [#${pull.number}](${pull.url})${SHIPPED_MARK[pull.shipped]}`,
+      )
+    const rest = changes.length - shown.length
+    if (rest > 0) shown.push(`- and ${rest} more`)
+    sections.push(`**${GROUP_TITLE[group]}**\n${shown.join("\n")}`)
   }
-  const people = peopleStats(retro).map((person) => {
-    const did = [
-      person.merged > 0 ? `${person.merged} merged` : undefined,
-      person.reviewed > 0 ? `${person.reviewed} reviewed` : undefined,
-      person.closed > 0 ? `${person.closed} closed` : undefined,
-    ].filter((part) => part !== undefined)
-    return `${label(person.login)} ${did.join(", ")}`
-  })
-  if (people.length > 0) fields.push({ name: "People", value: people.join("\n"), inline: false })
+  if (sections.length === 0) sections.push(`A quiet ${retro.period.kind}. Nothing was merged.`)
+  if (retro.open.length > 0) sections.push(openSection(retro, label))
+
+  const marked = retro.merged.some((pull) => pull.shipped !== "no-deploys")
+  const scope = `org:${retro.org}`
   return {
     tone: "brand",
-    kicker: `${KIND.retro} ${period.kind === "day" ? "Daily" : "Weekly"} retro`,
-    title,
-    body: summary ?? `A quiet ${period.kind}. Nothing was merged or closed.`,
-    fields,
+    kicker: `${KIND.retro} ${retro.period.kind === "day" ? "Daily" : "Weekly"} retro`,
+    title: title(retro),
+    url: searchUrl(`${scope} is:pr is:merged merged:${retro.period.range}`),
+    body: cutLines(sections.join("\n\n"), DESCRIPTION_LIMIT),
+    image: image ? RETRO_IMAGE : undefined,
+    footer: marked
+      ? `${KIND.deploy} in production   ${MARK.waiting} waiting for a deploy`
+      : undefined,
   }
 }
 
-/** `3 to production: 2 in web and 1 in ada-api`. */
-function deployLine(retro: Retro): string {
-  const perRepo = new Map<string, number>()
-  for (const deploy of retro.deploys) perRepo.set(deploy.repo, (perRepo.get(deploy.repo) ?? 0) + 1)
-  const parts = [...perRepo].map(([repo, n]) => `${n} in ${repo}`)
-  return `${retro.deploys.length} to production: ${listed(parts)}`
+/** What the image says, for whoever can't see it. */
+export function retroAlt(retro: Retro): string {
+  const sums = totals(retro)
+  return [
+    `${title(retro)}, ${retro.period.kind === "day" ? "daily" : "weekly"} retro of ${retro.org}.`,
+    `${count(sums.merged, "pull request")} merged, ${count(sums.commits, "commit")},`,
+    `+${sums.additions} and -${sums.deletions} lines, ${Math.round(retro.ci.minutes)} minutes of CI.`,
+  ].join(" ")
+}
+
+function openSection(retro: Retro, label: (login: string) => string): string {
+  const lines = retro.open.slice(0, OPEN_LIMIT).map((item: Item) => {
+    const draft = item.draft ? " (draft)" : ""
+    return `- **${short(item.repo)}** ${item.title} [#${item.number}](${item.url}) by ${label(item.author)}${draft}`
+  })
+  const rest = retro.open.length - lines.length
+  if (rest > 0) {
+    const query = `org:${retro.org} is:pr is:open created:${retro.period.range}`
+    lines.push(`- [and ${rest} more](${searchUrl(query)})`)
+  }
+  return `**🔀 Still open, ${count(retro.open.length, "pull request")}**\n${lines.join("\n")}`
+}
+
+function short(repo: string): string {
+  return repo.split("/").at(-1) ?? repo
+}
+
+/** Cuts at a line break, so a link is never cut in half. */
+function cutLines(text: string, limit: number): string {
+  if (text.length <= limit) return text
+  const at = text.lastIndexOf("\n", limit - 2)
+  return at > 0 ? `${text.slice(0, at)}\n…` : cut(text, limit)
 }

@@ -9,11 +9,15 @@ import type { Turn } from "./agent/session"
 import { modelFor } from "./agent/model"
 import { mentionsFor } from "./chat/mentions"
 import { chats } from "./chat/platforms"
-import { collect, productionDeploys } from "./retro/collect"
+import { collect, productionDeploys, type Retro } from "./retro/collect"
 import { type PeriodKind, periodAt } from "./retro/period"
-import { summarize } from "./retro/summary"
+import { faces } from "./retro/faces"
+import { peopleStats } from "./retro/stats"
 import { localTime } from "./time"
-import { retroCard } from "./ui/retro"
+import { FONTS } from "./ui/fonts"
+import { png } from "./ui/render"
+import { RETRO_IMAGE, retroAlt, retroCard } from "./ui/retro"
+import { retroImage, WIDTH } from "./ui/retro-image"
 import { code } from "./ui/text"
 import { REPLY } from "./ui/replies"
 import { type Command, type Result, run } from "./commands"
@@ -117,22 +121,39 @@ export class Workspace extends DurableObject<Env> {
     skipQuiet: boolean,
   ): Promise<void> {
     const period = periodAt(kind, Date.now(), this.env.TIMEZONE)
-    const logins = this.config.people().flatMap((person) => person.github ?? [])
+    const people = this.config.people()
+    const logins = people.flatMap((person) => person.github ?? [])
+    const repos = [...new Set(this.config.channels().map((mapping) => mapping.repo))]
     const retro = await collect(
       await this.githubClient(),
       this.env.GITHUB_ORG,
       logins,
+      repos,
       period,
       productionDeploys(this.newsroom.stories("pipeline"), period),
     )
     const quiet = retro.merged.length + retro.closed.length + retro.deploys.length === 0
     if (skipQuiet && quiet) return
-    const summary = await summarize(modelFor(this.env), retro)
+    const image = await this.retroPicture(retro, people)
+    const attachment =
+      image === undefined ? undefined : { name: RETRO_IMAGE, data: image, alt: retroAlt(retro) }
     for (const target of targets) {
       const chat = chats(this.env).find((candidate) => candidate.platform === target.platform)
       if (chat === undefined) continue
-      const card = retroCard(retro, summary, this.personLabel(target.platform))
-      await chat.post(target.channel, { cards: [card] })
+      const card = retroCard(retro, this.personLabel(target.platform), attachment !== undefined)
+      await chat.post(target.channel, { cards: [card], attachment })
+    }
+  }
+
+  /** The numbers as a picture; the text card stands alone if drawing fails. */
+  private async retroPicture(retro: Retro, people: Person[]): Promise<Uint8Array | undefined> {
+    try {
+      const shown = peopleStats(retro).map((person) => person.login)
+      const tree = retroImage(retro, await faces(shown, people))
+      return await png(tree, WIDTH, FONTS)
+    } catch (error) {
+      console.error("retro image failed", error)
+      return undefined
     }
   }
 

@@ -10,3 +10,9 @@ interface Env {
   OPENAI_API_KEY?: string
   LINEAR_API_KEY?: string
 }
+
+// Fonts are bundled as data (see `rules` in wrangler.jsonc) for the images bob draws.
+declare module "*.woff" {
+  const data: ArrayBuffer
+  export default data
+}
