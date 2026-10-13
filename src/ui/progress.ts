@@ -4,7 +4,7 @@
 import type { Step, Usage } from "../agent/progress"
 import type { Card, Tone } from "./card"
 import { KIND, MARK } from "./glyphs"
-import { code, compact, cut, oneLine } from "./text"
+import { code, compact, cut, oneLine, repoName } from "./text"
 
 export type RunStatus =
   | { kind: "thinking" }
@@ -85,7 +85,7 @@ export function stepLine(step: Step): string {
   const parts = [step.state === "running" ? running : done]
   const subject = subjectOf(args)
   if (subject !== undefined) parts.push(subject)
-  if (typeof args.repo === "string") parts.push(`in ${args.repo.split("/").at(-1)}`)
+  if (typeof args.repo === "string") parts.push(`in ${repoName(args.repo)}`)
   const mark = { running: MARK.waiting, done: MARK.done, failed: MARK.warning }[step.state]
   const error = step.error === undefined ? "" : `: ${oneLine(step.error.split("\n")[0] ?? "", 60)}`
   return cut(`${mark} ${oneLine(parts.join(" "), MAX_LINE)}${error}`, MAX_LINE + 64)

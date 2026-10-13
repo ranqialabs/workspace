@@ -13,4 +13,5 @@ export const PALETTE = {
   green: "#4ade80",
   red: "#f87171",
   glow: "rgba(124, 58, 237, 0.22)",
+  glowPink: "rgba(236, 72, 153, 0.10)",
 } as const

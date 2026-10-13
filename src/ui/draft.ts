@@ -3,7 +3,7 @@
 import type { IssueDraft } from "../agent/draft"
 import type { Card, Field, Tone } from "./card"
 import { KIND } from "./glyphs"
-import { code, cut } from "./text"
+import { code, cut, repoName } from "./text"
 
 export type DraftState =
   | { kind: "proposed"; requester: string }
@@ -15,7 +15,7 @@ const PREVIEW = 3000
 const CONFIDENCE = { high: "High", medium: "Medium", low: "Low" }
 
 export function draftCard(draft: IssueDraft, state: DraftState): Card {
-  const repo = draft.repo.split("/").at(-1) ?? draft.repo
+  const repo = repoName(draft.repo)
   if (state.kind === "discarded" || state.kind === "superseded") {
     const [word, footer] =
       state.kind === "discarded"

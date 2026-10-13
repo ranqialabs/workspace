@@ -5,7 +5,7 @@ import type { Item, Retro } from "../retro/collect"
 import { type ChangeGroup, changelog, totals } from "../retro/stats"
 import type { Card } from "./card"
 import { KIND, MARK } from "./glyphs"
-import { count, cut } from "./text"
+import { count, cut, repoName } from "./text"
 
 export const RETRO_IMAGE = "retro.png"
 
@@ -71,7 +71,7 @@ export function retroCard(retro: Retro, label: (login: string) => string, image:
       .slice(0, GROUP_LIMIT[group])
       .map(
         ({ pull, subject }) =>
-          `- **${short(pull.repo)}** ${subject} [#${pull.number}](${pull.url})${SHIPPED_MARK[pull.shipped]}`,
+          `- **${repoName(pull.repo)}** ${subject} [#${pull.number}](${pull.url})${SHIPPED_MARK[pull.shipped]}`,
       )
     const rest = changes.length - shown.length
     if (rest > 0) shown.push(`- and ${rest} more`)
@@ -108,7 +108,7 @@ export function retroAlt(retro: Retro): string {
 function openSection(retro: Retro, label: (login: string) => string): string {
   const lines = retro.open.slice(0, OPEN_LIMIT).map((item: Item) => {
     const draft = item.draft ? " (draft)" : ""
-    return `- **${short(item.repo)}** ${item.title} [#${item.number}](${item.url}) by ${label(item.author)}${draft}`
+    return `- **${repoName(item.repo)}** ${item.title} [#${item.number}](${item.url}) by ${label(item.author)}${draft}`
   })
   const rest = retro.open.length - lines.length
   if (rest > 0) {
@@ -116,10 +116,6 @@ function openSection(retro: Retro, label: (login: string) => string): string {
     lines.push(`- [and ${rest} more](${searchUrl(query)})`)
   }
   return `**🔀 Still open, ${count(retro.open.length, "pull request")}**\n${lines.join("\n")}`
-}
-
-function short(repo: string): string {
-  return repo.split("/").at(-1) ?? repo
 }
 
 /** Cuts at a line break, so a link is never cut in half. */

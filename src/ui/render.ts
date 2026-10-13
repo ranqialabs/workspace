@@ -3,7 +3,7 @@
 import { Resvg } from "@cf-wasm/resvg"
 import { satori } from "@cf-wasm/satori"
 
-import type { Node } from "./retro-image"
+import type { Node } from "./tree"
 
 export interface Font {
   data: ArrayBuffer

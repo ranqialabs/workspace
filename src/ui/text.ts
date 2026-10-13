@@ -29,6 +29,23 @@ export function listed(items: string[]): string {
   return `${items.slice(0, -1).join(", ")} and ${items.at(-1)}`
 }
 
+/** `web` for `ranqialabs/web`: the org is the same everywhere bob looks. */
+export function repoName(fullName: string): string {
+  return fullName.split("/").at(-1) ?? fullName
+}
+
+/** `+1.2k −340`, lines added and removed. */
+export function lineDelta(additions: number, deletions: number): string {
+  return `+${compact(additions)} −${compact(deletions)}`
+}
+
+/** `14 min`, `2.4 h`, `3 days`. */
+export function duration(minutes: number): string {
+  if (minutes < 60) return `${Math.max(1, Math.round(minutes))} min`
+  if (minutes < 48 * 60) return `${(minutes / 60).toFixed(1).replace(/\.0$/, "")} h`
+  return `${Math.round(minutes / 1440)} days`
+}
+
 /** `code` as inline code. */
 export function code(text: string): string {
   return `\`${text}\``

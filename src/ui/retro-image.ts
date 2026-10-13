@@ -1,11 +1,20 @@
 // The retro as a picture: the numbers big, each person's share as a bar, and
 // a few highlights. It is a tree satori lays out; nothing here draws pixels,
 // so a test can read the tree. No emoji: satori would need a font for them.
-import type { Retro } from "../retro/collect"
-import { activity, highlights, type HighlightKind, peopleStats, totals } from "../retro/stats"
+import type { Merged, Retro } from "../retro/collect"
+import {
+  activity,
+  highlights,
+  type HighlightKind,
+  peopleStats,
+  type PersonStats,
+  type Totals,
+  totals,
+} from "../retro/stats"
 import { PALETTE } from "./palette"
 import { periodName } from "./retro"
-import { compact, count } from "./text"
+import { compact, count, duration, lineDelta, repoName } from "./text"
+import { h, type Node } from "./tree"
 
 export const WIDTH = 1200
 
@@ -14,23 +23,6 @@ export interface Face {
   name: string
   /** A data URL; without one the person gets their initial. */
   avatar?: string
-}
-
-export interface Node {
-  type: string
-  props: {
-    style?: Record<string, string | number>
-    children?: (Node | string)[] | string
-    src?: string
-  }
-}
-
-function h(
-  type: string,
-  style: Record<string, string | number>,
-  ...children: (Node | string)[]
-): Node {
-  return { type, props: { style: { display: "flex", ...style }, children } }
 }
 
 const NUMBER = new Intl.NumberFormat("en-US")
@@ -89,7 +81,7 @@ export function retroImage(retro: Retro, faces: Map<string, Face>): Node {
       width: WIDTH,
       padding: 64,
       backgroundColor: PALETTE.background,
-      backgroundImage: `radial-gradient(circle at 100% 0%, ${PALETTE.glow}, transparent 45%), radial-gradient(circle at 0% 100%, rgba(236, 72, 153, 0.10), transparent 40%)`,
+      backgroundImage: `radial-gradient(circle at 100% 0%, ${PALETTE.glow}, transparent 45%), radial-gradient(circle at 0% 100%, ${PALETTE.glowPink}, transparent 40%)`,
       color: PALETTE.text,
       fontFamily: "Space Grotesk",
     },
@@ -115,8 +107,8 @@ function header(retro: Retro): Node {
   )
 }
 
-function bigNumbers(retro: Retro, sums: ReturnType<typeof totals>): Node {
-  const ci = retro.ci.runs === 0 ? "0 min" : `${NUMBER.format(Math.round(retro.ci.minutes))} min`
+function bigNumbers(retro: Retro, sums: Totals): Node {
+  const ci = `${NUMBER.format(Math.round(retro.ci.minutes))} min`
   const ciLabel =
     retro.ci.failed > 0
       ? `CI, ${retro.ci.runs} runs, ${retro.ci.failed} failed`
@@ -158,7 +150,7 @@ function stat(value: string, label: string, color: string = PALETTE.text): Node 
   )
 }
 
-function chips(retro: Retro, sums: ReturnType<typeof totals>): Node {
+function chips(retro: Retro, sums: Totals): Node {
   const items: [string, string | undefined][] = []
   if (sums.inProduction > 0) items.push([`${sums.inProduction} in production`, PALETTE.pink])
   if (sums.waiting > 0) items.push([`${sums.waiting} waiting for a deploy`, PALETTE.gold[1]])
@@ -193,17 +185,13 @@ function chips(retro: Retro, sums: ReturnType<typeof totals>): Node {
   )
 }
 
-function personRow(
-  person: ReturnType<typeof peopleStats>[number],
-  face: Face | undefined,
-  share: number,
-): Node {
+function personRow(person: PersonStats, face: Face | undefined, share: number): Node {
   const name = face?.name ?? person.login
   const did: string[] = []
   if (person.merged > 0) did.push(count(person.merged, "PR"))
   if (person.commits > 0) did.push(count(person.commits, "commit"))
   if (person.additions + person.deletions > 0) {
-    did.push(`+${compact(person.additions)} −${compact(person.deletions)}`)
+    did.push(lineDelta(person.additions, person.deletions))
   }
   if (person.reviewed > 0) did.push(`${person.reviewed} reviewed`)
   if (person.closed > 0) did.push(`${person.closed} closed`)
@@ -253,8 +241,8 @@ function avatar(name: string, src: string | undefined): Node {
   )
 }
 
-function highlightTile(kind: HighlightKind, pull: Retro["merged"][number]): Node {
-  let value = `+${compact(pull.additions)} −${compact(pull.deletions)}`
+function highlightTile(kind: HighlightKind, pull: Merged): Node {
+  let value = lineDelta(pull.additions, pull.deletions)
   if (kind === "talked") value = `${NUMBER.format(pull.comments)} comments`
   if (kind === "fastest") value = duration(pull.minutesToMerge)
   return h(
@@ -274,17 +262,6 @@ function highlightTile(kind: HighlightKind, pull: Retro["merged"][number]): Node
       h("span", { color: PALETTE.pink }, `#${pull.number}`),
       h("span", {}, value),
     ),
-    h(
-      "div",
-      { fontSize: 22, color: PALETTE.faint, marginTop: 4 },
-      pull.repo.split("/").at(-1) ?? "",
-    ),
+    h("div", { fontSize: 22, color: PALETTE.faint, marginTop: 4 }, repoName(pull.repo)),
   )
-}
-
-/** `14 min`, `2.4 h`, `3 days`. */
-export function duration(minutes: number): string {
-  if (minutes < 60) return `${Math.max(1, Math.round(minutes))} min`
-  if (minutes < 48 * 60) return `${(minutes / 60).toFixed(1).replace(/\.0$/, "")} h`
-  return `${Math.round(minutes / 1440)} days`
 }

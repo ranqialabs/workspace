@@ -4,7 +4,7 @@ import type { Result } from "../commands"
 import type { Account, Config, Platform } from "../store/config"
 import type { Card } from "./card"
 import { KIND, MARK } from "./glyphs"
-import { code, count, listed } from "./text"
+import { code, count, listed, repoName } from "./text"
 
 export interface Reply {
   text: string
@@ -92,7 +92,7 @@ export function configCard(config: Config, platform: Platform): Card {
     if (channels.announce !== undefined) parts.push(`news in <#${channels.announce}>`)
     const group = config.accessGroup(repo, platform)
     if (group !== undefined && platform === "discord") parts.push(`access <@&${group}>`)
-    return `**${repo.split("/").at(-1)}** ${parts.join(", ")}`
+    return `**${repoName(repo)}** ${parts.join(", ")}`
   })
   const peopleLines = config
     .people()

@@ -1,6 +1,7 @@
 // The short things bob says in a conversation, and the labels of its buttons.
 // A button and the reply it causes use the same verb: File issue, then Filed.
 import { MARK } from "./glyphs"
+import { repoName } from "./text"
 
 export const BUTTON = {
   stop: "Stop",
@@ -24,7 +25,7 @@ export const REPLY = {
   notYourDraft: "Only whoever asked for this draft can file or discard it.",
   draftEnded: (state: string) => `This draft was already ${DRAFT_ENDED[state] ?? state}.`,
   filed: (number: number, url: string, repo: string) =>
-    `${MARK.done} Filed [#${number}](${url}) in ${repo.split("/").at(-1)}.`,
+    `${MARK.done} Filed [#${number}](${url}) in ${repoName(repo)}.`,
   githubRefused: (reason: string) => `GitHub refused the issue: ${reason}`,
   cardGone: "That card is too old to explain. Mention @bob in its thread instead.",
   // What the platform handlers say when bob cannot do what was asked.
