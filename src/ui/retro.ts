@@ -1,8 +1,10 @@
-// The retro's text: what shipped as a changelog, grouped the way release-please
+// The retro's text: the model's reading of the work when there is one, then
+// what shipped as a changelog, grouped the way release-please
 // groups it, with every pull request linked and marked by whether it reached
 // production, then what is still open. The numbers are in the image below it.
 import type { Item, Retro } from "../retro/collect"
 import { type ChangeGroup, changelog, totals } from "../retro/stats"
+import type { Summary } from "../retro/summary"
 import type { Card } from "./card"
 import { KIND, MARK } from "./glyphs"
 import { count, cut, repoName } from "./text"
@@ -64,8 +66,14 @@ export function searchUrl(query: string): string {
 }
 
 /** `label` names a person by GitHub login, as a mention that does not notify or as a name. */
-export function retroCard(retro: Retro, label: (login: string) => string, image: boolean): Card {
+export function retroCard(
+  retro: Retro,
+  label: (login: string) => string,
+  image: boolean,
+  summary?: Summary,
+): Card {
   const sections: string[] = []
+  if (summary !== undefined) sections.push(summarySection(summary))
   for (const [group, changes] of changelog(retro)) {
     const shown = changes
       .slice(0, GROUP_LIMIT[group])
@@ -95,10 +103,20 @@ export function retroCard(retro: Retro, label: (login: string) => string, image:
   }
 }
 
+/** The overview, then a line per theme with the pull requests behind it. */
+function summarySection(summary: Summary): string {
+  const themes = summary.themes.map((theme) => {
+    const links = theme.pulls.map((pull) => `[#${pull.number}](${pull.url})`).join(", ")
+    return `- **${theme.title}**: ${theme.meaning} ${links}`
+  })
+  return [summary.overview, themes.join("\n")].filter((part) => part !== "").join("\n\n")
+}
+
 /** What the image says, for whoever can't see it. */
-export function retroAlt(retro: Retro): string {
+export function retroAlt(retro: Retro, summary?: Summary): string {
   const sums = totals(retro)
   return [
+    ...(summary === undefined || summary.overview === "" ? [] : [summary.overview]),
     `${title(retro)}, ${retro.period.kind === "day" ? "daily" : "weekly"} retro of ${retro.org}.`,
     `${count(sums.merged, "pull request")} merged, ${count(sums.commits, "commit")},`,
     `+${sums.additions} and -${sums.deletions} lines, ${Math.round(retro.ci.minutes)} minutes of CI.`,

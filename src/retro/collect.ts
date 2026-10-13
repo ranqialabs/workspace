@@ -15,6 +15,8 @@ export interface Item {
   author: string
   assignees: string[]
   draft: boolean
+  /** The description as written, for the model's summary; empty when there is none. */
+  body: string
 }
 
 /** Where a merged pull request stands against its repo's production deploys. */
@@ -32,6 +34,8 @@ export interface Merged extends Item {
   reviews: number
   /** From opening to merge. */
   minutesToMerge: number
+  /** When it merged, as an instant. */
+  mergedAt: number
   shipped: Shipped
 }
 
@@ -144,6 +148,7 @@ async function items(github: GitHub, q: string): Promise<Item[]> {
         author: item.user?.login ?? "",
         assignees: (item.assignees ?? []).map((user) => user.login),
         draft: item.draft === true,
+        body: item.body ?? "",
       })
     }
     if (data.items.length < 100) break
@@ -214,6 +219,7 @@ async function details(
       data.merged_at === null
         ? 0
         : (Date.parse(data.merged_at) - Date.parse(data.created_at)) / 60_000,
+    mergedAt: data.merged_at === null ? 0 : Date.parse(data.merged_at),
     shipped,
   }
 }

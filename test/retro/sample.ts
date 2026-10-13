@@ -17,6 +17,7 @@ function pull(
     author,
     assignees: [],
     draft: false,
+    body: "",
     commits: 4,
     additions: 120,
     deletions: 30,
@@ -24,6 +25,7 @@ function pull(
     comments: 2,
     reviews: 1,
     minutesToMerge: 180,
+    mergedAt: Date.parse("2026-10-12T15:00:00Z"),
     shipped: "production",
     ...extra,
   }
@@ -45,12 +47,14 @@ export const SAMPLE: Retro = {
         files: 96,
         comments: 3,
         minutesToMerge: 1440,
+        mergedAt: Date.parse("2026-10-12T20:40:00Z"),
       },
     ),
     pull("ada-api", 118, "fix(auth): keep the session after a password reset", "itsmeale", {
       comments: 12,
       reviews: 3,
       minutesToMerge: 300,
+      mergedAt: Date.parse("2026-10-12T13:10:00Z"),
       shipped: "waiting",
     }),
     pull("ada-infra", 87, "feat(ada): let aws manage the aurora master password", "felipeadeildo", {
@@ -58,6 +62,7 @@ export const SAMPLE: Retro = {
       additions: 64,
       deletions: 8,
       minutesToMerge: 14,
+      mergedAt: Date.parse("2026-10-12T17:25:00Z"),
       shipped: "no-deploys",
     }),
     pull("mary-web", 41, "chore: bump vite to 8.1", "lverissimo9", {
@@ -76,6 +81,7 @@ export const SAMPLE: Retro = {
       author: "milenaveiga18",
       assignees: [],
       draft: true,
+      body: "",
     },
   ],
   closed: [],

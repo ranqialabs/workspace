@@ -13,6 +13,7 @@ import { collect, productionDeploys, type Retro } from "./retro/collect"
 import { type PeriodKind, periodAt } from "./retro/period"
 import { faces } from "./retro/faces"
 import { peopleStats } from "./retro/stats"
+import { type Summary, summarize } from "./retro/summary"
 import { localTime } from "./time"
 import { FONTS } from "./ui/fonts"
 import { png } from "./ui/render"
@@ -134,22 +135,34 @@ export class Workspace extends DurableObject<Env> {
     )
     const quiet = retro.merged.length + retro.closed.length + retro.deploys.length === 0
     if (skipQuiet && quiet) return
-    const image = await this.retroPicture(retro, people)
+    const summary = await summarize(retro, modelFor(this.env))
+    const image = await this.retroPicture(retro, people, summary)
     const attachment =
-      image === undefined ? undefined : { name: RETRO_IMAGE, data: image, alt: retroAlt(retro) }
+      image === undefined
+        ? undefined
+        : { name: RETRO_IMAGE, data: image, alt: retroAlt(retro, summary) }
     for (const target of targets) {
       const chat = chats(this.env).find((candidate) => candidate.platform === target.platform)
       if (chat === undefined) continue
-      const card = retroCard(retro, this.personLabel(target.platform), attachment !== undefined)
+      const card = retroCard(
+        retro,
+        this.personLabel(target.platform),
+        attachment !== undefined,
+        summary,
+      )
       await chat.post(target.channel, { cards: [card], attachment })
     }
   }
 
   /** The numbers as a picture; the text card stands alone if drawing fails. */
-  private async retroPicture(retro: Retro, people: Person[]): Promise<Uint8Array | undefined> {
+  private async retroPicture(
+    retro: Retro,
+    people: Person[],
+    summary: Summary | undefined,
+  ): Promise<Uint8Array | undefined> {
     try {
       const shown = peopleStats(retro).map((person) => person.login)
-      const tree = retroImage(retro, await faces(shown, people))
+      const tree = retroImage(retro, await faces(shown, people), summary)
       return await png(tree, WIDTH, FONTS)
     } catch (error) {
       console.error("retro image failed", error)

@@ -69,6 +69,29 @@ function median(sorted: number[]): number | undefined {
   return ((sorted[middle - 1] ?? upper) + upper) / 2
 }
 
+export interface RepoStats {
+  repo: string
+  merged: number
+  additions: number
+  deletions: number
+}
+
+/** Per repository, the most lines changed first. */
+export function repoStats(retro: Retro): RepoStats[] {
+  const stats = new Map<string, RepoStats>()
+  for (const pull of retro.merged) {
+    const known = stats.get(pull.repo) ?? { repo: pull.repo, merged: 0, additions: 0, deletions: 0 }
+    known.merged += 1
+    known.additions += pull.additions
+    known.deletions += pull.deletions
+    stats.set(pull.repo, known)
+  }
+  return [...stats.values()].toSorted(
+    (a, b) =>
+      b.additions + b.deletions - (a.additions + a.deletions) || a.repo.localeCompare(b.repo),
+  )
+}
+
 /** Per person, most active first: what they merged and wrote, reviewed and closed. */
 export function peopleStats(retro: Retro): PersonStats[] {
   const stats = new Map<string, PersonStats>()
@@ -104,18 +127,26 @@ export function activity(person: PersonStats): number {
   return person.merged * 3 + person.reviewed * 2 + person.closed + person.commits / 5
 }
 
-/** The biggest, the most talked about and the fastest pull request, when they differ in kind. */
+/**
+ * The biggest, the most talked about and the fastest pull request. One that
+ * already took a highlight leaves the next to the runner-up, so no pull
+ * request is shown twice.
+ */
 export function highlights(retro: Retro): Highlight[] {
   if (retro.merged.length < 2) return []
-  const by = (score: (pull: Merged) => number): Merged | undefined =>
-    retro.merged.toSorted((a, b) => score(b) - score(a))[0]
   const found: Highlight[] = []
-  const biggest = by((pull) => pull.additions + pull.deletions)
-  if (biggest !== undefined) found.push({ kind: "biggest", pull: biggest })
-  const talked = by((pull) => pull.comments)
-  if (talked !== undefined && talked.comments > 0) found.push({ kind: "talked", pull: talked })
-  const fastest = by((pull) => -pull.minutesToMerge)
-  if (fastest !== undefined) found.push({ kind: "fastest", pull: fastest })
+  const taken = new Set<Merged>()
+  const pick = (kind: HighlightKind, score: (pull: Merged) => number): void => {
+    const best = retro.merged
+      .filter((pull) => !taken.has(pull) && score(pull) > Number.NEGATIVE_INFINITY)
+      .toSorted((a, b) => score(b) - score(a))[0]
+    if (best === undefined) return
+    taken.add(best)
+    found.push({ kind, pull: best })
+  }
+  pick("biggest", (pull) => pull.additions + pull.deletions)
+  pick("talked", (pull) => (pull.comments > 0 ? pull.comments : Number.NEGATIVE_INFINITY))
+  pick("fastest", (pull) => -pull.minutesToMerge)
   return found
 }
 
@@ -123,15 +154,28 @@ export function highlights(retro: Retro): Highlight[] {
 const CONVENTIONAL = /^(\w+)(\([^)]*\))?(!)?:\s*(.+)$/
 const GROUP: Record<string, ChangeGroup> = { feat: "features", fix: "fixes", perf: "performance" }
 
+export const CHANGE_ORDER: ChangeGroup[] = [
+  "breaking",
+  "features",
+  "fixes",
+  "performance",
+  "maintenance",
+]
+
+/** The kind of change a title announces, and the title without its prefix. */
+export function changeOf(title: string): { group: ChangeGroup; subject: string } {
+  const match = CONVENTIONAL.exec(title)
+  const type = match?.[1]?.toLowerCase() ?? ""
+  const group: ChangeGroup = match?.[3] === "!" ? "breaking" : (GROUP[type] ?? "maintenance")
+  return { group, subject: match?.[4] ?? title }
+}
+
 /** The merged pull requests by kind of change, in changelog order. */
 export function changelog(retro: Retro): Map<ChangeGroup, Change[]> {
-  const order: ChangeGroup[] = ["breaking", "features", "fixes", "performance", "maintenance"]
-  const groups = new Map<ChangeGroup, Change[]>(order.map((group) => [group, []]))
+  const groups = new Map<ChangeGroup, Change[]>(CHANGE_ORDER.map((group) => [group, []]))
   for (const pull of retro.merged) {
-    const match = CONVENTIONAL.exec(pull.title)
-    const type = match?.[1]?.toLowerCase() ?? ""
-    const group: ChangeGroup = match?.[3] === "!" ? "breaking" : (GROUP[type] ?? "maintenance")
-    groups.get(group)?.push({ pull, subject: match?.[4] ?? pull.title })
+    const { group, subject } = changeOf(pull.title)
+    groups.get(group)?.push({ pull, subject })
   }
   for (const [group, changes] of groups) if (changes.length === 0) groups.delete(group)
   return groups
