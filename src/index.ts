@@ -9,10 +9,12 @@ import { DiscordRest } from "./discord/rest"
 import { readDelivery } from "./github/webhook"
 import { SlackApi } from "./slack/api"
 import { SlackChat } from "./slack/chat"
+import { CALLBACK_PATH } from "./services/services"
 import { handleSlack, SLACK_PATHS } from "./slack/handle"
 
 export { Conversation } from "./agent/conversation"
 export { Gateway } from "./discord/gateway"
+export { Services } from "./services/services"
 export { Workspace } from "./workspace"
 
 export function workspace(env: Env) {
@@ -34,6 +36,9 @@ export default {
   async fetch(request, env, ctx): Promise<Response> {
     const url = new URL(request.url)
     if (url.pathname === "/health") return new Response("ok")
+    if (url.pathname.startsWith(`${CALLBACK_PATH}/`)) {
+      return env.SERVICES.getByName(env.GITHUB_ORG).fetch(request)
+    }
     if (url.pathname === "/github/webhook" && request.method === "POST") {
       const delivery = await readDelivery(request, env.GITHUB_WEBHOOK_SECRET)
       if (delivery instanceof Response) return delivery

@@ -2,6 +2,7 @@
 // as the run goes. Pure and total: a progress line is never worth failing a
 // run over, so any shape a tool's input arrives in comes back as text.
 import type { Step, Usage } from "../agent/progress"
+import { SERVICES } from "../services/catalog"
 import type { Card, Tone } from "./card"
 import { KIND, MARK } from "./glyphs"
 import { code, compact, cut, oneLine, repoName } from "./text"
@@ -49,6 +50,7 @@ const VERBS: Record<string, [running: string, done: string]> = {
   sql_tables: ["Reading the tables", "Read the tables"],
   query_sql: ["Querying the database", "Queried the database"],
   query_cloudwatch: ["Querying CloudWatch for", "Queried CloudWatch for"],
+  connect_service: ["Getting the link to connect", "Got the link to connect"],
 }
 
 // Which argument names a call best, most telling first. `repo` goes at the end
@@ -68,6 +70,7 @@ const SUBJECT = [
   "metric",
   "table",
   "search",
+  "service",
 ]
 const MAX_LINE = 120
 const MAX_STEPS = 12
@@ -108,7 +111,7 @@ export function tokens(usage: Usage): string {
 
 /** `✅ Read issue #12 in web`, `⚠️ Reading src/a.ts in web: not found`. */
 export function stepLine(step: Step): string {
-  const [running, done] = VERBS[step.tool] ?? [step.tool, step.tool]
+  const [running, done] = VERBS[step.tool] ?? serviceVerbs(step.tool)
   const args = record(step.input)
   const parts = [step.state === "running" ? running : done]
   const subject = subjectOf(args)
@@ -117,6 +120,14 @@ export function stepLine(step: Step): string {
   const mark = { running: MARK.waiting, done: MARK.done, failed: MARK.warning }[step.state]
   const error = step.error === undefined ? "" : `: ${oneLine(step.error.split("\n")[0] ?? "", 60)}`
   return cut(`${mark} ${oneLine(parts.join(" "), MAX_LINE)}${error}`, MAX_LINE + 64)
+}
+
+/** `dorothy_list_sites` reads as "Asking Dorothy: `list_sites`". */
+function serviceVerbs(tool: string): [string, string] {
+  const spec = SERVICES.find((candidate) => tool.startsWith(`${candidate.id}_`))
+  if (spec === undefined) return [tool, tool]
+  const name = code(tool.slice(spec.id.length + 1))
+  return [`Asking ${spec.name}: ${name}`, `Asked ${spec.name}: ${name}`]
 }
 
 function subjectOf(args: Record<string, unknown>): string | undefined {

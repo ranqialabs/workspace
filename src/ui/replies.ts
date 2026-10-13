@@ -45,4 +45,5 @@ export const SLACK_USAGE = [
   "`/bob unmap repo owner/name [announce]`, `/bob unmap github @person` and `/bob unmap linear @person` undo them.",
   "`/bob retro` posts what shipped today here; `/bob retro week`, this week.",
   "`/bob map retro #channel` posts the retros there on working days; `/bob unmap retro` stops them.",
+  "`/bob connect` lists the services bob uses; `/bob connect posthog` gives you the link that connects one, and `/bob disconnect posthog` forgets it.",
 ].join("\n")

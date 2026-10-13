@@ -169,7 +169,26 @@ export class Workspace extends DurableObject<Env> {
       await this.postRetro(command.period, [{ platform, channel: command.channel }], false)
       return { kind: "retro-posted", channel: command.channel, period: command.period }
     }
+    if (command.name === "connect" || command.name === "disconnect") {
+      return this.services(command, platform)
+    }
     return run(command, platform, this.config, this.directory)
+  }
+
+  private async services(
+    command: Extract<Command, { name: "connect" | "disconnect" }>,
+    platform: Platform,
+  ): Promise<Result> {
+    const services = this.env.SERVICES.getByName(this.env.GITHUB_ORG)
+    if (command.name === "disconnect") {
+      const service = await services.forget(command.service)
+      return { kind: "disconnected", service, name: command.service }
+    }
+    if (command.service === undefined) {
+      return { kind: "services", services: (await services.catalog()).services }
+    }
+    const requester = { platform, channel: command.channel, user: command.user }
+    return { kind: "authorize", result: await services.authorize(command.service, requester) }
   }
 
   /**

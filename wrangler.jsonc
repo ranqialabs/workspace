@@ -17,9 +17,14 @@
       { "name": "GATEWAY", "class_name": "Gateway" },
       // One per conversation with the agent: its history, queue and drafts.
       { "name": "CONVERSATION", "class_name": "Conversation" },
+      // One per org: the outside services' MCP connections and OAuth tokens.
+      { "name": "SERVICES", "class_name": "Services" },
     ],
   },
-  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Workspace", "Gateway", "Conversation"] }],
+  "migrations": [
+    { "tag": "v1", "new_sqlite_classes": ["Workspace", "Gateway", "Conversation"] },
+    { "tag": "v2", "new_sqlite_classes": ["Services"] },
+  ],
   // Reconnects the gateway after a deploy or a fatal close.
   // The fonts the retro image is drawn with.
   "rules": [{ "type": "Data", "globs": ["**/*.woff"], "fallthrough": true }],
@@ -30,6 +35,8 @@
     "GITHUB_ORG": "ranqialabs",
     // bob's own repo: its deploys are announced, for a few minutes, in its home channel.
     "BOB_REPO": "ranqialabs/workspace",
+    // Where bob answers on the web, for the OAuth callbacks of the services it connects to.
+    "PUBLIC_URL": "https://bob.ranqia.workers.dev",
     // The OpenAI model behind the agent.
     "AGENT_MODEL": "gpt-5.6-terra",
     // The team's time zone: reminders go out on its working days and hours,

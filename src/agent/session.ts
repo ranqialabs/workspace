@@ -24,6 +24,8 @@ import { runAgent } from "./run"
 import type { Sauron } from "../sauron/client"
 import { GITHUB_INSTRUCTIONS, githubTools } from "./tools/github"
 import { SAURON_INSTRUCTIONS, sauronTools } from "./tools/sauron"
+import { type ServicesPort, servicesTools } from "./tools/services"
+import { servicesInstructions } from "../services/catalog"
 
 const SCHEMA = [
   `CREATE TABLE place (
@@ -78,6 +80,7 @@ export interface SessionDeps {
   surroundings(): Promise<Surroundings>
   /** Grafana, when bob has a token for it; without one the Sauron tools stay out. */
   sauron?(): Sauron | undefined
+  services?(): ServicesPort | undefined
 }
 
 const AskRow = z.object({
@@ -209,16 +212,20 @@ export class Session {
           : []
       const open = this.openDraft()
       const sauron = this.deps.sauron?.()
+      const outside = await this.outside(place, requester.id)
       const result = await runAgent({
         model: this.deps.model(),
-        tools: this.tools(github, surroundings, place, sauron),
+        tools: { ...this.tools(github, surroundings, place, sauron), ...outside.tools },
         history,
         turn: turnText({ asks, candidates: surroundings.candidates, seed, draft: open?.draft }),
         candidates: surroundings.candidates,
-        extraInstructions:
-          sauron === undefined
-            ? GITHUB_INSTRUCTIONS
-            : `${GITHUB_INSTRUCTIONS}\n\n${SAURON_INSTRUCTIONS}`,
+        extraInstructions: [
+          GITHUB_INSTRUCTIONS,
+          sauron === undefined ? "" : SAURON_INSTRUCTIONS,
+          outside.instructions,
+        ]
+          .filter(Boolean)
+          .join("\n\n"),
         signal: controller.signal,
         events: {
           toolStarted(id, name, input) {
@@ -317,6 +324,26 @@ export class Session {
       return undefined
     } catch (error) {
       return REPLY.githubRefused(explain(error))
+    }
+  }
+
+  /** The outside services' tools; a service being down never stops an answer. */
+  private async outside(
+    place: Place,
+    user: string,
+  ): Promise<{ tools: ToolSet; instructions: string }> {
+    const port = this.deps.services?.()
+    if (port === undefined) return { tools: {}, instructions: "" }
+    try {
+      const catalog = await port.catalog()
+      const requester = { platform: this.deps.chat.platform, channel: place.channel, user }
+      return {
+        tools: servicesTools(port, catalog, requester),
+        instructions: servicesInstructions(catalog.services),
+      }
+    } catch (error) {
+      console.error("services catalog failed", error)
+      return { tools: {}, instructions: "" }
     }
   }
 

@@ -1,6 +1,13 @@
 // What bob says back to an admin command, and the configuration card. Replies
 // are shown only to whoever ran the command. A mistake says how to fix it.
 import type { Result } from "../commands"
+import {
+  type AuthorizeResult,
+  serviceFor,
+  type ServiceId,
+  type ServiceState,
+  type ServiceStateName,
+} from "../services/catalog"
 import type { Account, Config, Platform } from "../store/config"
 import type { Card } from "./card"
 import { KIND, MARK } from "./glyphs"
@@ -74,10 +81,70 @@ export function commandReply(result: Result, config: Config, platform: Platform)
       }
     case "discord-only":
       return { text: "Importing works on Discord only, from the old #bot-config channel." }
+    case "services":
+      return { text: servicesText(result.services, platform) }
+    case "authorize":
+      return { text: authorizeText(result.result) }
+    case "disconnected":
+      return {
+        text:
+          result.service === undefined
+            ? `No service called ${code(result.name)}.`
+            : `${MARK.done} bob forgot its connection to ${serviceFor(result.service)?.name}.`,
+      }
     case "config":
       break
   }
   return { text: "", cards: [configCard(config, platform)] }
+}
+
+const STATE: Partial<Record<ServiceStateName, string>> = {
+  ready: "connected",
+  absent: "not connected",
+  authenticating: "waiting for someone to authorize",
+  failed: "failing",
+}
+
+function servicesText(services: ServiceState[], platform: Platform): string {
+  const lines = services.map((service) => {
+    const mark =
+      service.state === "ready"
+        ? MARK.done
+        : service.state === "failed"
+          ? MARK.warning
+          : MARK.waiting
+    const state = STATE[service.state] ?? service.state
+    const tools = service.state === "ready" ? `, ${count(service.tools, "tool")}` : ""
+    const how = service.auth === "key" ? " by key" : ""
+    const error = service.error === undefined ? "" : `: ${service.error}`
+    return `${mark} **${service.name}** ${state}${how}${tools}${error}`
+  })
+  return [
+    ...lines,
+    "",
+    `${code(`${SLASH[platform]}connect <service>`)} gives you the link that connects one.`,
+  ].join("\n")
+}
+
+function name(id: ServiceId): string {
+  return serviceFor(id)?.name ?? id
+}
+
+function authorizeText(result: AuthorizeResult): string {
+  switch (result.kind) {
+    case "link":
+      return `Open this link to connect ${name(result.service)}; bob says here when it is done. The link is yours: it signs bob in with your account.\n${result.url}`
+    case "ready":
+      return `${MARK.done} ${name(result.service)} is already connected, with ${count(result.tools, "tool")}.`
+    case "keyed":
+      return `${name(result.service)} is connected by a key in bob's secrets; there is nothing to authorize.`
+    case "failed":
+      return `${MARK.warning} bob could not reach ${name(result.service)}: ${result.error}`
+    case "unknown":
+      return `No service called ${code(result.name)}. bob knows Dorothy, Cloudflare and PostHog.`
+    default:
+      return result satisfies never
+  }
 }
 
 /** Everything bob knows on one platform, drawn from the database every time. */

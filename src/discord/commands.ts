@@ -98,6 +98,42 @@ export const COMMANDS = [
     ],
   },
   {
+    name: "connect",
+    description: "See the services bob uses, or get the link that connects one",
+    contexts: IN_SERVERS,
+    options: [
+      {
+        type: STRING,
+        name: "service",
+        description: "The service to connect",
+        required: false,
+        choices: [
+          { name: "Cloudflare", value: "cloudflare" },
+          { name: "PostHog", value: "posthog" },
+        ],
+      },
+    ],
+  },
+  {
+    name: "disconnect",
+    description: "Make bob forget a service's connection",
+    contexts: IN_SERVERS,
+    default_member_permissions: MANAGE_GUILD,
+    options: [
+      {
+        type: STRING,
+        name: "service",
+        description: "The service",
+        required: true,
+        choices: [
+          { name: "Dorothy", value: "dorothy" },
+          { name: "Cloudflare", value: "cloudflare" },
+          { name: "PostHog", value: "posthog" },
+        ],
+      },
+    ],
+  },
+  {
     name: "config",
     description: "Show what bob knows: repos, channels and people",
     contexts: IN_SERVERS,

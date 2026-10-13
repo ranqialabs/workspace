@@ -61,6 +61,14 @@ export class Conversation extends DurableObject<Env> {
         this.env.SAURON_TOKEN === undefined || this.env.SAURON_TOKEN === ""
           ? undefined
           : new Sauron(this.env.SAURON_URL ?? SAURON_URL, this.env.SAURON_TOKEN),
+      services: () => {
+        const services = this.env.SERVICES.getByName(this.env.GITHUB_ORG)
+        return {
+          catalog: () => services.catalog(),
+          call: (service, tool, args) => services.call(service, tool, args),
+          authorize: (service, requester) => services.authorize(service, requester),
+        }
+      },
       surroundings: async () => {
         const stored = this.ctx.storage.kv.get<Origin>("origin") ?? origin
         const workspace = this.env.WORKSPACE.getByName(this.env.GITHUB_ORG)

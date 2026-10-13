@@ -91,6 +91,11 @@ export function toCommand(command: SlashCommand): Command | undefined {
   const words = command.text.trim().split(/\s+/).filter(Boolean)
   const [verb, kind, first, second] = words
   if (verb === "config" || verb === undefined) return { name: "config" }
+  if (verb === "connect") {
+    return { name: "connect", service: kind, channel: command.channel_id, user: command.user_id }
+  }
+  if (verb === "disconnect")
+    return kind === undefined ? undefined : { name: "disconnect", service: kind }
   if (verb === "retro") {
     return { name: "retro", period: kind === "week" ? "week" : "day", channel: command.channel_id }
   }
@@ -127,5 +132,5 @@ export function toCommand(command: SlashCommand): Command | undefined {
 
 /** Whether a command changes the configuration, which only workspace admins may do. */
 export function changes(command: Command): boolean {
-  return command.name !== "config" && command.name !== "retro"
+  return command.name !== "config" && command.name !== "retro" && command.name !== "connect"
 }

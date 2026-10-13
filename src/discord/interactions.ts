@@ -112,6 +112,16 @@ export function toCommand(interaction: Interaction): Command | undefined {
   const member = textOption(values, "member")
 
   if (name === "config") return { name: "config" }
+  if (name === "connect") {
+    const here = interaction.channel_id
+    if (here === undefined) return undefined
+    const caller = (interaction.member?.user ?? interaction.user)?.id
+    return { name: "connect", service: textOption(values, "service"), channel: here, user: caller }
+  }
+  if (name === "disconnect") {
+    const service = textOption(values, "service")
+    return service === undefined ? undefined : { name: "disconnect", service }
+  }
   if (name === "import") return channel === undefined ? undefined : { name: "import", channel }
   if (name === "retro") {
     const here = interaction.channel_id

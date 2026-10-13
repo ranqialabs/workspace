@@ -89,10 +89,12 @@ you ever see it.
 
 ### Why nothing is filed by mistake
 
-The model has **no write tool**. `propose_issue` records a draft and ends the
-run; it does not reach GitHub. Creating the issue is ordinary code behind a
-button, and the button checks who pressed it. A confused model can waste tokens,
-but cannot open an issue.
+No tool reaches GitHub to write. `propose_issue` records a draft and ends the
+run; creating the issue is ordinary code behind a button, and the button checks
+who pressed it. A confused model can waste tokens, but cannot open an issue.
+
+The [outside services](#outside-services) are different: their tools can change
+things, and bob is told to use those only when someone asked.
 
 ## What it can read
 
@@ -140,6 +142,36 @@ chat, so it is told to aggregate rather than list customers' data.
 
 The Dorothy API datasource is left out: its allowed-hosts list in Grafana is
 empty, so Grafana refuses every request to it.
+
+## Outside services
+
+bob reaches Dorothy, Cloudflare and PostHog through their MCP servers. Their
+tools show up under the service's name (`dorothy_list_sites`,
+`posthog_query_run`) and the progress card reads _Asked Dorothy: `list_sites`_.
+
+| Service    | Connects with                                      | Gives bob                                       |
+| :--------- | :------------------------------------------------- | :---------------------------------------------- |
+| Dorothy    | `DOROTHY_API_KEY`                                  | sites, items, domains, deploys, traffic and SEO |
+| Cloudflare | someone authorizing bob, or `CLOUDFLARE_MCP_TOKEN` | the Cloudflare API: Workers, logs, DNS, R2, D1… |
+| PostHog    | someone authorizing bob, or `POSTHOG_MCP_TOKEN`    | events, insights, HogQL, flags, experiments     |
+
+These tools **write**. Dorothy's create, change and delete sites, items and
+domains and trigger deploys, all at once in production. bob is told to do that
+only when someone clearly asked, to say what it is about to do, and to report
+what happened.
+
+### Connecting a service
+
+Run `/connect` (`/bob connect` on Slack) to see each service's state, and
+`/connect service:PostHog` for a link that only you see. Or ask bob for
+something that needs a service it lacks, and it hands you the link in the
+conversation. Authorize in the browser, and bob says in the channel when it is
+done; the tools are there from the next message on.
+
+The link signs bob in **with your account**, for everyone. Cloudflare lets you
+pick what bob may do on the consent screen. The tokens live in bob's Services
+object and refresh on their own, so nobody signs in again. `/disconnect`
+(admins only) forgets a service's connection.
 
 ## Cost
 

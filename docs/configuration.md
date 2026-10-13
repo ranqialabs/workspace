@@ -47,12 +47,13 @@ cannot get secrets before its first deploy, so the secrets go with
 `wrangler deploy --secrets-file`; on an existing Worker the ones left out stay
 as they are.
 
-`wrangler.jsonc` sets four variables:
+`wrangler.jsonc` sets five variables:
 
 | Variable      | Meaning                                                          |
 | :------------ | :--------------------------------------------------------------- |
 | `GITHUB_ORG`  | the org whose repos and people bob follows                       |
 | `BOB_REPO`    | bob's own repo, whose home channel hears about bob's own deploys |
+| `PUBLIC_URL`  | where bob answers on the web, for the services' OAuth callbacks  |
 | `AGENT_MODEL` | the OpenAI model behind the agent                                |
 | `TIMEZONE`    | the team's time zone, for working hours and the retro's days     |
 
@@ -118,7 +119,21 @@ SAURON_TOKEN="glsa_..."
 Then `bun run secrets:push`. Without the token the Sauron tools stay out of the
 agent. What they read is in [The agent](agent.md#production-through-sauron).
 
-## 6. Tell bob where things go
+## 6. Outside services (optional)
+
+Dorothy connects with its API key, the same as its MCP server's:
+
+```sh
+DOROTHY_API_KEY="dorothy_..."
+```
+
+Cloudflare and PostHog need no secret: someone runs `/connect` and authorizes
+bob in the browser, and the OAuth callback comes back to `PUBLIC_URL` in
+`wrangler.jsonc`. To use a key instead, set `CLOUDFLARE_MCP_TOKEN` (a Cloudflare
+API token) or `POSTHOG_MCP_TOKEN` (a personal API key with the MCP Server
+preset). See [The agent](agent.md#outside-services).
+
+## 7. Tell bob where things go
 
 Repos and people are mapped from chat; see [Commands](commands.md).
 

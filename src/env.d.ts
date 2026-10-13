@@ -12,6 +12,12 @@ interface Env {
   /** A Viewer service account token for Sauron, the team's Grafana. */
   SAURON_TOKEN?: string
   SAURON_URL?: string
+  /** The key of Dorothy's MCP server, the same as its API's. */
+  DOROTHY_API_KEY?: string
+  DOROTHY_MCP_URL?: string
+  /** Keys that stand in for authorizing Cloudflare or PostHog in the browser. */
+  CLOUDFLARE_MCP_TOKEN?: string
+  POSTHOG_MCP_TOKEN?: string
 }
 
 // Fonts are bundled as data (see `rules` in wrangler.jsonc) for the images bob draws.

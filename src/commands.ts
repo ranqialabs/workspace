@@ -3,6 +3,7 @@
 // configuration and says what happened, and `ui/commands` words the reply.
 import type { Imported } from "./discord/legacy"
 import type { PeriodKind } from "./retro/period"
+import type { AuthorizeResult, ServiceId, ServiceState } from "./services/catalog"
 import type { Account, Config, Place, Platform, Purpose } from "./store/config"
 
 /** The commands that only read or change the configuration; `run` does them. */
@@ -22,6 +23,9 @@ export type Command =
   | { name: "import"; channel: string }
   /** Posts a retro of the day or the week so far in `channel`. */
   | { name: "retro"; period: PeriodKind; channel: string }
+  /** Without a service, lists them; with one, the link that authorizes bob on it. */
+  | { name: "connect"; service?: string; channel: string; user?: string }
+  | { name: "disconnect"; service: string }
 
 /** What a command did. `ui/commands` says it back to whoever ran it. */
 export type Result =
@@ -36,6 +40,9 @@ export type Result =
   | { kind: "imported"; channel: string; counts: Imported }
   | { kind: "retro-posted"; channel: string; period: PeriodKind }
   | { kind: "discord-only" }
+  | { kind: "services"; services: ServiceState[] }
+  | { kind: "authorize"; result: AuthorizeResult }
+  | { kind: "disconnected"; service?: ServiceId; name: string }
   | { kind: "config" }
 
 /** What the commands need checked against the outside world before saving. */
