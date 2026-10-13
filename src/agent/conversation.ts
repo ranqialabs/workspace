@@ -3,6 +3,7 @@
 // the platform, GitHub, the model and the Workspace's configuration into a
 // Session, which does the work.
 import { modelFor } from "./model"
+import { Sauron, SAURON_URL } from "../sauron/client"
 import { DurableObject } from "cloudflare:workers"
 
 import { credentials, type GitHub, installationClient } from "../github/app"
@@ -56,6 +57,10 @@ export class Conversation extends DurableObject<Env> {
         if (model === undefined) throw new Error("OPENAI_API_KEY is not set")
         return model
       },
+      sauron: () =>
+        this.env.SAURON_TOKEN === undefined || this.env.SAURON_TOKEN === ""
+          ? undefined
+          : new Sauron(this.env.SAURON_URL ?? SAURON_URL, this.env.SAURON_TOKEN),
       surroundings: async () => {
         const stored = this.ctx.storage.kv.get<Origin>("origin") ?? origin
         const workspace = this.env.WORKSPACE.getByName(this.env.GITHUB_ORG)

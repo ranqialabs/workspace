@@ -36,11 +36,39 @@ const VERBS: Record<string, [running: string, done: string]> = {
   teammates: ["Looking up teammates", "Looked up teammates"],
   read_conversation: ["Reading back", "Read back"],
   propose_issue: ["Drafting the issue", "Drafted the issue"],
+  sauron_dashboards: ["Looking for dashboards", "Looked for dashboards"],
+  sauron_dashboard: ["Reading dashboard", "Read dashboard"],
+  sauron_alerts: ["Reading alerts", "Read alerts"],
+  metric_names: ["Looking for metrics like", "Looked for metrics like"],
+  metric_labels: ["Reading the labels of", "Read the labels of"],
+  query_metrics: ["Querying metrics", "Queried metrics"],
+  log_labels: ["Reading log labels", "Read log labels"],
+  query_logs: ["Querying logs", "Queried logs"],
+  find_traces: ["Looking for traces", "Looked for traces"],
+  get_trace: ["Reading trace", "Read trace"],
+  sql_tables: ["Reading the tables", "Read the tables"],
+  query_sql: ["Querying the database", "Queried the database"],
+  query_cloudwatch: ["Querying CloudWatch for", "Queried CloudWatch for"],
 }
 
 // Which argument names a call best, most telling first. `repo` goes at the end
 // of the line on its own; the rest never says much.
-const SUBJECT = ["query", "path", "number", "sha", "ref", "head", "base", "assignee", "label"]
+const SUBJECT = [
+  "query",
+  "path",
+  "number",
+  "sha",
+  "ref",
+  "head",
+  "base",
+  "assignee",
+  "label",
+  "uid",
+  "id",
+  "metric",
+  "table",
+  "search",
+]
 const MAX_LINE = 120
 const MAX_STEPS = 12
 

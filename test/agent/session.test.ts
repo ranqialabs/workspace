@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test"
 
 import { recentTurns, Session, type Turn } from "../../src/agent/session"
+import { Sauron } from "../../src/sauron/client"
 import type { Person } from "../../src/store/config"
 import { FakeChat } from "../fake-chat"
 import { memoryDatabase } from "../memory-database"
@@ -24,7 +25,7 @@ function turn(message: string, text: string, author = ana): Turn {
   return { channel: "c", message, author, text }
 }
 
-function setup(model: ReturnType<typeof scripted>) {
+function setup(model: ReturnType<typeof scripted>, sauron?: Sauron) {
   const chat = new FakeChat("discord")
   const github: Calls = []
   const teammates: Person[] = [
@@ -34,6 +35,7 @@ function setup(model: ReturnType<typeof scripted>) {
     name: "discord:c:",
     chat,
     model: () => model,
+    sauron: () => sauron,
     github: () =>
       Promise.resolve(
         fakeGitHub(
@@ -200,4 +202,35 @@ test("history is cut at a turn, so a tool call keeps its result", () => {
   ]
   expect(recentTurns(messages, 1)).toEqual(messages.slice(2))
   expect(recentTurns(messages, 5)).toEqual(messages)
+})
+
+/** The tools and system prompt of the model's first request. */
+function seen(model: ReturnType<typeof scripted>): { tools: string[]; system: string } {
+  const [request] = model.doStreamCalls
+  const system = request?.prompt.find((message) => message.role === "system")
+  return {
+    tools: (request?.tools ?? []).map((one) => one.name),
+    system: typeof system?.content === "string" ? system.content : "",
+  }
+}
+
+describe("Sauron", () => {
+  test("with a token the model gets the Sauron tools and how to use them", async () => {
+    const model = scripted(says("ok"))
+    const { session } = setup(model, new Sauron("https://sauron.test", "glsa_token"))
+    await session.mention(turn("q1", "is mary slow?"))
+    const { tools, system } = seen(model)
+    expect(tools).toEqual(expect.arrayContaining(["query_metrics", "query_logs", "query_sql"]))
+    expect(tools).toContain("read_file")
+    expect(system).toContain("Sauron (sauron.ranqia.io)")
+  })
+
+  test("without one they stay out", async () => {
+    const model = scripted(says("ok"))
+    const { session } = setup(model)
+    await session.mention(turn("q1", "is mary slow?"))
+    const { tools, system } = seen(model)
+    expect(tools).not.toContain("query_metrics")
+    expect(system).not.toContain("Sauron")
+  })
 })

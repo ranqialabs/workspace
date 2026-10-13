@@ -103,7 +103,22 @@ bunx wrangler secret put SLACK_SIGNING_SECRET  # under Basic Information
 
 Invite bob to the channels it should post to or answer in: `/invite @bob`.
 
-## 5. Tell bob where things go
+## 5. Sauron (optional)
+
+For the agent to read production, give it a token for
+[Sauron](https://sauron.ranqia.io), the team's Grafana. In Grafana, under
+**Administration > Users and access > Service accounts**, create one with the
+**Viewer** role, add a token, and put it in `.dev.vars`:
+
+```sh
+SAURON_TOKEN="glsa_..."
+# SAURON_URL="https://sauron.ranqia.io"   # the default
+```
+
+Then `bun run secrets:push`. Without the token the Sauron tools stay out of the
+agent. What they read is in [The agent](agent.md#production-through-sauron).
+
+## 6. Tell bob where things go
 
 Repos and people are mapped from chat; see [Commands](commands.md).
 

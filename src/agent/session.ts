@@ -21,7 +21,9 @@ import { Progress } from "./progress"
 import { progressCard, type RunStatus } from "../ui/progress"
 import { type Ask, turnText } from "./prompt"
 import { runAgent } from "./run"
+import type { Sauron } from "../sauron/client"
 import { GITHUB_INSTRUCTIONS, githubTools } from "./tools/github"
+import { SAURON_INSTRUCTIONS, sauronTools } from "./tools/sauron"
 
 const SCHEMA = [
   `CREATE TABLE place (
@@ -74,6 +76,8 @@ export interface SessionDeps {
   github(): Promise<GitHub>
   model(): LanguageModel
   surroundings(): Promise<Surroundings>
+  /** Grafana, when bob has a token for it; without one the Sauron tools stay out. */
+  sauron?(): Sauron | undefined
 }
 
 const AskRow = z.object({
@@ -204,13 +208,17 @@ export class Session {
             })
           : []
       const open = this.openDraft()
+      const sauron = this.deps.sauron?.()
       const result = await runAgent({
         model: this.deps.model(),
-        tools: this.tools(github, surroundings, place),
+        tools: this.tools(github, surroundings, place, sauron),
         history,
         turn: turnText({ asks, candidates: surroundings.candidates, seed, draft: open?.draft }),
         candidates: surroundings.candidates,
-        extraInstructions: GITHUB_INSTRUCTIONS,
+        extraInstructions:
+          sauron === undefined
+            ? GITHUB_INSTRUCTIONS
+            : `${GITHUB_INSTRUCTIONS}\n\n${SAURON_INSTRUCTIONS}`,
         signal: controller.signal,
         events: {
           toolStarted(id, name, input) {
@@ -312,10 +320,16 @@ export class Session {
     }
   }
 
-  private tools(github: GitHub, surroundings: Surroundings, place: Place): ToolSet {
+  private tools(
+    github: GitHub,
+    surroundings: Surroundings,
+    place: Place,
+    sauron: Sauron | undefined,
+  ): ToolSet {
     const { chat } = this.deps
     return {
       ...githubTools(github, surroundings.org),
+      ...(sauron === undefined ? {} : sauronTools(sauron)),
       teammates: tool({
         description:
           "The people bob knows: their names and GitHub and Linear accounts. The `github` field is what `assignee` takes.",

@@ -111,6 +111,36 @@ GitHub's code search misses repos it has not indexed, so bob is told that an
 empty result is not proof something is absent, and to read the file where it
 would be instead.
 
+### Production, through Sauron
+
+With `SAURON_TOKEN` set, bob also reads [Sauron](https://sauron.ranqia.io), the
+team's Grafana: _"is mary slow today?"_, _"what is firing?"_, _"how many
+executions failed this week?"_.
+
+| Tool                                             | Reads                                                 |
+| :----------------------------------------------- | :---------------------------------------------------- |
+| `sauron_dashboards`, `sauron_dashboard`          | the dashboards and the exact query behind each panel  |
+| `sauron_alerts`                                  | the alert rules, firing ones first                    |
+| `metric_names`, `metric_labels`, `query_metrics` | Mimir, with PromQL                                    |
+| `log_labels`, `query_logs`                       | Loki, with LogQL: lines or counts                     |
+| `find_traces`, `get_trace`                       | Tempo, with TraceQL, and a trace's spans as a tree    |
+| `sql_tables`, `query_sql`                        | the Ada's Postgres (Aurora), one `SELECT` at a time   |
+| `query_cloudwatch`                               | AWS metrics: RDS, ECS, the load balancer, ElastiCache |
+
+Every query answer carries an **Explore** link, and bob is told to quote it, so
+you can open what it saw. Answers are trimmed before the model reads them: a
+series becomes its last, min, max and average plus a few points, a log line
+keeps only the labels that set it apart, and SQL stops at 200 rows.
+
+Nothing here writes. The token belongs to a Grafana service account with the
+**Viewer** role, which cannot change a dashboard, a rule or a silence; on top of
+that `query_sql` takes a single `SELECT` (or `WITH`), wraps it in a `LIMIT`, and
+runs as the datasource's read-only database user. What bob reads lands in the
+chat, so it is told to aggregate rather than list customers' data.
+
+The Dorothy API datasource is left out: its allowed-hosts list in Grafana is
+empty, so Grafana refuses every request to it.
+
 ## Cost
 
 The model is set by `AGENT_MODEL` in `wrangler.jsonc`. Each answer's card shows
