@@ -3,6 +3,7 @@ import type { Chat, ChatMessage, MessageRef, Outgoing, ReadOptions } from "../sr
 import type { Platform } from "../src/store/config"
 
 export class FakeChat implements Chat {
+  readonly textLimit = 2000
   readonly log: string[] = []
   readonly posts: Outgoing[] = []
   readonly edits = new Map<string, Outgoing>()
@@ -10,6 +11,10 @@ export class FakeChat implements Chat {
   private next = 1
 
   constructor(readonly platform: Platform) {}
+
+  get notifiesOnEdit(): boolean {
+    return this.platform === "discord"
+  }
 
   post(channel: string, message: Outgoing): Promise<MessageRef> {
     const id = `m${this.next++}`

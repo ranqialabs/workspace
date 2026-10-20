@@ -6,9 +6,9 @@ import type { Button, Chat, ChatMessage, MessageRef, Outgoing, ReadOptions } fro
 import { DiscordMessage, toChatMessage } from "./inbound"
 import type { DiscordRest } from "./rest"
 import type { Card, Tone } from "../ui/card"
-import { cut } from "../ui/text"
+import { cut, split } from "../ui/text"
 
-const CONTENT_LIMIT = 2000
+export const CONTENT_LIMIT = 2000
 
 export const COLORS: Record<Tone, number> = {
   green: 0x2da44e,
@@ -89,6 +89,9 @@ export function messageBody(message: Outgoing) {
 
 export class DiscordChat implements Chat {
   readonly platform = "discord"
+  readonly textLimit = CONTENT_LIMIT
+  /** Discord tells someone they were mentioned in a message that was edited as well. */
+  readonly notifiesOnEdit = true
 
   constructor(private readonly rest: DiscordRest) {}
 
@@ -139,24 +142,6 @@ export function withFiles(message: Outgoing): unknown {
   form.set("payload_json", JSON.stringify({ ...body, attachments }))
   form.set("files[0]", new Blob([file.data], { type: "image/png" }), file.name)
   return form
-}
-
-/**
- * `text` in pieces of at most `limit` characters, cut at a line break where
- * one is near so code blocks and lists stay readable. Empty text is one empty
- * piece, so a message of cards alone still goes out.
- */
-export function split(text: string, limit: number): string[] {
-  const pieces: string[] = []
-  let rest = text
-  while (rest.length > limit) {
-    const newline = rest.lastIndexOf("\n", limit)
-    const at = newline > limit / 2 ? newline : limit
-    pieces.push(rest.slice(0, at))
-    rest = rest.slice(at).replace(/^\n/, "")
-  }
-  pieces.push(rest)
-  return pieces
 }
 
 function messageId(sent: unknown): string {

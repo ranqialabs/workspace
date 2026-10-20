@@ -14,8 +14,9 @@ did that this one does not do yet, then what comes after.
       story on every platform that follows the repo.
 - [x] **Commands** to map repos and people, and to show the configuration, on
       Discord and Slack.
-- [x] **The agent**: answers grounded in the code, a live progress card, Stop,
-      a stored conversation, queued asks, and drafts with File issue and Discard.
+- [x] **The agent**: answers grounded in the code, streamed in one message
+      that becomes the answer, Stop, a stored conversation, queued asks, and
+      drafts with File issue and Discard.
 - [x] **Slack**, on the Free plan.
 - [x] **Why did it fail?** on a red checks card, and reminders for a broken
       default branch and for reviews waiting more than a day.
@@ -35,7 +36,6 @@ did that this one does not do yet, then what comes after.
 - [ ] **Edit draft**, a form to change a draft by hand before filing it.
 - [ ] **Following a thread** without being mentioned again in it.
 - [ ] **Images** shared in the conversation, passed to the model.
-- [ ] **Cost in dollars** next to the tokens.
 
 ## Next
 
@@ -47,13 +47,7 @@ did that this one does not do yet, then what comes after.
 
   Stream answers with `chat.startStream`, show the tool calls as Slack's own
   task timeline, and use the agent session status and its stop button instead
-  of our card.
-
-- :lucide-type:{ .lg .middle } **Streamed answers on Discord**
-
-  ***
-
-  Edit the answer in place as it is written, as the Python version did.
+  of the message bob edits.
 
 - :lucide-git-pull-request:{ .lg .middle } **More actions**
 

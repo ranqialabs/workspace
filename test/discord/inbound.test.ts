@@ -1,7 +1,8 @@
 import { describe, expect, test } from "bun:test"
 
 import { addresses, DiscordMessage, toChatMessage } from "../../src/discord/inbound"
-import { DiscordChat, split } from "../../src/discord/messages"
+import { DiscordChat } from "../../src/discord/messages"
+import { split } from "../../src/ui/text"
 import { DiscordRest } from "../../src/discord/rest"
 import { DiscordRouter } from "../../src/discord/route"
 

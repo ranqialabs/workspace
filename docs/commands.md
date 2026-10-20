@@ -144,7 +144,7 @@ at any time, in the channel you run it in.
 
 - **What shipped** is the model's rewording of the merged pull requests' and
   closed issues' titles, per project, for readers who are not engineers. It is
-  told to invent nothing. Without an OpenAI key the titles are listed as they
+  told to invent nothing. Without a DeepSeek key the titles are listed as they
   are.
 - **The counts** come from GitHub's search, so anyone can check them: pull
   requests merged and issues closed as completed in the period, and what was

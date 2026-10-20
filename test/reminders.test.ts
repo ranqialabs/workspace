@@ -43,13 +43,7 @@ beforeEach(async () => {
   config.link("discord", "D-BETO", "github", "beto")
   chat = new FakeChat("discord")
   now = MONDAY_10
-  newsroom = new Newsroom(
-    db,
-    config,
-    [chat],
-    () => Promise.resolve(undefined),
-    () => now,
-  )
+  newsroom = new Newsroom(db, config, [chat], () => Promise.resolve(undefined), { now: () => now })
   reminders = new Reminders(db, newsroom, config, [chat], "America/Sao_Paulo", () => now)
   const requested = pull("review_requested", { requested_reviewer: { login: "beto" } })
   if (requested === undefined) throw new Error("expected a change")

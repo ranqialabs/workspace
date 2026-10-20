@@ -54,8 +54,20 @@ as they are.
 | `GITHUB_ORG`  | the org whose repos and people bob follows                       |
 | `BOB_REPO`    | bob's own repo, whose home channel hears about bob's own deploys |
 | `PUBLIC_URL`  | where bob answers on the web, for the services' OAuth callbacks  |
-| `AGENT_MODEL` | the OpenAI model behind the agent                                |
+| `AGENT_MODEL` | the DeepSeek model behind the agent and its notes                |
 | `TIMEZONE`    | the team's time zone, for working hours and the retro's days     |
+
+The agent needs a DeepSeek key. Without one bob still posts news and the retro
+still counts, and asking the agent answers that the key is missing:
+
+```sh
+DEEPSEEK_API_KEY="sk-..."
+```
+
+`AGENT_MODEL` picks the model: `deepseek-v4-flash` by default, `deepseek-v4-pro`
+for longer investigations. Their prices, per million tokens, are in
+`src/agent/pricing.ts`, and the line under each answer is read from there: a
+model missing from that table shows no cost rather than a wrong one.
 
 When a new version of bob runs, a card in `BOB_REPO`'s home channel says how
 long it took from the commit to the build, to running, and to the slash
@@ -154,5 +166,5 @@ bun run docs       # this site, at http://localhost:8000
 
 The hooks run oxlint (type-aware), oxfmt and the tests before each commit.
 Tests run on Bun with an in-memory SQLite standing in for Durable Object storage
-and a scripted model standing in for OpenAI, so they need no network and no
+and a scripted model standing in for DeepSeek, so they need no network and no
 Cloudflare account.

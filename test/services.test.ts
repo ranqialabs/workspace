@@ -61,7 +61,7 @@ const REQUESTER = { platform: "discord" as const, channel: "c1", user: "u1" }
 const OPTIONS = { toolCallId: "t", messages: [], context: {} }
 
 describe("the catalog", () => {
-  test("tool names carry the service and fit OpenAI's limit", () => {
+  test("tool names carry the service and fit the API's limit", () => {
     expect(toolName("dorothy", "list_sites")).toBe("dorothy_list_sites")
     expect(toolName("posthog", "query.run")).toBe("posthog_query_run")
     expect(toolName("posthog", "x".repeat(80))).toHaveLength(64)
@@ -143,7 +143,7 @@ describe("commands", () => {
   })
 })
 
-test("the progress card names the service a tool belongs to", () => {
+test("a tool line names the service it belongs to", () => {
   const step: Step = { id: "1", tool: "dorothy_list_sites", input: {}, state: "done" }
   expect(stepLine(step)).toBe("✅ Asked Dorothy: `list_sites`")
 })

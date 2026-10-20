@@ -22,6 +22,16 @@ export function says(text: string): Chunk[] {
   ]
 }
 
+/** Reasoning before the answer, as a thinking model streams it. */
+export function thinks(thought: string, text: string): Chunk[] {
+  return [
+    { type: "reasoning-start", id: "r" },
+    { type: "reasoning-delta", id: "r", delta: thought },
+    { type: "reasoning-end", id: "r" },
+    ...says(text),
+  ]
+}
+
 export function calls(id: string, name: string, input: object): Chunk[] {
   return [
     { type: "tool-call", toolCallId: id, toolName: name, input: JSON.stringify(input) },

@@ -20,10 +20,17 @@ import { type Card, type Field, type Mentions, type Tone, who } from "./card"
 import { KIND, MARK, outcomeMark, outcomeTone } from "./glyphs"
 import { code, count, oneLine } from "./text"
 
-export function draw(story: Story, mentions: Mentions): Card {
-  if (story.kind === "issue") return issueCard(story, mentions)
-  if (story.kind === "pull") return pullCard(story, mentions)
-  return pipelineCard(story, mentions)
+/** `note` is the one line the model wrote for whoever this card pings, read before the body. */
+export function draw(story: Story, mentions: Mentions, note?: string): Card {
+  if (story.kind === "issue") return issueCard(story, mentions, note)
+  if (story.kind === "pull") return pullCard(story, mentions, note)
+  return pipelineCard(story, mentions, note)
+}
+
+/** The note before the body, on its own paragraph; the body stays as GitHub wrote it. */
+function withNote(note: string | undefined, body: string | undefined): string | undefined {
+  if (note === undefined) return body
+  return body === undefined || body === "" ? note : `${note}\n\n${body}`
 }
 
 /** The buttons under a story's card; `id` is the story's number in storage. */
@@ -60,7 +67,7 @@ const ISSUE_STATE: Record<IssueStory["status"], [Tone, string]> = {
   not_planned: ["grey", "Closed as not planned"],
 }
 
-function issueCard(story: IssueStory, mentions: Mentions): Card {
+function issueCard(story: IssueStory, mentions: Mentions, note?: string): Card {
   const [tone, state] = ISSUE_STATE[story.status]
   const fields: Field[] = [{ name: "Opened by", value: who(mentions, story.author), inline: true }]
   if (story.assignees.length > 0) {
@@ -76,7 +83,7 @@ function issueCard(story: IssueStory, mentions: Mentions): Card {
     kickerUrl: story.repo.url,
     title: `${story.title} #${story.number}`,
     url: story.url,
-    body: story.status === "open" ? story.body : undefined,
+    body: withNote(note, story.status === "open" ? story.body : undefined),
     fields,
     at: story.at,
   }
@@ -103,7 +110,7 @@ function reviewLine(review: Review, mentions: Mentions): string {
   return review.comments > 0 ? `${mark} ${said}, with ${notes}` : `${mark} ${said}`
 }
 
-function pullCard(story: PullStory, mentions: Mentions): Card {
+function pullCard(story: PullStory, mentions: Mentions, note?: string): Card {
   const [tone, state] = pullState(story)
   const fields: Field[] = [{ name: "Opened by", value: who(mentions, story.author), inline: true }]
   if (story.closedBy !== undefined && story.status !== "open") {
@@ -120,7 +127,7 @@ function pullCard(story: PullStory, mentions: Mentions): Card {
     kickerUrl: story.repo.url,
     title: `${story.title} #${story.number}`,
     url: story.url,
-    body: story.status === "open" ? story.body : undefined,
+    body: withNote(note, story.status === "open" ? story.body : undefined),
     fields,
     at: story.at,
   }
@@ -166,7 +173,7 @@ function stepLines(story: PipelineStory): string[] {
 
 const CHECKS_STATE = { passed: "Checks passed", failed: "Checks failed", running: "Checks running" }
 
-function pipelineCard(story: PipelineStory, mentions: Mentions): Card {
+function pipelineCard(story: PipelineStory, mentions: Mentions, note?: string): Card {
   const { repo, commit } = story
   const short = code(story.sha.slice(0, 7))
   const ok = pipelineVerdict(story)
@@ -181,7 +188,7 @@ function pipelineCard(story: PipelineStory, mentions: Mentions): Card {
     title: commit?.subject ?? `${story.sha.slice(0, 7)} on ${repo.defaultBranch}`,
     url: `${repo.url}/commit/${story.sha}`,
     // Without the commit the title already names the sha.
-    body: (commit === undefined ? lines : [lead, ...lines]).join("\n"),
+    body: withNote(note, (commit === undefined ? lines : [lead, ...lines]).join("\n")),
     at: story.at,
   }
 }

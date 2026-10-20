@@ -34,6 +34,7 @@ function setup(model: ReturnType<typeof scripted>, sauron?: Sauron) {
   const session = new Session(memoryDatabase(), {
     name: "discord:c:",
     chat,
+    modelId: "deepseek-v4-flash",
     model: () => model,
     sauron: () => sauron,
     github: () =>
@@ -64,7 +65,7 @@ function button(chat: FakeChat, label: string): { action: string; target: number
 }
 
 describe("answering", () => {
-  test("a mention gets a progress card, the recent messages, then the answer", async () => {
+  test("a mention gets one message, the recent messages, then the answer in it", async () => {
     const model = scripted(says("It's in `auth.ts`."))
     const { chat, session } = setup(model)
     chat.history = [
@@ -77,19 +78,16 @@ describe("answering", () => {
     ]
     await session.mention(turn("q1", "where is login?"))
 
-    expect(chat.log).toEqual([
-      "post c/m1 ↩q1 🤖 bob",
-      "read c before q1",
-      "edit c/m1 🤖 bob",
-      "post c/m2 ↩q1 It's in `auth.ts`.",
-    ])
+    // One message for the whole run: posted while it thinks, edited into the answer.
+    expect(chat.posts).toHaveLength(1)
+    expect(chat.posts[0]?.text).toBe("💭 Thinking…")
     expect(chat.posts[0]?.buttons?.map((b) => b.label)).toEqual(["Stop"])
     const done = chat.edits.get("m1")
     expect(done?.buttons).toBeUndefined()
-    expect(done?.cards?.[0]).toMatchObject({
-      title: "Answered",
-      footer: expect.stringContaining("tokens"),
-    })
+    expect(done?.cards).toBeUndefined()
+    expect(done?.text).toStartWith("It's in `auth.ts`.\n\n✅")
+    expect(done?.text).toContain("tokens")
+    expect(chat.log).toContain("read c before q1")
     expect(JSON.stringify(model.doStreamCalls[0]?.prompt)).toContain("Beto: login is broken")
   })
 
@@ -118,7 +116,7 @@ describe("answering", () => {
     await first
     expect(model.requests).toBe(2)
     expect(JSON.stringify(model.doStreamCalls[1]?.prompt)).toContain("Beto: two")
-    expect(chat.log.at(-1)).toBe("post c/m5 ↩q2 B.")
+    expect(chat.log.at(-1)).toStartWith("edit c/m3 B.")
   })
 
   test("only the person who asked can stop the run", async () => {
@@ -130,10 +128,7 @@ describe("answering", () => {
     expect(await session.press("stop", stop.target, beto)).toBe("Only Ana can stop this answer.")
     expect(await session.press("stop", stop.target, ana)).toBeUndefined()
     await run
-    expect(chat.edits.get("m1")?.cards?.[0]).toMatchObject({
-      title: "Stopped by Ana",
-      tone: "grey",
-    })
+    expect(chat.edits.get("m1")?.text).toBe("⚪ Stopped by Ana")
     expect(await session.press("stop", 0, ana)).toBe("Nothing is running here.")
   })
 })

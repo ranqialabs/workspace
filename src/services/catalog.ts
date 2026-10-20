@@ -114,7 +114,7 @@ export interface Requester {
   user?: string
 }
 
-/** `dorothy_list_sites`, within OpenAI's 64 characters. */
+/** `dorothy_list_sites`, within the 64 characters the chat API allows. */
 export function toolName(service: ServiceId, tool: string): string {
   return `${service}_${tool.replaceAll(/[^A-Za-z0-9_-]/g, "_")}`.slice(0, 64)
 }

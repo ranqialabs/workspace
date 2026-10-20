@@ -1,15 +1,14 @@
-// The card that shows what the agent is doing, one line per tool call, edited
-// as the run goes. Pure and total: a progress line is never worth failing a
-// run over, so any shape a tool's input arrives in comes back as text.
-import type { Step, Usage } from "../agent/progress"
+// A run as the one message bob keeps editing: the thinking above it while the
+// run goes, the answer itself as it is written, and a line of numbers at the
+// end. No card: a card makes the reader open a box to read what bob said, and
+// then scroll to a second message to read it again.
+import type { Progress, Step, Usage } from "../agent/progress"
+import { costOf } from "../agent/pricing"
 import { SERVICES } from "../services/catalog"
-import type { Card, Tone } from "./card"
-import { KIND, MARK } from "./glyphs"
-import { code, compact, cut, oneLine, repoName } from "./text"
+import { MARK } from "./glyphs"
+import { code, compact, count, cut, oneLine, repoName, usd } from "./text"
 
 export type RunStatus =
-  | { kind: "thinking" }
-  | { kind: "working" }
   | { kind: "answered" }
   | { kind: "drafted" }
   | { kind: "stopped"; by: string }
@@ -73,33 +72,64 @@ const SUBJECT = [
   "service",
 ]
 const MAX_LINE = 120
-const MAX_STEPS = 12
+// The thinking is read while it moves and deleted when the run ends, so only
+// its tail is worth the space.
+const THINKING_LIMIT = 400
 
-const STATUS: Record<RunStatus["kind"], [Tone, string]> = {
-  thinking: ["blue", "Thinking…"],
-  working: ["blue", "Working…"],
-  answered: ["green", "Answered"],
-  drafted: ["green", "Drafted an issue"],
-  stopped: ["grey", "Stopped"],
-  failed: ["red", "Failed"],
+/** The message while the run goes: what bob is thinking, what it is writing, and what it is doing. */
+export function liveText(progress: Progress, limit: number): string {
+  const blocks: string[] = []
+  const thought = tail(progress.thinking, THINKING_LIMIT)
+  const answer = progress.answer.trim()
+  const activity = activityLine(progress, answer !== "")
+  if (thought !== "") blocks.push(`> 💭 ${thought}`)
+  if (answer !== "") blocks.push(answer)
+  if (activity !== undefined) blocks.push(activity)
+  if (blocks.length === 0) return "💭 Thinking…"
+  return within(blocks.join("\n\n"), limit)
 }
 
-export function progressCard(steps: readonly Step[], status: RunStatus, usage?: Usage): Card {
-  const [tone, word] = STATUS[status.kind]
-  let title = word
-  if (status.kind === "stopped") title = `Stopped by ${status.by}`
-  if (status.kind === "failed") title = `Failed: ${oneLine(status.reason, 200)}`
-  const shown = steps.slice(-MAX_STEPS)
-  const folded = steps.length - shown.length
-  const lines = shown.map(stepLine)
-  if (folded > 0) lines.unshift(`… ${folded} earlier`)
-  return {
-    tone,
-    kicker: `${KIND.bob} bob`,
-    title,
-    body: lines.length > 0 ? lines.join("\n") : undefined,
-    footer: usage === undefined ? undefined : tokens(usage),
+/** The message once it ends: the answer alone, then one line saying what it used. */
+export function answerText(
+  progress: Progress,
+  status: RunStatus,
+  usage?: Usage,
+  model?: string,
+): string {
+  const answer = progress.answer.trim()
+  const line = summary(status, progress.steps, usage, model)
+  return answer === "" ? line : `${answer}\n\n${line}`
+}
+
+/** `✅ 3 tool calls · 12.4k tokens (12.4k in, 9k cached, 800 out) · $0.0003`. */
+export function summary(
+  status: RunStatus,
+  steps: readonly Step[],
+  usage?: Usage,
+  model?: string,
+): string {
+  const [mark, words] = outcome(status)
+  const parts: string[] = []
+  if (words !== undefined) parts.push(words)
+  if (steps.length > 0) {
+    const calls = count(steps.length, "tool call")
+    const failed = steps.filter((step) => step.state === "failed").length
+    parts.push(failed === 0 ? calls : `${calls} (${failed} failed)`)
   }
+  if (usage !== undefined) {
+    parts.push(tokens(usage))
+    const cost = model === undefined ? undefined : costOf(usage, model)
+    if (cost !== undefined) parts.push(usd(cost))
+  }
+  return `${mark} ${parts.join(" · ")}`.trim()
+}
+
+/** The mark that opens the line, and what it has to say beyond the mark. */
+function outcome(status: RunStatus): [string, string | undefined] {
+  if (status.kind === "drafted") return ["📝", "Drafted an issue"]
+  if (status.kind === "stopped") return ["⚪", `Stopped by ${status.by}`]
+  if (status.kind === "failed") return [MARK.failed, `Failed: ${oneLine(status.reason, 200)}`]
+  return [MARK.done, undefined]
 }
 
 /** `13.2k tokens (12.4k in, 9k cached, 800 out)`. */
@@ -120,6 +150,26 @@ export function stepLine(step: Step): string {
   const mark = { running: MARK.waiting, done: MARK.done, failed: MARK.warning }[step.state]
   const error = step.error === undefined ? "" : `: ${oneLine(step.error.split("\n")[0] ?? "", 60)}`
   return cut(`${mark} ${oneLine(parts.join(" "), MAX_LINE)}${error}`, MAX_LINE + 64)
+}
+
+/** What bob is doing right now: the running call, or the last one while it thinks of the next. */
+function activityLine(progress: Progress, answered: boolean): string | undefined {
+  const running = progress.steps.findLast((step) => step.state === "running")
+  if (running !== undefined) return stepLine(running)
+  if (answered) return undefined
+  const last = progress.steps.at(-1)
+  return last === undefined ? undefined : stepLine(last)
+}
+
+/** `text` cut to `limit` characters, keeping the end, since that is what just arrived. */
+function tail(text: string, limit: number): string {
+  const line = text.replaceAll(/\s+/g, " ").trim()
+  return line.length <= limit ? line : `…${line.slice(line.length - limit + 1)}`
+}
+
+/** The whole message within one platform's limit; the session splits a longer answer itself. */
+function within(text: string, limit: number): string {
+  return text.length <= limit ? text : `…${text.slice(text.length - limit + 1)}`
 }
 
 /** `dorothy_list_sites` reads as "Asking Dorothy: `list_sites`". */

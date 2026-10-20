@@ -29,26 +29,30 @@ After that the conversation is **stored**: the next turn sees everything the
 model saw before, including what each tool returned. The model reads back the
 last twenty turns; older ones stay stored.
 
-### The progress card
+### One message per answer
 
-Each answer starts with a card that lists bob's tool calls, one line each, and
-is edited as they run. A call reads in the present while it runs and in the
-past once it is done:
+An answer is a single message that bob edits while it works, so the channel
+gets nothing to scroll past afterwards:
 
 ```text
-🤖 bob
-Working…
-✅ Read `src/auth.ts` in web
-✅ Searched code for `useSession`
-⏳ Reading issue #12 in web
+> 💭 the callback calls auth.ts before the state is set…
+
+The redirect drops the `state` parameter, in `src/auth.ts:42`.
+
+✅ 3 tool calls · 13.2k tokens (12.4k in, 9k cached, 800 out) · $0.0010
 ```
 
-A failed call turns ⚠️ and says why; the agent usually works around it. When
-the run ends the card turns green and says _Answered_ or _Drafted an issue_,
-with the tokens it used, and the answer arrives as a reply. A failed run turns
-red and says why.
+While the run goes, the message carries what bob is thinking, the answer as it
+is written, and the call in flight, which reads in the present while it runs
+and in the past once it is done (`⏳ Asking Dorothy: list_sites`). A failed
+call turns ⚠️ and says why; the agent usually works around it.
 
-**Stop** on the card ends the run. Only whoever asked can press it.
+The last edit deletes the thinking and leaves the answer alone with one line
+of numbers: the tool calls, the tokens and what the run cost. A run that was
+stopped or failed says who stopped it, or why it failed, in the same line. A
+long answer spills into more messages after the first.
+
+**Stop** on the message ends the run. Only whoever asked can press it.
 
 ### One answer at a time
 
@@ -147,7 +151,7 @@ empty, so Grafana refuses every request to it.
 
 bob reaches Dorothy, Cloudflare and PostHog through their MCP servers. Their
 tools show up under the service's name (`dorothy_list_sites`,
-`posthog_query_run`) and the progress card reads _Asked Dorothy: `list_sites`_.
+`posthog_query_run`) and the message reads _Asked Dorothy: `list_sites`_.
 
 | Service    | Connects with                                      | Gives bob                                       |
 | :--------- | :------------------------------------------------- | :---------------------------------------------- |

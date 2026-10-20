@@ -1,9 +1,11 @@
-// The language model behind the agent and the retro, from `AGENT_MODEL`.
-import { createOpenAI } from "@ai-sdk/openai"
+// The language model behind the agent, the retro and the news notes, from
+// `AGENT_MODEL`. DeepSeek V4 thinks on its own, so the run gets the model's
+// reasoning streamed back without asking for it.
+import { createDeepSeek } from "@ai-sdk/deepseek"
 import type { LanguageModel } from "ai"
 
-/** Undefined without an OpenAI key: the retro then lists titles as they are. */
+/** Undefined without a DeepSeek key: the retro then lists titles as they are. */
 export function modelFor(env: Env): LanguageModel | undefined {
-  if (!env.OPENAI_API_KEY) return undefined
-  return createOpenAI({ apiKey: env.OPENAI_API_KEY })(env.AGENT_MODEL)
+  if (!env.DEEPSEEK_API_KEY) return undefined
+  return createDeepSeek({ apiKey: env.DEEPSEEK_API_KEY })(env.AGENT_MODEL)
 }

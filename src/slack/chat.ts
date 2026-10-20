@@ -5,7 +5,7 @@ import { z } from "zod"
 
 import type { Attachment, Chat, ChatMessage, MessageRef, Outgoing, ReadOptions } from "../chat/chat"
 import type { SlackApi } from "./api"
-import { messageBody } from "./blocks"
+import { MARKDOWN_LIMIT, messageBody } from "./blocks"
 
 const Posted = z.object({ ts: z.string(), channel: z.string() })
 const UploadUrl = z.object({ upload_url: z.string(), file_id: z.string() })
@@ -40,6 +40,9 @@ export interface SlackUser {
 
 export class SlackChat implements Chat {
   readonly platform = "slack"
+  readonly textLimit = MARKDOWN_LIMIT
+  /** Slack notifies no one about an edit, so a ping has to be a message of its own. */
+  readonly notifiesOnEdit = false
   private readonly users = new Map<string, Promise<SlackUser>>()
 
   constructor(private readonly api: SlackApi) {}

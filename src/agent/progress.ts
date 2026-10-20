@@ -1,5 +1,5 @@
-// The tool calls of one run, in order, as the run reports them. It only keeps
-// state; `ui/progress` decides how a call reads on the card.
+// The tool calls and the words of one run, in order, as the run reports them.
+// It only keeps state; `ui/progress` decides how it reads on the message.
 
 export type StepState = "running" | "done" | "failed"
 
@@ -20,6 +20,8 @@ export interface Usage {
 
 export class Progress {
   private readonly log: Step[] = []
+  private thought = ""
+  private said = ""
 
   started(id: string, tool: string, input: unknown): void {
     this.log.push({ id, tool, input, state: "running" })
@@ -32,8 +34,26 @@ export class Progress {
     if (error !== undefined) step.error = messageOf(error)
   }
 
+  /** What the model is thinking now; a new thought replaces the last one's. */
+  reasoned(text: string): void {
+    this.thought = text
+  }
+
+  /** The answer so far, whole rather than appended. */
+  wrote(text: string): void {
+    this.said = text
+  }
+
   get steps(): readonly Step[] {
     return this.log
+  }
+
+  get thinking(): string {
+    return this.thought
+  }
+
+  get answer(): string {
+    return this.said
   }
 }
 

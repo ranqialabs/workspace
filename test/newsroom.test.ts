@@ -20,6 +20,7 @@ const issue = (action: string, extra: object = {}) =>
     issue: {
       number: 7,
       title: "Login loops",
+      body: "It loops after the redirect.",
       html_url: "https://github.com/acme/web/issues/7",
       state: action === "closed" ? "closed" : "open",
       state_reason: action === "closed" ? "completed" : null,
@@ -68,7 +69,7 @@ beforeEach(() => {
       lookups.push(`${repo}@${sha}`)
       return Promise.resolve({ subject: "fix: the loop", login: "ana" })
     },
-    () => now,
+    { now: () => now },
   )
 })
 
@@ -83,16 +84,28 @@ test("news goes only to platforms that follow the repo", async () => {
   expect(slack.log).toEqual([])
 })
 
-test("a fresh card is edited, and a ping on it goes out as a reply", async () => {
+test("a ping on a fresh card rides on the edit, with no second message", async () => {
   await newsroom.publish(must(issue("opened")))
   now += 5 * 60_000
   await newsroom.publish(must(issue("assigned", { assignee: { login: "ana" } })))
   await newsroom.publish(must(issue("closed")))
   expect(discord.log).toEqual([
     "post d-web/m1 <@&r1> | 🐛 Open issue in web",
-    "edit d-web/m1 🐛 Open issue in web",
-    "post d-web/m2 ↩m1 <@D-ANA>",
+    "edit d-web/m1 <@D-ANA> | 🐛 Open issue in web",
     "edit d-web/m1 🐛 Closed issue in web",
+  ])
+})
+
+test("a ping on a fresh Slack card is a reply, since Slack says nothing about edits", async () => {
+  config.mapChannel("acme/web", "slack", "home", "s-web")
+  config.link("slack", "S-ANA", "github", "ana")
+  await newsroom.publish(must(issue("opened")))
+  now += 5 * 60_000
+  await newsroom.publish(must(issue("assigned", { assignee: { login: "ana" } })))
+  expect(slack.log).toEqual([
+    "post s-web/m1 🐛 Open issue in web",
+    "edit s-web/m1 🐛 Open issue in web",
+    "post s-web/m2 ↩m1 <@S-ANA>",
   ])
 })
 
@@ -147,10 +160,46 @@ test("turning the default branch red pings the commit's author, once", async () 
   await newsroom.publish(must(job("e2e", "failure")))
   expect(discord.log).toEqual([
     "post d-web/m1 🚦 Checks passed in web",
-    "edit d-web/m1 🚦 Checks failed in web",
-    "post d-web/m2 ↩m1 <@D-ANA>",
+    "edit d-web/m1 <@D-ANA> | 🚦 Checks failed in web",
     "edit d-web/m1 🚦 Checks failed in web",
   ])
+})
+
+test("a card that pings someone reads the model's line above the body", async () => {
+  const seen: string[] = []
+  newsroom = new Newsroom(memoryDatabase(), config, [discord], () => Promise.resolve(undefined), {
+    narrate: ({ pinged }) => {
+      seen.push(pinged.join(","))
+      return Promise.resolve("Ana picked this up and is on it now.")
+    },
+  })
+  await newsroom.publish(must(issue("opened")))
+  await newsroom.publish(must(issue("assigned", { assignee: { login: "ana" } })))
+  expect(seen).toEqual(["", "ana"])
+  expect(discord.edits.get("m1")?.cards?.[0]?.body).toBe(
+    "Ana picked this up and is on it now.\n\nIt loops after the redirect.",
+  )
+})
+
+test("a card that pings no one asks the model nothing", async () => {
+  let asked = 0
+  newsroom = new Newsroom(memoryDatabase(), config, [discord], () => Promise.resolve(undefined), {
+    narrate: () => {
+      asked += 1
+      return Promise.resolve("should not happen")
+    },
+  })
+  await newsroom.publish(must(issue("closed")))
+  expect(asked).toBe(0)
+  expect(discord.log).toHaveLength(1)
+})
+
+test("the card still goes out when the model fails", async () => {
+  newsroom = new Newsroom(memoryDatabase(), config, [discord], () => Promise.resolve(undefined), {
+    narrate: () => Promise.reject(new Error("rate limited")),
+  })
+  await newsroom.publish(must(issue("opened")))
+  expect(discord.log).toEqual(["post d-web/m1 <@&r1> | 🐛 Open issue in web"])
 })
 
 test("a failed lookup still publishes, leading with the sha", async () => {

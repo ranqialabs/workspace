@@ -5,7 +5,6 @@
 import { type LanguageModel, type ModelMessage, modelMessageSchema, tool, type ToolSet } from "ai"
 import { z } from "zod"
 
-import type { Card } from "../ui/card"
 import type { Button, Chat, MessageRef } from "../chat/chat"
 import { Throttled } from "../chat/throttle"
 import type { GitHub } from "../github/app"
@@ -16,9 +15,9 @@ import { IssueDraft } from "./draft"
 import { draftCard, type DraftState } from "../ui/draft"
 import { BUTTON, REPLY } from "../ui/replies"
 import { type ConversationAction, pressId } from "../chat/press"
-import { cut } from "../ui/text"
-import { Progress } from "./progress"
-import { progressCard, type RunStatus } from "../ui/progress"
+import { cut, split } from "../ui/text"
+import { Progress, type Usage } from "./progress"
+import { answerText, liveText, type RunStatus } from "../ui/progress"
 import { type Ask, turnText } from "./prompt"
 import { runAgent } from "./run"
 import type { Sauron } from "../sauron/client"
@@ -75,6 +74,8 @@ export interface Surroundings {
 export interface SessionDeps {
   name: string
   chat: Chat
+  /** The id the model was opened with, for what a run costs. */
+  modelId: string
   github(): Promise<GitHub>
   model(): LanguageModel
   surroundings(): Promise<Surroundings>
@@ -186,15 +187,20 @@ export class Session {
     const place = this.place()
     const progress = new Progress()
     const stop: Button = { id: this.buttonId("stop", 0), label: BUTTON.stop, style: "secondary" }
-    const card = await chat.post(place.channel, {
-      cards: [progressCard(progress.steps, { kind: "thinking" })],
+    const reply = this.replyRef(lastMessage)
+    // One message for the whole run: bob edits it as it thinks and writes, and
+    // it ends holding the answer and what that cost. The thinking is deleted
+    // with the last edit, since it was only ever a sign of life.
+    const message = await chat.post(place.channel, {
+      text: liveText(progress, chat.textLimit),
       buttons: [stop],
-      replyTo: this.replyRef(lastMessage),
+      replyTo: reply,
     })
-    const live = new Throttled<Card>(
-      (shown) => chat.edit(card, { cards: [shown], buttons: [stop] }),
+    const live = new Throttled<string>(
+      (text) => chat.edit(message, { text, buttons: [stop] }),
       LIVE_EDIT_MS,
     )
+    const show = () => live.update(liveText(progress, chat.textLimit))
 
     try {
       const [surroundings, github] = await Promise.all([
@@ -228,28 +234,32 @@ export class Session {
           .join("\n\n"),
         signal: controller.signal,
         events: {
+          reasoning(soFar) {
+            progress.reasoned(soFar)
+            show()
+          },
+          text(soFar) {
+            progress.wrote(soFar)
+            show()
+          },
           toolStarted(id, name, input) {
             progress.started(id, name, input)
-            live.update(progressCard(progress.steps, { kind: "working" }))
+            show()
           },
           toolFinished(id, error) {
             progress.finished(id, error)
-            live.update(progressCard(progress.steps, { kind: "working" }))
+            show()
           },
         },
       })
       this.remember(result.messages)
       const status: RunStatus = { kind: result.reply.kind === "draft" ? "drafted" : "answered" }
+      // What the model said, whole: the streamed deltas are only an approximation of it.
+      progress.wrote(result.reply.text || (result.reply.kind === "answer" ? REPLY.noAnswer : ""))
       await live.settle()
-      await chat.edit(card, { cards: [progressCard(progress.steps, status, result.usage)] })
-
-      if (result.reply.kind === "answer") {
-        await chat.post(place.channel, {
-          text: result.reply.text || REPLY.noAnswer,
-          replyTo: this.replyRef(lastMessage),
-        })
-      } else {
-        await this.propose(result.reply.draft, requester, result.reply.text, lastMessage)
+      await this.settleAnswer(message, progress, status, reply, result.usage)
+      if (result.reply.kind === "draft") {
+        await this.propose(result.reply.draft, requester, lastMessage)
       }
     } catch (error) {
       let status: RunStatus = { kind: "stopped", by: stoppedBy(controller.signal) }
@@ -258,16 +268,31 @@ export class Session {
         status = { kind: "failed", reason: explain(error) }
       }
       await live.settle()
-      await chat.edit(card, { cards: [progressCard(progress.steps, status)] })
+      await this.settleAnswer(message, progress, status, reply)
     } finally {
       this.running = undefined
     }
   }
 
+  /** The answer where the run was writing it, spilled into more messages when it is long. */
+  private async settleAnswer(
+    ref: MessageRef,
+    progress: Progress,
+    status: RunStatus,
+    replyTo: MessageRef,
+    usage?: Usage,
+  ): Promise<void> {
+    const { chat } = this.deps
+    const parts = split(answerText(progress, status, usage, this.deps.modelId), chat.textLimit)
+    await chat.edit(ref, { text: parts[0] ?? "" })
+    // Only a thread needs the reference; on Discord the extra parts follow on their own.
+    const thread = this.place().thread === undefined ? undefined : replyTo
+    for (const part of parts.slice(1)) await chat.post(ref.channel, { text: part, replyTo: thread })
+  }
+
   private async propose(
     draft: IssueDraft,
     requester: Ask["author"],
-    note: string,
     replyTo: string,
   ): Promise<void> {
     const place = this.place()
@@ -284,7 +309,6 @@ export class Session {
     )
     const id = this.db.sql.exec<{ id: number }>("SELECT last_insert_rowid() AS id").one().id
     const card = await this.deps.chat.post(place.channel, {
-      text: note || undefined,
       cards: [draftCard(draft, { kind: "proposed", requester: requester.name })],
       buttons: this.draftButtons(id),
       replyTo: this.replyRef(replyTo),

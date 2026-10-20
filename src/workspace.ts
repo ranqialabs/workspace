@@ -7,6 +7,7 @@ import { conversationName, type Origin } from "./agent/conversation"
 import { explainFailure } from "./agent/prompt"
 import type { Turn } from "./agent/session"
 import { modelFor } from "./agent/model"
+import { narratorFor } from "./news/voice"
 import { mentionsFor } from "./chat/mentions"
 import { chats } from "./chat/platforms"
 import { collect, productionDeploys, type Retro } from "./retro/collect"
@@ -55,8 +56,12 @@ export class Workspace extends DurableObject<Env> {
     migrate(ctx.storage, "deliveries", DELIVERIES)
     this.config = new Config(ctx.storage)
     this.directory = new OrgDirectory(env.GITHUB_ORG, () => this.githubClient())
-    this.newsroom = new Newsroom(ctx.storage, this.config, chats(env), (repo, sha) =>
-      this.lookupCommit(repo, sha),
+    this.newsroom = new Newsroom(
+      ctx.storage,
+      this.config,
+      chats(env),
+      (repo, sha) => this.lookupCommit(repo, sha),
+      { narrate: narratorFor(modelFor(env)) },
     )
     this.releases = new Releases(ctx.storage, this.newsroom, chats(env), {
       github: () => this.githubClient(),

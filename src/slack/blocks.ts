@@ -7,7 +7,7 @@ import { cut } from "../ui/text"
 import type { Button, Outgoing } from "../chat/chat"
 
 const SECTION_LIMIT = 3000
-const MARKDOWN_LIMIT = 12_000
+export const MARKDOWN_LIMIT = 12_000
 const FIELD_LIMIT = 2000
 
 // Slack's own references: users, channels, groups and special mentions.

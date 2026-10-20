@@ -6,8 +6,12 @@ icon: lucide/layout-template
 
 Everything bob posts is a card, a reply, or both. This page is the visual
 language they share. The code is in `src/ui`: `glyphs.ts` holds every emoji,
-and each view (`news.ts`, `progress.ts`, `draft.ts`, `commands.ts`) draws one
-kind of card.
+`news.ts`, `draft.ts` and `commands.ts` draw a card each, and `progress.ts`
+draws the one message of an answer.
+
+An answer from the agent is the exception to cards: it is a single message,
+edited from thinking to answer, so it reads as a conversation instead of a box
+to open. See [The agent](agent.md#one-message-per-answer).
 
 ## Anatomy
 
@@ -27,15 +31,14 @@ so on Slack the colour leads the kicker as a dot: `🟢 🐛 Open issue in ada-a
 The kicker's emoji says what the card is about and never changes. The colour
 says its state, following GitHub's own colours where GitHub has one.
 
-| Kind               | Emoji | States and colours                                                    |
-| :----------------- | :---- | :-------------------------------------------------------------------- |
-| Issue              | 🐛    | open 🟢, closed 🟣, closed as not planned ⚪                          |
-| Pull request       | 🔀    | open or approved 🟢, merged 🟣, closed 🔴                             |
-| Checks of a commit | 🚦    | running 🔵, passed 🟢, failed 🔴                                      |
-| The agent at work  | 🤖    | thinking or working 🔵, answered or drafted 🟢, stopped ⚪, failed 🔴 |
-| Issue draft        | 📝    | waiting for review 🔵, filed 🟢, discarded or replaced ⚪             |
-| Configuration      | ⚙️    | Discord's brand colour, no dot                                        |
-| Retro              | 📊    | Discord's brand colour, no dot                                        |
+| Kind               | Emoji | States and colours                                        |
+| :----------------- | :---- | :-------------------------------------------------------- |
+| Issue              | 🐛    | open 🟢, closed 🟣, closed as not planned ⚪              |
+| Pull request       | 🔀    | open or approved 🟢, merged 🟣, closed 🔴                 |
+| Checks of a commit | 🚦    | running 🔵, passed 🟢, failed 🔴                          |
+| Issue draft        | 📝    | waiting for review 🔵, filed 🟢, discarded or replaced ⚪ |
+| Configuration      | ⚙️    | Discord's brand colour, no dot                            |
+| Retro              | 📊    | Discord's brand colour, no dot                            |
 
 A deploy is a line on its commit's checks card, marked 🚀.
 

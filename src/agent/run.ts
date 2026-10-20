@@ -25,6 +25,8 @@ export type Reply =
 export interface RunEvents {
   toolStarted?(id: string, name: string, input: unknown): void
   toolFinished?(id: string, error?: unknown): void
+  /** The model's thinking in the current call, whole rather than appended. */
+  reasoning?(soFar: string): void
   text?(soFar: string): void
 }
 
@@ -79,8 +81,17 @@ export async function runAgent(input: RunInput): Promise<RunResult> {
   })
 
   let text = ""
+  let thought = ""
   for await (const part of result.fullStream) {
     switch (part.type) {
+      case "reasoning-start":
+        thought = ""
+        input.events?.reasoning?.(thought)
+        break
+      case "reasoning-delta":
+        thought += part.text
+        input.events?.reasoning?.(thought)
+        break
       case "text-delta":
         text += part.text
         input.events?.text?.(text)

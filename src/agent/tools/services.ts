@@ -32,7 +32,7 @@ export function servicesTools(port: ServicesPort, catalog: Catalog, requester: R
         const input =
           typeof args === "object" && args !== null ? Object.fromEntries(Object.entries(args)) : {}
         const result = await port.call(remote.service, remote.name, input)
-        // A failed call throws, so the progress card shows it as failed.
+        // A failed call throws, so the message shows it as a failed call.
         if (!result.ok) throw new Error(result.text || "the service reported an error")
         return result.text
       },

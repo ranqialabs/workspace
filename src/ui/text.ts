@@ -50,3 +50,28 @@ export function duration(minutes: number): string {
 export function code(text: string): string {
   return `\`${text}\``
 }
+
+/** `$1.20`, `$0.032`, `$0.0010`, and `<$0.001` for what is too small to round. */
+export function usd(amount: number): string {
+  if (amount >= 1) return `$${amount.toFixed(2)}`
+  if (amount >= 0.01) return `$${amount.toFixed(3)}`
+  if (amount >= 0.001) return `$${amount.toFixed(4)}`
+  return "<$0.001"
+}
+
+/**
+ * `text` in pieces of at most `limit` characters, cut at a line break where one
+ * is near so code blocks and lists stay readable. Empty text is one empty piece.
+ */
+export function split(text: string, limit: number): string[] {
+  const pieces: string[] = []
+  let rest = text
+  while (rest.length > limit) {
+    const newline = rest.lastIndexOf("\n", limit)
+    const at = newline > limit / 2 ? newline : limit
+    pieces.push(rest.slice(0, at))
+    rest = rest.slice(at).replace(/^\n/, "")
+  }
+  pieces.push(rest)
+  return pieces
+}

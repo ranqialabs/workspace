@@ -7,7 +7,7 @@ interface Env {
   DISCORD_GUILD_ID?: string
   SLACK_BOT_TOKEN?: string
   SLACK_SIGNING_SECRET?: string
-  OPENAI_API_KEY?: string
+  DEEPSEEK_API_KEY?: string
   LINEAR_API_KEY?: string
   /** A Viewer service account token for Sauron, the team's Grafana. */
   SAURON_TOKEN?: string

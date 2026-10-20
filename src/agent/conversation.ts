@@ -51,10 +51,11 @@ export class Conversation extends DurableObject<Env> {
     this.session ??= new Session(this.ctx.storage, {
       name,
       chat: chatFor(this.env, origin.platform),
+      modelId: this.env.AGENT_MODEL,
       github: () => this.github(),
       model: () => {
         const model = modelFor(this.env)
-        if (model === undefined) throw new Error("OPENAI_API_KEY is not set")
+        if (model === undefined) throw new Error("DEEPSEEK_API_KEY is not set")
         return model
       },
       sauron: () =>

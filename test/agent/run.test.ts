@@ -5,7 +5,7 @@ import { z } from "zod"
 import { Progress } from "../../src/agent/progress"
 import { stepLine } from "../../src/ui/progress"
 import { runAgent } from "../../src/agent/run"
-import { calls, says, scripted } from "./model"
+import { calls, says, scripted, thinks } from "./model"
 
 const draft = {
   title: "fix: login loops",
@@ -36,6 +36,20 @@ describe("runAgent", () => {
     expect(result.reply).toEqual({ kind: "answer", text: "It's in `auth.ts`." })
     expect(result.messages[0]).toEqual({ role: "user", content: "where is login?" })
     expect(result.usage).toEqual({ inputTokens: 100, outputTokens: 20, cachedTokens: 40 })
+  })
+
+  test("the model's thinking is reported whole as it arrives", async () => {
+    const model = scripted(thinks("auth lives in `src/auth.ts`", "Found it."))
+    const thoughts: string[] = []
+    await runAgent({
+      model,
+      tools: {},
+      history: [],
+      turn: "where is login?",
+      candidates: [],
+      events: { reasoning: (soFar) => thoughts.push(soFar) },
+    })
+    expect(thoughts).toEqual(["", "auth lives in `src/auth.ts`"])
   })
 
   test("each tool call is reported when it starts and when it ends", async () => {

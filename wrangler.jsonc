@@ -37,8 +37,8 @@
     "BOB_REPO": "ranqialabs/workspace",
     // Where bob answers on the web, for the OAuth callbacks of the services it connects to.
     "PUBLIC_URL": "https://bob.ranqia.workers.dev",
-    // The OpenAI model behind the agent.
-    "AGENT_MODEL": "gpt-5.6-terra",
+    // The DeepSeek model behind the agent, the retro and the news notes.
+    "AGENT_MODEL": "deepseek-v4-flash",
     // The team's time zone: reminders go out on its working days and hours,
     // and the retro's days and weeks are its own.
     "TIMEZONE": "America/Sao_Paulo",

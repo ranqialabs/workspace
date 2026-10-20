@@ -51,6 +51,13 @@ export interface ReadOptions {
 
 export interface Chat {
   readonly platform: Platform
+  /** The most text one message takes; longer answers go out as more messages. */
+  readonly textLimit: number
+  /**
+   * Whether adding a mention to a message in an edit notifies the person.
+   * Discord does, Slack does not: there a ping has to be a message of its own.
+   */
+  readonly notifiesOnEdit: boolean
   post(channel: string, message: Outgoing): Promise<MessageRef>
   edit(ref: MessageRef, message: Outgoing): Promise<void>
   delete(ref: MessageRef): Promise<void>
