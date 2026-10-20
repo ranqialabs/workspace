@@ -71,7 +71,9 @@ export class Sauron {
   constructor(
     readonly url: string,
     private readonly token: string,
-    private readonly fetcher: typeof fetch = fetch,
+    // Called as `this.fetcher(...)`, so it must not be the global itself:
+    // workerd refuses a native `fetch` whose `this` is not the global.
+    private readonly fetcher: typeof fetch = (request, init) => fetch(request, init),
   ) {}
 
   async get<S extends z.ZodType>(
