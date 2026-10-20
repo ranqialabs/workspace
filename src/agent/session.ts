@@ -192,7 +192,7 @@ export class Session {
     // it ends holding the answer and what that cost. The thinking is deleted
     // with the last edit, since it was only ever a sign of life.
     const message = await chat.post(place.channel, {
-      text: liveText(progress, chat.textLimit),
+      text: liveText(progress, chat),
       buttons: [stop],
       replyTo: reply,
     })
@@ -200,7 +200,7 @@ export class Session {
       (text) => chat.edit(message, { text, buttons: [stop] }),
       LIVE_EDIT_MS,
     )
-    const show = () => live.update(liveText(progress, chat.textLimit))
+    const show = () => live.update(liveText(progress, chat))
 
     try {
       const [surroundings, github] = await Promise.all([
@@ -283,7 +283,10 @@ export class Session {
     usage?: Usage,
   ): Promise<void> {
     const { chat } = this.deps
-    const parts = split(answerText(progress, status, usage, this.deps.modelId), chat.textLimit)
+    const parts = split(
+      answerText(progress, status, chat, usage, this.deps.modelId),
+      chat.textLimit,
+    )
     await chat.edit(ref, { text: parts[0] ?? "" })
     // Only a thread needs the reference; on Discord the extra parts follow on their own.
     const thread = this.place().thread === undefined ? undefined : replyTo

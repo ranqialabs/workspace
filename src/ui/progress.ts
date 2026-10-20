@@ -3,6 +3,7 @@
 // end. No card: a card makes the reader open a box to read what bob said, and
 // then scroll to a second message to read it again.
 import type { Progress, Step, Usage } from "../agent/progress"
+import type { Chat } from "../chat/chat"
 import { costOf } from "../agent/pricing"
 import { SERVICES } from "../services/catalog"
 import { MARK } from "./glyphs"
@@ -74,34 +75,45 @@ const SUBJECT = [
 const MAX_LINE = 120
 // The thinking is read while it moves and deleted when the run ends, so only
 // its tail is worth the space.
-const THINKING_LIMIT = 400
+const THINKING_LIMIT = 160
+// Enough calls to show the shape of the work without turning into a log.
+const CALLS_SHOWN = 3
 
-/** The message while the run goes: what bob is thinking, what it is writing, and what it is doing. */
-export function liveText(progress: Progress, limit: number): string {
-  const blocks: string[] = []
-  const thought = tail(progress.thinking, THINKING_LIMIT)
+/**
+ * The message while the run goes: the thinking while the model thinks, what it
+ * is writing, and the calls it made. Only the last step's words are kept, which
+ * is also what the run answers with: the prose of an earlier step is commentary
+ * on a call that already happened.
+ */
+export function liveText(progress: Progress, chat: Pick<Chat, "textLimit" | "subtle">): string {
   const answer = progress.answer.trim()
-  const activity = activityLine(progress, answer !== "")
-  if (thought !== "") blocks.push(`> 💭 ${thought}`)
+  const blocks: string[] = []
+  // The thinking goes stale the moment the model starts writing this step.
+  if (answer === "") {
+    const thought = tail(progress.thinking, THINKING_LIMIT)
+    if (thought !== "") blocks.push(chat.subtle(`💭 ${thought}`))
+  }
   if (answer !== "") blocks.push(answer)
-  if (activity !== undefined) blocks.push(activity)
-  if (blocks.length === 0) return "💭 Thinking…"
-  return within(blocks.join("\n\n"), limit)
+  const calls = progress.steps.slice(-CALLS_SHOWN).map(stepLine)
+  if (calls.length > 0) blocks.push(chat.subtle(calls.join("\n")))
+  if (blocks.length === 0) return chat.subtle("💭 Thinking…")
+  return within(blocks.join("\n\n"), chat.textLimit)
 }
 
-/** The message once it ends: the answer alone, then one line saying what it used. */
+/** The message once it ends: the answer alone, then one quiet line saying what it used. */
 export function answerText(
   progress: Progress,
   status: RunStatus,
+  chat: Pick<Chat, "subtle">,
   usage?: Usage,
   model?: string,
 ): string {
   const answer = progress.answer.trim()
-  const line = summary(status, progress.steps, usage, model)
+  const line = chat.subtle(summary(status, progress.steps, usage, model))
   return answer === "" ? line : `${answer}\n\n${line}`
 }
 
-/** `✅ 3 tool calls · 12.4k tokens (12.4k in, 9k cached, 800 out) · $0.0003`. */
+/** `✅ 10 calls (8 failed) · 138k in · 1.5k out · $0.0056`. */
 export function summary(
   status: RunStatus,
   steps: readonly Step[],
@@ -112,12 +124,12 @@ export function summary(
   const parts: string[] = []
   if (words !== undefined) parts.push(words)
   if (steps.length > 0) {
-    const calls = count(steps.length, "tool call")
+    const calls = count(steps.length, "call")
     const failed = steps.filter((step) => step.state === "failed").length
     parts.push(failed === 0 ? calls : `${calls} (${failed} failed)`)
   }
   if (usage !== undefined) {
-    parts.push(tokens(usage))
+    parts.push(`${compact(usage.inputTokens)} in`, `${compact(usage.outputTokens)} out`)
     const cost = model === undefined ? undefined : costOf(usage, model)
     if (cost !== undefined) parts.push(usd(cost))
   }
@@ -132,33 +144,22 @@ function outcome(status: RunStatus): [string, string | undefined] {
   return [MARK.done, undefined]
 }
 
-/** `13.2k tokens (12.4k in, 9k cached, 800 out)`. */
-export function tokens(usage: Usage): string {
-  const total = compact(usage.inputTokens + usage.outputTokens)
-  const cached = usage.cachedTokens > 0 ? `, ${compact(usage.cachedTokens)} cached` : ""
-  return `${total} tokens (${compact(usage.inputTokens)} in${cached}, ${compact(usage.outputTokens)} out)`
-}
-
-/** `✅ Read issue #12 in web`, `⚠️ Reading src/a.ts in web: not found`. */
+/** `✅ Read issue #12 in web`, `⏳ Dorothy: \`list_sites\``, `⚠️ Read src/a.ts: not found`. */
 export function stepLine(step: Step): string {
-  const [running, done] = VERBS[step.tool] ?? serviceVerbs(step.tool)
-  const args = record(step.input)
-  const parts = [step.state === "running" ? running : done]
-  const subject = subjectOf(args)
-  if (subject !== undefined) parts.push(subject)
-  if (typeof args.repo === "string") parts.push(`in ${repoName(args.repo)}`)
+  const verbs = VERBS[step.tool]
+  const parts: string[] = []
+  if (verbs === undefined) {
+    parts.push(serviceCall(step.tool))
+  } else {
+    parts.push(step.state === "running" ? verbs[0] : verbs[1])
+    const args = record(step.input)
+    const subject = subjectOf(args)
+    if (subject !== undefined) parts.push(subject)
+    if (typeof args.repo === "string") parts.push(`in ${repoName(args.repo)}`)
+  }
   const mark = { running: MARK.waiting, done: MARK.done, failed: MARK.warning }[step.state]
   const error = step.error === undefined ? "" : `: ${oneLine(step.error.split("\n")[0] ?? "", 60)}`
   return cut(`${mark} ${oneLine(parts.join(" "), MAX_LINE)}${error}`, MAX_LINE + 64)
-}
-
-/** What bob is doing right now: the running call, or the last one while it thinks of the next. */
-function activityLine(progress: Progress, answered: boolean): string | undefined {
-  const running = progress.steps.findLast((step) => step.state === "running")
-  if (running !== undefined) return stepLine(running)
-  if (answered) return undefined
-  const last = progress.steps.at(-1)
-  return last === undefined ? undefined : stepLine(last)
 }
 
 /** `text` cut to `limit` characters, keeping the end, since that is what just arrived. */
@@ -172,12 +173,11 @@ function within(text: string, limit: number): string {
   return text.length <= limit ? text : `…${text.slice(text.length - limit + 1)}`
 }
 
-/** `dorothy_list_sites` reads as "Asking Dorothy: `list_sites`". */
-function serviceVerbs(tool: string): [string, string] {
+/** `dorothy_list_sites` reads as "Dorothy: `list_sites`"; the mark says whether it ran. */
+function serviceCall(tool: string): string {
   const spec = SERVICES.find((candidate) => tool.startsWith(`${candidate.id}_`))
-  if (spec === undefined) return [tool, tool]
-  const name = code(tool.slice(spec.id.length + 1))
-  return [`Asking ${spec.name}: ${name}`, `Asked ${spec.name}: ${name}`]
+  if (spec === undefined) return tool
+  return `${spec.name}: ${code(tool.slice(spec.id.length + 1))}`
 }
 
 function subjectOf(args: Record<string, unknown>): string | undefined {

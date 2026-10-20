@@ -16,6 +16,15 @@ export class FakeChat implements Chat {
     return this.platform === "discord"
   }
 
+  subtle(text: string): string {
+    return this.platform === "discord"
+      ? text
+          .split("\n")
+          .map((line) => `-# ${line}`)
+          .join("\n")
+      : text
+  }
+
   post(channel: string, message: Outgoing): Promise<MessageRef> {
     const id = `m${this.next++}`
     const reply = message.replyTo === undefined ? "" : ` ↩${message.replyTo.id}`

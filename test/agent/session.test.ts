@@ -80,13 +80,13 @@ describe("answering", () => {
 
     // One message for the whole run: posted while it thinks, edited into the answer.
     expect(chat.posts).toHaveLength(1)
-    expect(chat.posts[0]?.text).toBe("💭 Thinking…")
+    expect(chat.posts[0]?.text).toBe("-# 💭 Thinking…")
     expect(chat.posts[0]?.buttons?.map((b) => b.label)).toEqual(["Stop"])
     const done = chat.edits.get("m1")
     expect(done?.buttons).toBeUndefined()
     expect(done?.cards).toBeUndefined()
-    expect(done?.text).toStartWith("It's in `auth.ts`.\n\n✅")
-    expect(done?.text).toContain("tokens")
+    expect(done?.text).toStartWith("It's in `auth.ts`.\n\n-# ✅")
+    expect(done?.text).toContain(" in · ")
     expect(chat.log).toContain("read c before q1")
     expect(JSON.stringify(model.doStreamCalls[0]?.prompt)).toContain("Beto: login is broken")
   })
@@ -128,7 +128,7 @@ describe("answering", () => {
     expect(await session.press("stop", stop.target, beto)).toBe("Only Ana can stop this answer.")
     expect(await session.press("stop", stop.target, ana)).toBeUndefined()
     await run
-    expect(chat.edits.get("m1")?.text).toBe("⚪ Stopped by Ana")
+    expect(chat.edits.get("m1")?.text).toBe("-# ⚪ Stopped by Ana")
     expect(await session.press("stop", 0, ana)).toBe("Nothing is running here.")
   })
 })

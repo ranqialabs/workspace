@@ -1,7 +1,10 @@
 import { describe, expect, test } from "bun:test"
 
 import { Progress } from "../../src/agent/progress"
-import { answerText, liveText, stepLine, tokens } from "../../src/ui/progress"
+import { answerText, liveText, stepLine } from "../../src/ui/progress"
+import { FakeChat } from "../fake-chat"
+
+const chat = new FakeChat("discord")
 
 describe("progress lines", () => {
   test("a call reads as a sentence, in the present while it runs and the past once done", () => {
@@ -41,43 +44,55 @@ describe("progress lines", () => {
 })
 
 describe("the live message", () => {
-  test("the thinking, the answer and the call in flight, in the order they happen", () => {
+  test("the thinking, the answer and the calls, in the order they happen", () => {
     const progress = new Progress()
     progress.reasoned("checking auth.ts")
     progress.started("1", "read_file", { repo: "acme/web", path: "src/auth.ts" })
-    expect(liveText(progress, 2000)).toBe(
-      "> 💭 checking auth.ts\n\n⏳ Reading `src/auth.ts` in web",
+    expect(liveText(progress, chat)).toBe(
+      "-# 💭 checking auth.ts\n\n-# ⏳ Reading `src/auth.ts` in web",
     )
   })
 
-  test("it opens with a sign of life and drops the activity line once the answer starts", () => {
+  test("it opens with a sign of life, quietly", () => {
+    expect(liveText(new Progress(), chat)).toBe("-# 💭 Thinking…")
+  })
+
+  test("the thinking goes away once the answer starts, and the calls stay", () => {
     const progress = new Progress()
-    expect(liveText(progress, 2000)).toBe("💭 Thinking…")
+    progress.reasoned("checking auth.ts")
     progress.started("1", "list_dir", {})
     progress.finished("1")
-    expect(liveText(progress, 2000)).toBe("✅ Listed")
     progress.wrote("It's in `auth.ts`.")
-    expect(liveText(progress, 2000)).toBe("It's in `auth.ts`.")
+    expect(liveText(progress, chat)).toBe("It's in `auth.ts`.\n\n-# ✅ Listed")
   })
 
   test("the thinking keeps its tail, since only the newest part is worth reading", () => {
     const progress = new Progress()
     progress.reasoned("a".repeat(500))
-    const text = liveText(progress, 2000)
-    expect(text.startsWith("> 💭 …")).toBe(true)
-    expect(text.length).toBe(405)
+    const text = liveText(progress, chat)
+    expect(text.startsWith("-# 💭 …")).toBe(true)
+    expect(text.length).toBe(166)
+  })
+
+  test("only the last few calls are shown", () => {
+    const progress = new Progress()
+    for (const id of ["1", "2", "3", "4"]) {
+      progress.started(id, "list_dir", { path: id })
+      progress.finished(id)
+    }
+    expect(liveText(progress, chat)).toBe("-# ✅ Listed `2`\n-# ✅ Listed `3`\n-# ✅ Listed `4`")
   })
 
   test("a message never passes what the platform takes", () => {
     const progress = new Progress()
     progress.wrote("x".repeat(5000))
-    expect(liveText(progress, 2000)).toHaveLength(2000)
-    expect(liveText(progress, 2000).endsWith("x")).toBe(true)
+    expect(liveText(progress, chat)).toHaveLength(2000)
+    expect(liveText(progress, chat).endsWith("x")).toBe(true)
   })
 })
 
 describe("the final message", () => {
-  test("the thinking is gone and one line says what the answer used", () => {
+  test("the thinking is gone and one quiet line says what the answer used", () => {
     const progress = new Progress()
     progress.reasoned("checking auth.ts")
     progress.wrote("It's in `src/auth.ts`.")
@@ -87,26 +102,27 @@ describe("the final message", () => {
       answerText(
         progress,
         { kind: "answered" },
+        chat,
         { inputTokens: 12_400, outputTokens: 800, cachedTokens: 9_000 },
         "deepseek-v4-flash",
       ),
-    ).toBe(
-      "It's in `src/auth.ts`.\n\n✅ 1 tool call · 13.2k tokens (12.4k in, 9k cached, 800 out) · $0.0010",
-    )
+    ).toBe("It's in `src/auth.ts`.\n\n-# ✅ 1 call · 12.4k in · 800 out · $0.0010")
   })
 
   test("a stopped or failed run says who or why, and still counts what it used", () => {
-    expect(answerText(new Progress(), { kind: "stopped", by: "Ana" })).toBe("⚪ Stopped by Ana")
-    expect(answerText(new Progress(), { kind: "failed", reason: "rate\nlimited" })).toBe(
-      "❌ Failed: rate limited",
+    expect(answerText(new Progress(), { kind: "stopped", by: "Ana" }, chat)).toBe(
+      "-# ⚪ Stopped by Ana",
+    )
+    expect(answerText(new Progress(), { kind: "failed", reason: "rate\nlimited" }, chat)).toBe(
+      "-# ❌ Failed: rate limited",
     )
     expect(
-      answerText(
-        new Progress(),
-        { kind: "drafted" },
-        { inputTokens: 100, outputTokens: 20, cachedTokens: 40 },
-      ),
-    ).toBe("📝 Drafted an issue · 120 tokens (100 in, 40 cached, 20 out)")
+      answerText(new Progress(), { kind: "drafted" }, chat, {
+        inputTokens: 100,
+        outputTokens: 20,
+        cachedTokens: 40,
+      }),
+    ).toBe("-# 📝 Drafted an issue · 100 in · 20 out")
   })
 
   test("a failed call is counted, and an unknown model shows no price", () => {
@@ -119,15 +135,10 @@ describe("the final message", () => {
       answerText(
         progress,
         { kind: "answered" },
+        chat,
         { inputTokens: 100, outputTokens: 20, cachedTokens: 0 },
         "someone-elses-model",
       ),
-    ).toBe("✅ 2 tool calls (1 failed) · 120 tokens (100 in, 20 out)")
-  })
-
-  test("the footer counts tokens compactly", () => {
-    expect(tokens({ inputTokens: 12_400, outputTokens: 800, cachedTokens: 9_000 })).toBe(
-      "13.2k tokens (12.4k in, 9k cached, 800 out)",
-    )
+    ).toBe("-# ✅ 2 calls (1 failed) · 100 in · 20 out")
   })
 })

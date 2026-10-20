@@ -93,6 +93,14 @@ export class DiscordChat implements Chat {
   /** Discord tells someone they were mentioned in a message that was edited as well. */
   readonly notifiesOnEdit = true
 
+  /** Discord's subtext: small and grey, one `-# ` per line. */
+  subtle(text: string): string {
+    return text
+      .split("\n")
+      .map((line) => `-# ${line}`)
+      .join("\n")
+  }
+
   constructor(private readonly rest: DiscordRest) {}
 
   /** Text past Discord's 2000 characters goes out as several messages; cards ride on the last. */

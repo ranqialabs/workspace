@@ -35,17 +35,23 @@ An answer is a single message that bob edits while it works, so the channel
 gets nothing to scroll past afterwards:
 
 ```text
-> 💭 the callback calls auth.ts before the state is set…
+-# 💭 the callback calls auth.ts before the state is set…
 
 The redirect drops the `state` parameter, in `src/auth.ts:42`.
 
-✅ 3 tool calls · 13.2k tokens (12.4k in, 9k cached, 800 out) · $0.0010
+-# ✅ 3 calls · 12.4k in · 800 out · $0.0010
 ```
 
-While the run goes, the message carries what bob is thinking, the answer as it
-is written, and the call in flight, which reads in the present while it runs
-and in the past once it is done (`⏳ Asking Dorothy: list_sites`). A failed
+The quiet lines are Discord's subtext (`-# `), small and grey; Slack has no
+such size and gets them as plain text. While the run goes the message carries
+what bob is thinking, the answer as it is written, and the last three calls,
+one line each (`⏳ Dorothy: list_sites`, `✅ Read issue #12 in web`). A failed
 call turns ⚠️ and says why; the agent usually works around it.
+
+The thinking is per model call: it takes the place of the answer while the
+model thinks and leaves when the answer starts, because by then it is stale.
+Only the last step's words are kept in the message too, which is what the run
+answers with: an earlier paragraph was a note to itself before a call.
 
 The last edit deletes the thinking and leaves the answer alone with one line
 of numbers: the tool calls, the tokens and what the run cost. A run that was

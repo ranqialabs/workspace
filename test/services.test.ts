@@ -145,5 +145,5 @@ describe("commands", () => {
 
 test("a tool line names the service it belongs to", () => {
   const step: Step = { id: "1", tool: "dorothy_list_sites", input: {}, state: "done" }
-  expect(stepLine(step)).toBe("✅ Asked Dorothy: `list_sites`")
+  expect(stepLine(step)).toBe("✅ Dorothy: `list_sites`")
 })

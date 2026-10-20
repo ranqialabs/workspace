@@ -58,6 +58,8 @@ export interface Chat {
    * Discord does, Slack does not: there a ping has to be a message of its own.
    */
   readonly notifiesOnEdit: boolean
+  /** `text` set apart and quiet; Discord has subtext for it, Slack has no such size. */
+  subtle(text: string): string
   post(channel: string, message: Outgoing): Promise<MessageRef>
   edit(ref: MessageRef, message: Outgoing): Promise<void>
   delete(ref: MessageRef): Promise<void>

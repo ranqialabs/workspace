@@ -43,6 +43,11 @@ export class SlackChat implements Chat {
   readonly textLimit = MARKDOWN_LIMIT
   /** Slack notifies no one about an edit, so a ping has to be a message of its own. */
   readonly notifiesOnEdit = false
+
+  /** Slack has no subtext; an italic line with code in it breaks, so it goes plain. */
+  subtle(text: string): string {
+    return text
+  }
   private readonly users = new Map<string, Promise<SlackUser>>()
 
   constructor(private readonly api: SlackApi) {}

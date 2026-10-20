@@ -84,6 +84,15 @@ export async function runAgent(input: RunInput): Promise<RunResult> {
   let thought = ""
   for await (const part of result.fullStream) {
     switch (part.type) {
+      // Each step starts clean: the prose of an earlier step was a note to
+      // itself before a call, and the thinking goes stale the moment it writes.
+      case "start-step":
+        if (text === "" && thought === "") break
+        text = ""
+        thought = ""
+        input.events?.text?.(text)
+        input.events?.reasoning?.(thought)
+        break
       case "reasoning-start":
         thought = ""
         input.events?.reasoning?.(thought)
