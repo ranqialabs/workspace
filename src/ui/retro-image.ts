@@ -58,13 +58,22 @@ function changeCount(group: ChangeGroup, n: number): string {
   return `${n} ${group}`
 }
 
-/** The image's tree; satori works out its height from what is in it. */
-export function retroImage(retro: Retro, faces: Map<string, Face>, summary?: Summary): Node {
+/**
+ * The image's tree; satori works out its height from what is in it. `brief`
+ * drops the summary, timeline and panels, leaving the numbers, the people and
+ * the highlights for when the full picture is too expensive to draw.
+ */
+export function retroImage(
+  retro: Retro,
+  faces: Map<string, Face>,
+  summary?: Summary,
+  brief = false,
+): Node {
   const sums = totals(retro)
   const people = peopleStats(retro).slice(0, MAX_PEOPLE)
   const notes = highlights(retro)
   const sections: Node[] = [header(retro)]
-  if (summary !== undefined) sections.push(summarySection(summary))
+  if (!brief && summary !== undefined) sections.push(summarySection(summary))
 
   if (retro.merged.length === 0) {
     sections.push(
@@ -76,8 +85,12 @@ export function retroImage(retro: Retro, faces: Map<string, Face>, summary?: Sum
     )
   } else {
     sections.push(ledger(retro, sums))
-    sections.push(timeline(retro))
-    sections.push(h("div", { marginTop: 56, gap: 48 }, reposPanel(retro), pullsPanel(retro, sums)))
+    if (!brief) {
+      sections.push(timeline(retro))
+      sections.push(
+        h("div", { marginTop: 56, gap: 48 }, reposPanel(retro), pullsPanel(retro, sums)),
+      )
+    }
   }
   if (people.length > 0) sections.push(peopleTable(people, faces))
   if (notes.length > 0) {

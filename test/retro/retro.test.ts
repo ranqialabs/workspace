@@ -4,7 +4,7 @@ import type { PipelineStory } from "../../src/news/stories"
 import { collect, productionDeploys } from "../../src/retro/collect"
 import { periodAt } from "../../src/retro/period"
 import { changelog, highlights, peopleStats, totals } from "../../src/retro/stats"
-import { retroCard } from "../../src/ui/retro"
+import { retroPost } from "../../src/ui/retro"
 import { type Calls, fakeGitHub } from "../agent/github"
 import { SAMPLE } from "./sample"
 
@@ -178,7 +178,7 @@ describe("stats", () => {
 
 describe("the card", () => {
   test("it is a linked changelog, marked by whether each change reached production", () => {
-    const card = retroCard(SAMPLE, (login) => `@${login}`, true)
+    const { card } = retroPost(SAMPLE, (login) => `@${login}`, true)
     expect(card.kicker).toBe("📊 Daily retro")
     expect(card.image).toBe("retro.png")
     expect(card.body).toContain(
@@ -191,10 +191,49 @@ describe("the card", () => {
     expect(card.body).toContain("by @milenaveiga18 (draft)")
   })
 
+  test("it carries the numbers under the summary", () => {
+    const { card } = retroPost(SAMPLE, (login) => login, false)
+    expect(card.body).toContain(
+      "**4 pull requests merged** · 34 commits · +8.6k / −5.2k lines · 41 min of CI · 2 in production · 1 waiting for a deploy",
+    )
+  })
+
   test("a quiet period says so", () => {
     const quiet = { ...SAMPLE, merged: [], open: [], period: periodAt("week", WEDNESDAY, TZ) }
-    const card = retroCard(quiet, (login) => login, false)
+    const { card } = retroPost(quiet, (login) => login, false)
     expect(card.body).toBe("A quiet week. Nothing was merged.")
     expect(card.image).toBeUndefined()
+  })
+
+  test("a full week keeps whole sections and sends the rest as a reply", () => {
+    const many = Array.from({ length: 8 }, (_, index) => ({
+      ...SAMPLE.merged[0]!,
+      number: 100 + index,
+      title: `${index} ${"with a subject long enough to fill the card ".repeat(2)}`,
+    }))
+    const crowded = {
+      ...SAMPLE,
+      merged: [
+        ...many.map((pull, index) => ({
+          ...pull,
+          title: `feat!: breaking ${index} ${pull.title}`,
+        })),
+        ...many.map((pull, index) => ({ ...pull, title: `feat: feature ${index} ${pull.title}` })),
+        ...many.map((pull, index) => ({ ...pull, title: `fix: bug ${index} ${pull.title}` })),
+        ...many.map((pull, index) => ({ ...pull, title: `perf: faster ${index} ${pull.title}` })),
+        ...many.map((pull, index) => ({ ...pull, title: `chore: upkeep ${index} ${pull.title}` })),
+      ],
+      period: periodAt("week", WEDNESDAY, TZ),
+    }
+    const post = retroPost(crowded, (login) => login, false)
+    expect(post.rest).toBeDefined()
+    expect(post.card.body?.endsWith("**The rest of the list is in the reply below.**")).toBe(true)
+    expect(post.card.body).toContain("**💥 Breaking changes**")
+    expect(post.rest).toContain("**🧹 Maintenance**")
+    expect((post.card.body?.length ?? 0) + (post.rest?.length ?? 0)).toBeGreaterThan(4000)
+    // No section is silently cut in half: every heading survives in one of the two.
+    for (const heading of ["💥", "✨", "🐛", "⚡", "🧹"]) {
+      expect(`${post.card.body}${post.rest}`).toContain(heading)
+    }
   })
 })

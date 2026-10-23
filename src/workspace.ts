@@ -18,7 +18,7 @@ import { type Summary, summarize } from "./retro/summary"
 import { localTime } from "./time"
 import { FONTS } from "./ui/fonts"
 import { png } from "./ui/render"
-import { RETRO_IMAGE, retroAlt, retroCard } from "./ui/retro"
+import { RETRO_IMAGE, retroAlt, retroPost } from "./ui/retro"
 import { retroImage, WIDTH } from "./ui/retro-image"
 import type { Rollout } from "./ui/rollout"
 import { code } from "./ui/text"
@@ -230,6 +230,9 @@ export class Workspace extends DurableObject<Env> {
     const quiet = retro.merged.length + retro.closed.length + retro.deploys.length === 0
     if (skipQuiet && quiet) return
     const summary = await summarize(retro, modelFor(this.env))
+    // The model read the descriptions; the card and the picture do not, so they
+    // are dropped before drawing, which is the heaviest part of the retro.
+    for (const pull of retro.merged) pull.body = ""
     const image = await this.retroPicture(retro, people, summary)
     const attachment =
       image === undefined
@@ -238,28 +241,36 @@ export class Workspace extends DurableObject<Env> {
     for (const target of targets) {
       const chat = chats(this.env).find((candidate) => candidate.platform === target.platform)
       if (chat === undefined) continue
-      const card = retroCard(
+      const post = retroPost(
         retro,
         this.personLabel(target.platform),
         attachment !== undefined,
         summary,
       )
-      await chat.post(target.channel, { cards: [card], attachment })
+      const sent = await chat.post(target.channel, { cards: [post.card], attachment })
+      if (post.rest !== undefined) {
+        await chat.post(target.channel, { text: post.rest, replyTo: sent })
+      }
     }
   }
 
-  /** The numbers as a picture; the text card stands alone if drawing fails. */
+  /** The numbers as a picture; when the full one fails, a smaller one, then the text card alone. */
   private async retroPicture(
     retro: Retro,
     people: Person[],
     summary: Summary | undefined,
   ): Promise<Uint8Array | undefined> {
+    const shown = peopleStats(retro).map((person) => person.login)
+    const drawn = await faces(shown, people)
     try {
-      const shown = peopleStats(retro).map((person) => person.login)
-      const tree = retroImage(retro, await faces(shown, people), summary)
-      return await png(tree, WIDTH, FONTS)
+      return await png(retroImage(retro, drawn, summary), WIDTH, FONTS)
     } catch (error) {
-      console.error("retro image failed", error)
+      console.error("the retro image failed; drawing the numbers only", error)
+    }
+    try {
+      return await png(retroImage(retro, drawn, undefined, true), WIDTH, FONTS)
+    } catch (error) {
+      console.error("the compact retro image failed too", error)
       return undefined
     }
   }

@@ -53,3 +53,8 @@ test("a quiet day still renders", async () => {
   const image = await png(retroImage(quiet, faces), WIDTH, await testFonts())
   expect(image.length).toBeGreaterThan(1000)
 })
+
+test("the compact picture keeps the numbers", async () => {
+  const image = await png(retroImage(SAMPLE, faces, undefined, true), WIDTH, await testFonts())
+  expect(image.length).toBeGreaterThan(1000)
+})

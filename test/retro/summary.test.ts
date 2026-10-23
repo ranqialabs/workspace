@@ -2,7 +2,7 @@ import { describe, expect, spyOn, test } from "bun:test"
 import { MockLanguageModelV4 } from "ai/test"
 
 import { summarize } from "../../src/retro/summary"
-import { retroCard } from "../../src/ui/retro"
+import { retroPost } from "../../src/ui/retro"
 import { SAMPLE } from "./sample"
 
 const usage = {
@@ -79,7 +79,7 @@ describe("the summary", () => {
 
   test("the card opens with the overview and a line per theme", async () => {
     const summary = await summarize(SAMPLE, answering(READING))
-    const card = retroCard(SAMPLE, (login) => login, true, summary)
+    const { card } = retroPost(SAMPLE, (login) => login, true, summary)
     expect(card.body?.startsWith(READING.overview)).toBe(true)
     expect(card.body).toContain(
       "- **bob on Workers**: The bot now runs on Cloudflare and talks on Discord and Slack. [#32](https://github.com/ranqialabs/workspace/pull/32)",

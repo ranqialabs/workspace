@@ -134,31 +134,33 @@ where nothing was merged, closed or deployed posts nothing. `/retro` posts one
 at any time, in the channel you run it in.
 
 ```text
-▌ 📊 Daily retro
-▌ What shipped on Wednesday, October 14
-▌ **web**
-▌ - Login no longer loops on Safari (#31, #34)
-▌ **ada-api**
-▌ - Stripe webhooks retry on failure (#8)
-▌ Merged 3 pull requests   Closed 2 issues   Opened 4 pull requests, 1 issue
-▌ Deploys  2 to production: 1 in web and 1 in ada-api
-▌ People
-▌ @beto 2 merged, 3 reviewed
-▌ @ana 1 merged, 2 closed
+▌ 📊 Weekly retro
+▌ What shipped the week of October 19
+▌ Hedy, our own ChatGPT collector, gained jobs and cost dashboards.
+▌ - **Hedy replaces BrightData as collector**: Ada can get answers from it...
+▌ **51 pull requests merged** · 131 commits · +29.3k / −9.7k lines · 41 min of CI
+▌ **💥 Breaking changes**
+▌ - **hedy** one resource, POST /v1/answers over the jobs [#11](...)
+▌ …
+▌ **The rest of the list is in the reply below.**
+▌ 🚀 in production   ⏳ waiting for a deploy
 ```
 
-- **What shipped** is the model's rewording of the merged pull requests' and
-  closed issues' titles, per project, for readers who are not engineers. It is
-  told to invent nothing. Without a DeepSeek key the titles are listed as they
-  are.
-- **The counts** come from GitHub's search, so anyone can check them: pull
-  requests merged and issues closed as completed in the period, and what was
-  opened.
-- **Deploys** are successful deploys to an environment with `prod` in its name,
-  from the pipelines bob followed.
-- **People**, most active first: pull requests merged, others' pull requests
-  reviewed, and issues closed while assigned to them. On Discord they are
-  mentions, which notify no one inside a card; on Slack, names.
+- **The reading** opens the card: the model's overview and the themes it found
+  in the merged pull requests, each with the pull requests behind it. It is told
+  to invent nothing; without a DeepSeek key the changelog stands alone.
+- **The numbers** come from GitHub's search: pull requests merged, commits and
+  lines, CI time, and how much of the work reached production.
+- **The changelog** groups every merged pull request by its conventional-commit
+  kind, links it, and marks whether it reached production (🚀) or is waiting for
+  a deploy (⏳). "Still open" lists pull requests opened in the period that are
+  still open.
+- **The rest** of a long list follows as a reply under the card, because Discord
+  stops at 4096 characters per card. The two messages read in order.
+- **The picture** on the card draws the same numbers as a ledger, the merge
+  timeline, the repositories, the deploy state and the people. If it fails, a
+  smaller picture with only the numbers, the people and the highlights is sent instead; the card
+  always carries the one-line numbers.
 
 A day is the team's calendar day in `TIMEZONE`, and a week runs Monday to
 Sunday.

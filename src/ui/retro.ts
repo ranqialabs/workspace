@@ -3,11 +3,11 @@
 // groups it, with every pull request linked and marked by whether it reached
 // production, then what is still open. The numbers are in the image below it.
 import type { Item, Retro } from "../retro/collect"
-import { type ChangeGroup, changelog, totals } from "../retro/stats"
+import { type Change, type ChangeGroup, changelog, totals } from "../retro/stats"
 import type { Summary } from "../retro/summary"
 import type { Card } from "./card"
 import { KIND, MARK } from "./glyphs"
-import { count, cut, repoName } from "./text"
+import { compact, count, cut, duration, repoName } from "./text"
 
 export const RETRO_IMAGE = "retro.png"
 
@@ -28,6 +28,7 @@ const GROUP_LIMIT: Record<ChangeGroup, number> = {
 }
 const OPEN_LIMIT = 6
 const DESCRIPTION_LIMIT = 4000
+const CONTINUED = "**The rest of the list is in the reply below.**"
 
 const SHIPPED_MARK = {
   production: ` ${KIND.deploy}`,
@@ -65,42 +66,95 @@ export function searchUrl(query: string): string {
   return `https://github.com/search?q=${encodeURIComponent(query)}&type=pullrequests`
 }
 
+export interface RetroPost {
+  card: Card
+  /** The sections that did not fit in the card, worded for a follow-up message. */
+  rest?: string
+}
+
 /** `label` names a person by GitHub login, as a mention that does not notify or as a name. */
-export function retroCard(
+export function retroPost(
   retro: Retro,
   label: (login: string) => string,
   image: boolean,
   summary?: Summary,
-): Card {
+): RetroPost {
   const sections: string[] = []
-  if (summary !== undefined) sections.push(summarySection(summary))
-  for (const [group, changes] of changelog(retro)) {
-    const shown = changes
-      .slice(0, GROUP_LIMIT[group])
-      .map(
-        ({ pull, subject }) =>
-          `- **${repoName(pull.repo)}** ${subject} [#${pull.number}](${pull.url})${SHIPPED_MARK[pull.shipped]}`,
-      )
-    const rest = changes.length - shown.length
-    if (rest > 0) shown.push(`- and ${rest} more`)
-    sections.push(`**${GROUP_TITLE[group]}**\n${shown.join("\n")}`)
+  if (retro.merged.length === 0) {
+    sections.push(`A quiet ${retro.period.kind}. Nothing was merged.`)
+  } else {
+    if (summary !== undefined) sections.push(summarySection(summary))
+    sections.push(statsSection(retro))
+    for (const [group, changes] of changelog(retro)) sections.push(groupSection(group, changes))
+    if (retro.open.length > 0) sections.push(openSection(retro, label))
   }
-  if (sections.length === 0) sections.push(`A quiet ${retro.period.kind}. Nothing was merged.`)
-  if (retro.open.length > 0) sections.push(openSection(retro, label))
+
+  // Discord caps an embed at 4096 characters. Whole sections go into the card
+  // until it is full; the rest follows as a reply instead of being cut off.
+  const room = DESCRIPTION_LIMIT - CONTINUED.length - 2
+  const packed: string[] = []
+  const overflow: string[] = []
+  let used = 0
+  let full = false
+  for (const section of sections) {
+    const size = packed.length === 0 ? section.length : used + 2 + section.length
+    if (!full && (packed.length === 0 || size <= room)) {
+      packed.push(section)
+      used = size
+    } else {
+      // From the first section that does not fit, everything follows in the
+      // reply, so the two messages still read in order.
+      full = true
+      overflow.push(section)
+    }
+  }
+  const body =
+    overflow.length === 0
+      ? packed.join("\n\n")
+      : `${cutLines(packed.join("\n\n"), room)}\n\n${CONTINUED}`
 
   const marked = retro.merged.some((pull) => pull.shipped !== "no-deploys")
   const scope = `org:${retro.org}`
   return {
-    tone: "brand",
-    kicker: `${KIND.retro} ${retro.period.kind === "day" ? "Daily" : "Weekly"} retro`,
-    title: title(retro),
-    url: searchUrl(`${scope} is:pr is:merged merged:${retro.period.range}`),
-    body: cutLines(sections.join("\n\n"), DESCRIPTION_LIMIT),
-    image: image ? RETRO_IMAGE : undefined,
-    footer: marked
-      ? `${KIND.deploy} in production   ${MARK.waiting} waiting for a deploy`
-      : undefined,
+    card: {
+      tone: "brand",
+      kicker: `${KIND.retro} ${retro.period.kind === "day" ? "Daily" : "Weekly"} retro`,
+      title: title(retro),
+      url: searchUrl(`${scope} is:pr is:merged merged:${retro.period.range}`),
+      body,
+      image: image ? RETRO_IMAGE : undefined,
+      footer: marked
+        ? `${KIND.deploy} in production   ${MARK.waiting} waiting for a deploy`
+        : undefined,
+    },
+    rest: overflow.length === 0 ? undefined : overflow.join("\n\n"),
   }
+}
+
+function groupSection(group: ChangeGroup, changes: Change[]): string {
+  const shown = changes
+    .slice(0, GROUP_LIMIT[group])
+    .map(
+      ({ pull, subject }) =>
+        `- **${repoName(pull.repo)}** ${subject} [#${pull.number}](${pull.url})${SHIPPED_MARK[pull.shipped]}`,
+    )
+  const remaining = changes.length - shown.length
+  if (remaining > 0) shown.push(`- and ${remaining} more`)
+  return `**${GROUP_TITLE[group]}**\n${shown.join("\n")}`
+}
+
+/** The period in one line, so the text carries the numbers even without the picture. */
+function statsSection(retro: Retro): string {
+  const sums = totals(retro)
+  const parts = [
+    `**${count(sums.merged, "pull request")} merged**`,
+    count(sums.commits, "commit"),
+    `+${compact(sums.additions)} / −${compact(sums.deletions)} lines`,
+  ]
+  if (retro.ci.minutes > 0) parts.push(`${duration(retro.ci.minutes)} of CI`)
+  if (sums.inProduction > 0) parts.push(`${sums.inProduction} in production`)
+  if (sums.waiting > 0) parts.push(`${sums.waiting} waiting for a deploy`)
+  return parts.join(" · ")
 }
 
 /** The overview, then a line per theme with the pull requests behind it. */
