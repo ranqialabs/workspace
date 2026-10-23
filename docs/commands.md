@@ -158,9 +158,11 @@ at any time, in the channel you run it in.
 - **The rest** of a long list follows as a reply under the card, because Discord
   stops at 4096 characters per card. The two messages read in order.
 - **The picture** on the card draws the same numbers as a ledger, the merge
-  timeline, the repositories, the deploy state and the people. If it fails, a
-  smaller picture with only the numbers, the people and the highlights is sent instead; the card
-  always carries the one-line numbers.
+  timeline, the repositories, the deploy state and the people, and shows the
+  model's themes and highlights. A picture taller than 2000 px is drawn without
+  the summary, which the card already has; if drawing still fails, only the
+  numbers, the people and the highlights go. The card always carries the
+  one-line numbers.
 
 A day is the team's calendar day in `TIMEZONE`, and a week runs Monday to
 Sunday.

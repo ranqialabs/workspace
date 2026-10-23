@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test"
 
 import { png } from "../../src/ui/render"
+import { h } from "../../src/ui/tree"
 import { type Face, retroImage, WIDTH } from "../../src/ui/retro-image"
 import type { Summary } from "../../src/retro/summary"
 import { testFonts } from "../ui/fonts"
@@ -57,4 +58,9 @@ test("a quiet day still renders", async () => {
 test("the compact picture keeps the numbers", async () => {
   const image = await png(retroImage(SAMPLE, faces, undefined, true), WIDTH, await testFonts())
   expect(image.length).toBeGreaterThan(1000)
+})
+
+test("a picture over the height cap is refused before resvg", async () => {
+  const fonts = await testFonts()
+  expect(png(h("div", { width: 100, height: 3000 }), 100, fonts, 1000)).rejects.toThrow("px tall")
 })

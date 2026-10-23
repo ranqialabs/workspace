@@ -42,6 +42,15 @@ import { migrate } from "./store/migrations"
 const DELIVERIES = ["CREATE TABLE deliveries (id TEXT PRIMARY KEY, received_at INTEGER NOT NULL)"]
 const DAY = 24 * 60 * 60 * 1000
 const RETRO_HOUR = 18
+// resvg in the Worker dies on a picture much taller than this, so a tall retro
+// drops the summary or the panels before asking it to paint.
+const MAX_PICTURE_HEIGHT = 2000
+
+interface RetroJob {
+  period: PeriodKind
+  platform: Platform
+  channel: string
+}
 
 export class Workspace extends DurableObject<Env> {
   readonly config: Config
@@ -122,8 +131,35 @@ export class Workspace extends DurableObject<Env> {
   }
 
   override async alarm(): Promise<void> {
+    await this.runRetroJobs()
     await this.rollouts.sweep(Date.now())
     await this.scheduleSweep()
+  }
+
+  /**
+   * A retro asked for by a command runs here, not in the request: Discord's
+   * interaction endpoint is capped at 30 seconds after the reply, and a week
+   * takes longer than that. The job is taken before it runs, so a retried alarm
+   * does not post the same retro twice.
+   */
+  private async runRetroJobs(): Promise<void> {
+    const jobs = this.ctx.storage.kv.get<RetroJob[]>("retro-jobs")
+    if (jobs === undefined || jobs.length === 0) return
+    this.ctx.storage.kv.delete("retro-jobs")
+    for (const job of jobs) {
+      try {
+        await this.postRetro(job.period, [{ platform: job.platform, channel: job.channel }], false)
+      } catch (error) {
+        console.error("the retro job failed", job, error)
+      }
+    }
+  }
+
+  private async queueRetro(period: PeriodKind, platform: Platform, channel: string): Promise<void> {
+    const jobs = this.ctx.storage.kv.get<RetroJob[]>("retro-jobs") ?? []
+    jobs.push({ period, platform, channel })
+    this.ctx.storage.kv.put("retro-jobs", jobs)
+    await this.ctx.storage.setAlarm(Date.now())
   }
 
   private async scheduleSweep(): Promise<void> {
@@ -181,7 +217,7 @@ export class Workspace extends DurableObject<Env> {
       return { kind: "imported", channel: command.channel, counts: applyLines(this.config, lines) }
     }
     if (command.name === "retro") {
-      await this.postRetro(command.period, [{ platform, channel: command.channel }], false)
+      await this.queueRetro(command.period, platform, command.channel)
       return { kind: "retro-posted", channel: command.channel, period: command.period }
     }
     if (command.name === "connect" || command.name === "disconnect") {
@@ -254,7 +290,10 @@ export class Workspace extends DurableObject<Env> {
     }
   }
 
-  /** The numbers as a picture; when the full one fails, a smaller one, then the text card alone. */
+  /**
+   * The numbers as a picture. It tries the full one, then the one without the
+   * summary (the tall part, which the card already has), then only the numbers.
+   */
   private async retroPicture(
     retro: Retro,
     people: Person[],
@@ -262,17 +301,20 @@ export class Workspace extends DurableObject<Env> {
   ): Promise<Uint8Array | undefined> {
     const shown = peopleStats(retro).map((person) => person.login)
     const drawn = await faces(shown, people)
-    try {
-      return await png(retroImage(retro, drawn, summary), WIDTH, FONTS)
-    } catch (error) {
-      console.error("the retro image failed; drawing the numbers only", error)
+    const attempts: { summary?: Summary; brief: boolean }[] = []
+    if (summary !== undefined) attempts.push({ summary, brief: false })
+    attempts.push({ brief: false }, { brief: true })
+    let failure: unknown
+    for (const attempt of attempts) {
+      try {
+        const picture = retroImage(retro, drawn, attempt.summary, attempt.brief)
+        return await png(picture, WIDTH, FONTS, MAX_PICTURE_HEIGHT)
+      } catch (error) {
+        failure = error
+      }
     }
-    try {
-      return await png(retroImage(retro, drawn, undefined, true), WIDTH, FONTS)
-    } catch (error) {
-      console.error("the compact retro image failed too", error)
-      return undefined
-    }
+    console.error("the retro picture failed", String(failure), failure)
+    return undefined
   }
 
   /** On Discord a mention in a card notifies no one; Slack's would, so it gets a name. */

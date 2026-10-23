@@ -16,6 +16,31 @@ function workspace() {
   return new Workspace(ctx, env)
 }
 
+/** A Workspace whose storage also has the key-value half and the alarm, as the DO does. */
+function queuedWorkspace() {
+  const database = memoryDatabase()
+  const kv = new Map<string, unknown>()
+  const alarms: number[] = []
+  const storage = {
+    ...database,
+    kv: {
+      get: (key: string) => kv.get(key),
+      put: (key: string, value: unknown) => {
+        kv.set(key, value)
+      },
+      delete: (key: string) => {
+        kv.delete(key)
+      },
+    },
+    setAlarm: async (at: number) => {
+      alarms.push(at)
+    },
+  }
+  const ctx = { storage } as unknown as DurableObjectState
+  const env = { GITHUB_ORG: "acme", DISCORD_TOKEN: "t", DISCORD_GUILD_ID: "g1" } as unknown as Env
+  return { workspace: new Workspace(ctx, env), kv, alarms }
+}
+
 const opened = {
   action: "opened",
   issue: {
@@ -105,4 +130,42 @@ test("a read-only command touches no other service", async () => {
   const ws = workspace()
   await ws.command({ name: "config" }, "discord")
   expect(seen).toEqual([])
+})
+
+test("a retro command hands the week to the alarm instead of the request", async () => {
+  const { workspace: ws, kv, alarms } = queuedWorkspace()
+  const reply = await ws.command({ name: "retro", period: "week", channel: "c1" }, "discord")
+  expect(reply.text).toContain("Posting the weekly retro")
+  expect(alarms.length).toBe(1)
+  expect(kv.get("retro-jobs")).toEqual([{ period: "week", platform: "discord", channel: "c1" }])
+})
+
+test("the alarm posts a queued retro and clears the job", async () => {
+  const { workspace: ws, kv } = queuedWorkspace()
+  const github = {
+    rest: { search: { issuesAndPullRequests: () => Promise.resolve({ data: { items: [] } }) } },
+  } as unknown as GitHub
+  ws.githubClient = () => Promise.resolve(github)
+  const seen: string[] = []
+  globalThis.fetch = Object.assign(
+    (input: RequestInfo | URL) => {
+      const request = input instanceof Request ? input : new Request(String(input))
+      seen.push(request.url)
+      if (request.url.includes("api.github.com")) {
+        return Promise.resolve(Response.json({ items: [], total_count: 0 }))
+      }
+      return Promise.resolve(Response.json({ id: "m1" }))
+    },
+    { preconnect: realFetch.preconnect },
+  )
+  const errors = console.error
+  console.error = () => {}
+  try {
+    await ws.command({ name: "retro", period: "week", channel: "c1" }, "discord")
+    await ws.alarm()
+  } finally {
+    console.error = errors
+  }
+  expect(kv.has("retro-jobs")).toBe(false)
+  expect(seen.some((url) => url.endsWith("/channels/c1/messages"))).toBe(true)
 })

@@ -77,7 +77,7 @@ export function commandReply(result: Result, config: Config, platform: Platform)
       return { text: `The retro has no channel on ${PLATFORM[platform]} anymore.` }
     case "retro-posted":
       return {
-        text: `${MARK.done} Posted the ${result.period === "day" ? "daily" : "weekly"} retro.`,
+        text: `${MARK.waiting} Posting the ${result.period === "day" ? "daily" : "weekly"} retro.`,
       }
     case "discord-only":
       return { text: "Importing works on Discord only, from the old #bot-config channel." }

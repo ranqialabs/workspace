@@ -10,8 +10,16 @@ export interface Font {
   weight: 400 | 500 | 700
 }
 
-/** `width` is fixed; the height follows the content. */
-export async function png(node: Node, width: number, fonts: Font[]): Promise<Uint8Array> {
+/**
+ * `width` is fixed; the height follows the content. A `maxHeight` refuses the
+ * picture before resvg sees it, since a tall one can panic the WASM renderer.
+ */
+export async function png(
+  node: Node,
+  width: number,
+  fonts: Font[],
+  maxHeight?: number,
+): Promise<Uint8Array> {
   const svg = await satori(node, {
     width,
     fonts: fonts.map((font) => ({
@@ -21,6 +29,12 @@ export async function png(node: Node, width: number, fonts: Font[]): Promise<Uin
       style: "normal",
     })),
   })
+  if (maxHeight !== undefined) {
+    const height = Number(/<svg[^>]*height="([^"]+)"/.exec(svg)?.[1])
+    if (Number.isFinite(height) && height > maxHeight) {
+      throw new Error(`the picture is ${height}px tall, over ${maxHeight}px`)
+    }
+  }
   const image = await Resvg.async(svg, { fitTo: { mode: "width", value: width } })
   return image.render().asPng()
 }
