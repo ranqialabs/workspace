@@ -45,6 +45,23 @@ export type Result =
   | { kind: "disconnected"; service?: ServiceId; name: string }
   | { kind: "config" }
 
+/**
+ * Whether the command changed who can see what, so the Workspace refills the
+ * platform's access groups.
+ */
+export function changesAccess(result: Result): boolean {
+  switch (result.kind) {
+    case "repo-mapped":
+    case "repo-unmapped":
+    case "person-linked":
+    case "person-unlinked":
+    case "imported":
+      return true
+    default:
+      return false
+  }
+}
+
 /** What the commands need checked against the outside world before saving. */
 export interface Directory {
   /** The repo's full name as GitHub spells it, or undefined if the org has no such repo. */

@@ -22,12 +22,14 @@ did that this one does not do yet, then what comes after.
       default branch and for reviews waiting more than a day.
 - [x] **Retro**, daily and weekly, with what shipped and what each person did.
 - [x] **Release notes** under the checks card when a deploy reaches production.
+- [x] **Access sync on Discord.** One role per mapped repo, filled from GitHub
+      and gating the repo's channel, refreshed on every deploy and after a
+      command changes the configuration.
 
 ## Not yet back from the Python version
 
-- [ ] **Access sync.** A Discord role per repo, filled from GitHub, gating the
-      repo's channel. On Slack's Free plan, which has no user groups, the same
-      idea becomes inviting people to and removing them from the repo's private
+- [ ] **Slack access.** Slack's Free plan has no user groups, so the same idea
+      becomes inviting people to and removing them from the repo's private
       channel.
 - [ ] **Linear tools** for the agent: teams, projects, cycles, issues and
       documents.

@@ -27,6 +27,11 @@ with autocomplete for repos and GitHub logins. On Slack they are subcommands of
 On Slack, leaving the channel out of `map repo` or `map retro` means the
 channel you run it in.
 
+Mapping a repo to a home channel also gates that channel on Discord. bob keeps
+an access role named `<repo> devs`, filled from GitHub, and leaves the channel
+visible only to it. It refreshes after every deploy and after any command that
+changes the configuration.
+
 ### Coming from the Python version
 
 `/import channel:#bot-config` (Discord, Manage Server) reads the channel where

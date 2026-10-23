@@ -23,8 +23,9 @@ import { retroImage, WIDTH } from "./ui/retro-image"
 import type { Rollout } from "./ui/rollout"
 import { code } from "./ui/text"
 import { REPLY } from "./ui/replies"
-import { type Command, type Result, run } from "./commands"
+import { changesAccess, type Command, type Result, run } from "./commands"
 import { commandReply, type Reply } from "./ui/commands"
+import { guildOf, reconcileAccess } from "./discord/access"
 import { applyLines, readLines } from "./discord/legacy"
 import { DiscordRest } from "./discord/rest"
 import { credentials, type GitHub, installationClient } from "./github/app"
@@ -50,6 +51,8 @@ export class Workspace extends DurableObject<Env> {
   private readonly releases: Releases
   private readonly rollouts: Rollouts
   private client: Promise<GitHub> | undefined
+  // One access sync at a time: a deploy and a command can land together.
+  private accessSync: Promise<void> | undefined
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env)
@@ -100,17 +103,22 @@ export class Workspace extends DurableObject<Env> {
       return undefined
     })
     const now = Date.now()
-    await this.rollouts.announce(
-      repo,
-      {
-        commit,
-        uploadedAt: version.uploadedAt,
-        liveAt: version.liveAt,
-        commandsAt: version.commandsAt,
-      },
-      now,
-    )
-    await this.scheduleSweep()
+    try {
+      await this.rollouts.announce(
+        repo,
+        {
+          commit,
+          uploadedAt: version.uploadedAt,
+          liveAt: version.liveAt,
+          commandsAt: version.commandsAt,
+        },
+        now,
+      )
+    } finally {
+      await this.scheduleSweep()
+      // The deploy just started, so GitHub decides again who sees each repo.
+      await this.syncAccess()
+    }
   }
 
   override async alarm(): Promise<void> {
@@ -161,6 +169,8 @@ export class Workspace extends DurableObject<Env> {
 
   async command(command: Command, platform: Platform): Promise<Reply> {
     const result = await this.runCommand(command, platform)
+    // A mapping changed, so what it grants changed with it.
+    if (changesAccess(result)) await this.syncAccess()
     return commandReply(result, this.config, platform)
   }
 
@@ -325,6 +335,44 @@ export class Workspace extends DurableObject<Env> {
       throw error
     })
     return this.client
+  }
+
+  /**
+   * Fills each mapped repo's Discord role from GitHub and gates its channel.
+   * The first heartbeat of a version and every command that changes the
+   * configuration call it; a failure is logged, never raised at the caller.
+   */
+  syncAccess(): Promise<void> {
+    this.accessSync ??= this.refillAccess().finally(() => {
+      this.accessSync = undefined
+    })
+    return this.accessSync
+  }
+
+  private async refillAccess(): Promise<void> {
+    const token = this.env.DISCORD_TOKEN
+    if (token === undefined || token === "") return
+    try {
+      const rest = new DiscordRest(token)
+      const guild = await guildOf(rest, this.env.DISCORD_GUILD_ID)
+      if (guild === undefined) return
+      const change = await reconcileAccess({
+        config: this.config,
+        github: await this.githubClient(),
+        rest,
+        guild,
+        org: this.env.GITHUB_ORG,
+      })
+      const counts = {
+        created: change.created.length,
+        deleted: change.deleted.length,
+        added: change.added.length,
+        removed: change.removed.length,
+      }
+      if (Object.values(counts).some((count) => count > 0)) console.log("access sync", counts)
+    } catch (error) {
+      console.error("access sync failed", error)
+    }
   }
 
   private async lookupCommit(repo: string, sha: string): Promise<Commit | undefined> {

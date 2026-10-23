@@ -81,13 +81,14 @@ For local work, put the same names in `.dev.vars` and run `bun run dev`.
 
 In the [developer portal](https://discord.com/developers/applications):
 
-1. Under **Bot**, turn on the **Message Content** intent. Without it bob sees
-   mentions but not what they say.
+1. Under **Bot**, turn on the **Message Content** and **Server Members**
+   intents. Without the first bob sees mentions but not what they say; without
+   the second it cannot read who holds which role.
 2. Under **General Information**, set the **Interactions Endpoint URL** to
    `https://<your worker>/discord/interactions`.
 3. Invite the bot with the `bot` and `applications.commands` scopes and the
-   permissions View Channels, Send Messages, Send Messages in Threads, Embed
-   Links and Read Message History.
+   permissions View Channels, Manage Roles, Send Messages, Send Messages in
+   Threads, Embed Links and Read Message History.
 
 ```sh
 bunx wrangler secret put DISCORD_TOKEN
@@ -100,6 +101,12 @@ The gateway connects within five minutes of the first deploy, when the cron
 first runs, and registers the slash commands when Discord says it is ready.
 After later deploys, changed commands reach Discord within a heartbeat, about
 forty seconds.
+
+Mapping a repo to a home channel makes that channel private. bob creates a role
+named `<repo> devs`, fills it with the repo's collaborators and the org's
+admins who have a Discord account mapped, and lets only that role see the
+channel. It refreshes after every deploy and after any command that changes the
+configuration.
 
 ## 4. Slack
 
